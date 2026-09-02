@@ -10,8 +10,7 @@
 //! default `spring.task.scheduling.pool.size` is 1, so a second job waits for
 //! the first however unrelated they are, and a job that hangs stops every
 //! other one in the application. Nothing reports that: the jobs simply do not
-//! run. `CLAUDE.md` records the same defaulted-wrong shape for `g auth`, and
-//! the answer is the same — generate the fix and let the test hold it.
+//! run. So the fix is generated and the test holds it in place.
 
 use super::{Emitted, Package, java, package};
 use crate::CompileError;

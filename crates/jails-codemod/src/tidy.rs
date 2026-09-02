@@ -1,26 +1,18 @@
 //! The shape rules a generated Java file gets at write time.
 //!
 //! Import order and blank lines: the two things palantir-java-format decides
-//! that a template would otherwise have to get right by hand. CLAUDE.md states
-//! both as write-time rules rather than template rules, and the reason is
-//! decay: the next template gets it wrong and nobody notices until `jails add
-//! format` makes `mvn verify` fail on a freshly generated project.
+//! that a template would otherwise have to get right by hand. Both are
+//! write-time rules rather than template rules, because a rule twenty
+//! templates must remember decays: the next template gets it wrong and nobody
+//! notices until `jails add format` makes `mvn verify` fail on a freshly
+//! generated project.
 //!
-//! They live here, below every producer, because there are two write paths now
-//! -- the direct one and the projected one -- and a rule that only one of them
-//! applies is a rule that produces two different files from one recipe. Both
-//! were found that way: the projected path emitted a template's own import
-//! order, and then its doubled blank lines.
+//! They live here, below every producer, so every write path applies the same
+//! rule and one recipe cannot produce two different files.
 
 /// Rewrite a generated file's import block into the order
 /// palantir-java-format produces: static imports first, a blank line, then
 /// everything else sorted.
-///
-/// Done here, once, rather than by hand in each of the twenty-odd templates.
-/// Hand-ordering is a rule that decays -- the next template gets it wrong and
-/// nobody notices until `jails add format` makes `mvn verify` fail on a
-/// freshly generated project, which is a bad first impression for a scaffold
-/// to make.
 pub fn normalize_imports(source: &str) -> String {
     let lines: Vec<&str> = source.lines().collect();
 
@@ -91,17 +83,12 @@ pub fn normalize_imports(source: &str) -> String {
 /// Collapse the blank lines a template leaves behind when an optional section
 /// renders empty, and end the file with exactly one newline.
 ///
-/// Here for the same reason `normalize_imports` is: **palantir-java-format
-/// removes both**, so leaving them in means `add format` -- which jails
+/// Here for the same reason `normalize_imports` is: palantir-java-format
+/// removes both, so leaving them in means `add format` -- which jails
 /// installs itself -- fails `jails check` on a project whose every line jails
-/// wrote. That is not hypothetical. It is what App D (`examples/ledger-cli`)
-/// hit on its first gate run, in four files, because it is the first proof
-/// application to ask for `format` at all: `class NoteTest {` followed by two
-/// blank lines wherever the sample block was omitted, and a
-/// `package-info.java` ending on a blank line after its import.
-///
-/// Fixing it in each template is the rule-twenty-templates-must-remember that
-/// this write path exists to avoid.
+/// wrote: `class NoteTest {` followed by two blank lines wherever a sample
+/// block is omitted, or a `package-info.java` ending on a blank line after
+/// its import.
 ///
 /// **Text blocks are left alone.** A `"""` block is the one Java literal that
 /// can span lines, so a blank line inside one is data -- SQL, JSON, an

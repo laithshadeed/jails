@@ -43,8 +43,7 @@ pub(crate) fn caller_supplied(field: &Field) -> bool {
     // resource controller has no `ExecutionContext` to read one from -- that
     // machinery is the operation boundary's, where `@scope` is already proved
     // against a `ScopeAuthorizer`. Dropping the component here would leave
-    // `toDomain` with no value for it and nowhere honest to get one. See
-    // `plan.md` for the resource-boundary half.
+    // `toDomain` with no value for it and nowhere honest to get one.
     if field.semantics.updated || field.semantics.version {
         return false;
     }
@@ -340,7 +339,7 @@ fn declared(
     // **A DTO lives in `web` and a declared type lives in `domain`**, so an
     // enum or record component that needs no import inside the entity's own
     // package needs one here. Left out, every project whose entity carries a
-    // declared type produced a request and a response that did not compile.
+    // declared type gets a request and a response that do not compile.
     for field in fields {
         emit_java::import_declared_type(model, &field.ty, imports);
     }

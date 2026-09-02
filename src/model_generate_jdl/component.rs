@@ -34,13 +34,11 @@ pub(super) fn v1_declaration(
         members.push(format!("  yields {}", reference_label(model, yields)));
     }
     // A client with no `--path` gets the collection route written down, not
-    // required of the reader and not invented later by the compiler. The
-    // legacy generator defaults it to `/{plural}` and renders a collection
-    // interface -- `findAll` and `findById` -- so refusing the command here
-    // would reject one that works on every legacy project. It is materialized
-    // rather than defaulted downstream because `jdl-sol.md` §3.1 rule 4 makes
-    // a convention part of the language, not something a compiler applies out
-    // of sight.
+    // required of the reader and not invented later by the compiler: the
+    // interface it renders is a collection -- `findAll` and `findById` -- and
+    // its route is `/{plural}`. It is materialized rather than defaulted
+    // downstream because JDL v1 §3.1 rule 4 makes a convention part of the
+    // language, not something a compiler applies out of sight.
     let default_path = if args.path.is_some() {
         None
     } else if args.kind == ArtifactKind::Client {
@@ -48,23 +46,22 @@ pub(super) fn v1_declaration(
             "/{}",
             // `sql::table_name`, not `jails_model::plural_snake_case`.
             // `both_pluralizers_answer_the_same_for_every_specified_rule`
-            // pins the two over §9.7's vocabulary, and swapping them here
-            // still moved a golden route -- the gate covers the pluralisation
-            // rules, not the whole projection `SqlName::conventional_table`
-            // performs on the way to them. A default route is reader-visible
-            // API, so it stays on the function that produced the one shipped.
-            jails_generate::sql::table_name(name).replace('_', "-")
+            // pins the two over §9.7's vocabulary, and that gate covers the
+            // pluralisation rules, not the whole projection
+            // `SqlName::conventional_table` performs on the way to them. A
+            // default route is reader-visible API, so it stays on the one
+            // function that produces it.
+            jails_model::plural_snake_case(&class_to_snake(name)).replace('_', "-")
         ))
     } else if args.method.is_some() || args.consumes.is_some() {
         // **A method or request format without a path is not a missing path.**
         // The convention already answers it: a component with no route lowers
-        // to `/{label}`, which is what both engines emit for
-        // `g controller Foo`. Refusing here made `--method post` demand a
-        // `--path` that only restated the default, and rejected a command
-        // every legacy project accepts.
+        // to `/{label}`, which is what `g controller Foo` gets. Refusing here
+        // would make `--method post` demand a `--path` that only restates the
+        // default.
         //
         // Materialized rather than left to the compiler for the same reason
-        // the client default is, one arm up: `jdl-sol.md` §3.1 rule 4 makes a
+        // the client default is, one arm up: JDL v1 §3.1 rule 4 makes a
         // convention part of the language rather than something applied out of
         // sight, so the route the reader gets is the route their model states.
         Some(format!("/{}", java_to_label(name).replace('_', "-")))
@@ -387,14 +384,8 @@ pub(super) fn reject_v1_options(args: &GenerateArgs, kind: ComponentKind) -> Res
         kind,
         K::Controller | K::Handler | K::Client | K::Webhook | K::Socket
     );
-    // **A client with no `--path` gets the collection route written down, not
-    // required and not guessed later.** The legacy generator defaults it to
-    // `/{plural}` and the interface it renders is a collection -- `findAll`
-    // and `findById` -- so requiring the flag here would refuse a command that
-    // works on every legacy project, for a default that is already documented.
-    // It is materialized in `v1_declaration` instead, because `jdl-sol.md`
-    // §3.1 rule 4 makes a convention part of the language rather than
-    // something a compiler applies out of sight.
+    // **A client with no `--path` is not refused**: the collection route is
+    // a documented default, materialized in `v1_declaration`.
     let accepts_bind = matches!(kind, K::Controller | K::Webhook);
     let unrelated = args.timestamps
         || args.default_literal.is_some()
@@ -440,4 +431,21 @@ pub(super) fn reject_v1_options(args: &GenerateArgs, kind: ComponentKind) -> Res
         ));
     }
     Ok(())
+}
+
+/// `LedgerEntry` to `ledger_entry`: the class name in the spelling the
+/// pluraliser and the SQL projection both read.
+fn class_to_snake(name: &str) -> String {
+    let mut out = String::with_capacity(name.len() + 4);
+    for (index, ch) in name.chars().enumerate() {
+        if ch.is_ascii_uppercase() {
+            if index > 0 {
+                out.push('_');
+            }
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
 }

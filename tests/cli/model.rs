@@ -1,33 +1,11 @@
 use super::*;
 
-/// The compatibility input, kept for the one test whose subject is that two
-/// editable model sources refuse rather than one of them winning.
-///
-/// **Every other fixture here is `jdl 1`.** `docs/10-language.md` A4.4 took
-/// the TOML front end out of the mutating commands, and a test that exercised
-/// one *through* it was testing the front end rather than the command.
-const TOML_MODEL: &str = r#"
-schema = "jails.model.v1"
-
-[project]
-id = "project_notes"
-name = "Notes"
-base_package = "com.example.notes"
-java_release = 26
-dialect = "postgresql"
-"#;
-
 /// The smallest `jdl 1` model a Spring fixture can carry, for the tests that
 /// build everything else with `jails g`.
 ///
-/// **`storage none`, though the draft these replaced said `dialect
-/// postgresql`.** `tests/product_loop.rs` records the same finding from the
-/// other side: pre-v1 `dialect` was a loose property nothing acted on, so the
-/// old seed meant *no storage until a scenario adds one*, and every scenario
-/// that wants storage still adds it with `add db` or `add h2`. v1 makes the
-/// storage axis a capability, so translating the words literally would hand
-/// forty tests a JDBC adapter and a migration none of them asked for -- a
-/// literal reading of the source and a wrong reading of its meaning.
+/// `storage none`: every scenario that wants storage adds it with `add db` or
+/// `add h2`, and a seed that declared it would hand forty tests a JDBC
+/// adapter and a migration none of them asked for.
 const DEMO_JDL: &str = "jdl 1\n\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  \
      java 26\n  platform spring\n  build maven\n  storage none\n}\n";
 
@@ -35,20 +13,15 @@ const DEMO_JDL: &str = "jdl 1\n\napp Demo @id(project_demo) {\n  pkg com.example
 const NOTES_JDL: &str = "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  \
      java 26\n  platform spring\n  build maven\n  storage none\n}\n";
 
-/// A canonical project seeded with one of the two model fixtures below.
-///
-/// It wrote `.jails/model.jdl` until `docs/10-language.md` A4.4 started
-/// removing that front end; it is [`jdl_project`] now, which is the same
-/// project one dialect later.
+/// A project seeded with one of the model fixtures below; the same project as
+/// [`jdl_project`].
 fn model_project(label: &str, source: &str) -> PathBuf {
     jdl_project(label, source)
 }
 
 /// [`NOTES_JDL`] with the resource these tests mutate.
 ///
-/// **`use repo`, `use service` and `use http` rather than `use scaffold`**,
-/// because the TOML fixture this replaced declared `facets = ["record",
-/// "repository", "http"]` and the linker derives `service` from `http`.
+/// `use repo`, `use service` and `use http` rather than `use scaffold`:
 /// `scaffold` would add a DTO nothing here asked for.
 const MODEL: &str = "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  \
      java 26\n  platform spring\n  build maven\n  storage none\n}\n\n\
@@ -75,7 +48,7 @@ fn gradle_model_project(label: &str, source: &str, build_file: &str, build: &str
 
 /// A canonical project whose authoring source is written by hand.
 ///
-/// **It carries a real Spring build**, because the models these tests write
+/// It carries a real Spring build, because the models these tests write
 /// declare `platform spring` -- the default -- and the compiler will not emit
 /// a `@RestController` into a project whose build has no Spring Boot in it.
 /// A bare directory holding only `.jails/model.jdl` is not a project any of
@@ -89,25 +62,23 @@ fn jdl_project(label: &str, source: &str) -> PathBuf {
     root
 }
 
-/// **`jdl-sol.md` §18.4: convention must not mean hidden behaviour.**
+/// JDL v1 §18.4: convention must not mean hidden behaviour.
 ///
-/// A generated project is full of names nobody typed, and until `model
-/// explain` the only way to learn which rule produced one was to read the
-/// emitted tree and infer it. This drives the command end to end and asserts
-/// the three things it has to get right.
+/// A generated project is full of names nobody typed, and `model explain` is
+/// how a reader learns which rule produced one. This drives the command end
+/// to end and asserts the three things it has to get right.
 ///
-/// **The reader's layer rename has to be applied**, which is why the project
+/// The reader's layer rename has to be applied, which is why the project
 /// carries a `jails.toml`. The records live in the model and a linked model
 /// carries the default packages -- the layout arrives with the workspace --
 /// so a version of this command that reported on the parsed model would print
 /// `com.example.notes.domain` to a project that has no such package.
 ///
-/// **And `audit.md` A3.11's divergence has to be visible.** Six of the
-/// twenty-three emitted packages sit under a head §9.7 does not close, so a
-/// layer rename does not reach them. Their rule says `convention.facet.*`
-/// where a layer's says `convention.layer.*`: the same tree, two rules, and
-/// the difference is now something a reader can be shown rather than a table
-/// in an audit document.
+/// And the §9.7 divergence has to be visible. Six of the twenty-three emitted
+/// packages sit under a head §9.7 does not close, so a layer rename does not
+/// reach them. Their rule says `convention.facet.*` where a layer's says
+/// `convention.layer.*`: the same tree, two rules, and the difference is
+/// something a reader can be shown.
 #[test]
 fn model_explain_shows_which_rule_produced_each_derived_name() {
     let root = jdl_project(
@@ -264,19 +235,11 @@ fn model_fmt_checks_then_atomically_formats_only_the_jdl_source() {
     );
 }
 
-/// D1's acceptance loop, on a project that also has a database.
+/// A source-only record evolves on a project that also has a database.
 ///
-/// The guard this pins used to read the *project's* storage and refuse any
-/// field add on an entity without a repository facet -- so a project that had
-/// ever run `add db` could never evolve an ordinary source-only record, which
-/// is half of D1. Storedness is the entity's: `Note` has no table, so its new
-/// field is a pure source change and emits no migration, while `Task` keeps
-/// the backfill contract exactly as before.
-///
-/// It is asserted here rather than only through `model import` because the
-/// import path merely *reached* the bug: pre-v1 `dialect` has no way to say
-/// "no storage", so an imported project always looks stored. The defect is one
-/// step below that, and so is this test.
+/// Storedness is the entity's, not the project's: `Note` has no table, so its
+/// new field is a pure source change and emits no migration, while `Task`
+/// keeps the backfill contract.
 #[test]
 fn a_source_only_record_gains_a_field_in_a_project_that_has_a_database() {
     let root = jdl_project(
@@ -328,8 +291,7 @@ entity Note {
         "a source-only record emitted schema: {names:?}"
     );
 
-    // A backfill for rows that do not exist is still refused, by the arm the
-    // old guard made unreachable.
+    // A backfill for rows that do not exist is still refused.
     let refused = jails_cmd(&root, None)
         .args([
             "g",
@@ -348,7 +310,7 @@ entity Note {
         "{told}"
     );
 
-    // And the stored entity keeps the contract it always had.
+    // And the stored entity keeps its contract.
     let stored = jails_cmd(&root, None)
         .args(["g", "field", "Task", "extra:string"])
         .output()
@@ -361,15 +323,10 @@ entity Note {
     );
 }
 
-/// A strategy is the one Spring-shaped unit a plain project also gets.
-///
-/// The canonical compiler grouped `Strategy` with `Service` and `Controller`
-/// and refused all three without a captured Spring Boot project. That is right
-/// for the other two -- a service and a controller are an annotation with a
-/// class around them -- and wrong here: `CLAUDE.md` records that "plain-Maven
-/// projects get the same layout with no annotation", and the legacy generator
-/// has always emitted one there. So canonical `g strategy` refused on exactly
-/// the projects `new-cli` creates.
+/// A strategy is the one Spring-shaped unit a plain project also gets: a
+/// service and a controller are an annotation with a class around them, and
+/// refuse without a captured Spring Boot project, while a strategy is the
+/// same layout with no annotation.
 ///
 /// The port, the implementations and the evaluator all compile without Spring:
 /// `@Component` is only how Spring *collects* the implementations into the
@@ -437,19 +394,13 @@ entity Tx {
     );
 }
 
-/// A CLI name in lower camel case is the Java type it names.
+/// A CLI name in lower camel case is the Java type it names: `jails g enum
+/// currency GBP EUR` writes `Currency.java`, and every later generator saying
+/// `currency:Currency` resolves against it.
 ///
-/// `jails g enum currency GBP EUR` writes `Currency.java` on the legacy path,
-/// and every later generator saying `currency:Currency` resolves against it --
-/// which is the whole of
-/// `generators_compose_through_user_owned_field_types`. The canonical model
-/// requires a real Java type name for `java_name` and refused the lower-camel
-/// spelling outright, so one command produced a project on one engine and a
-/// diagnostic on the other.
-///
-/// Fixed in the frontend rather than by loosening the model: `java_name` is a
-/// projection the model is right to hold to, and resolving what the reader
-/// typed is what CLI sugar is for. It is where the legacy path does it too.
+/// Resolved in the frontend rather than by loosening the model: `java_name`
+/// is a projection the model is right to hold to, and resolving what the
+/// reader typed is what CLI sugar is for.
 #[test]
 fn a_lower_camel_name_becomes_the_java_type_it_names() {
     let root = jdl_project(
@@ -482,8 +433,8 @@ app Gym {
     assert!(base.join("Currency.java").is_file());
     assert!(base.join("SourceRef.java").is_file());
 
-    // And the point of the capitalisation: another generator can now name
-    // those types, which is what it means for generators to compose.
+    // And the point of the capitalisation: another generator can name those
+    // types, which is what it means for generators to compose.
     let composed = jails_cmd(&root, None)
         .args(["g", "value", "money", "amount:long", "currency:Currency"])
         .output()
@@ -498,14 +449,9 @@ app Gym {
 }
 
 /// Every generated domain type ships a test, and which test is a fact about
-/// the type.
-///
-/// The canonical emitter wrote the class and nothing else, where the legacy
-/// path has always written `<Name>Test.java` beside it. `CLAUDE.md` says why
-/// that matters: emitting a guess produces a test that does not compile, and
+/// the type: emitting a guess produces a test that does not compile, and
 /// emitting nothing leaves the suite green over a type nobody asserted
-/// anything about. No gate saw it, because a differential suite compares the
-/// files it names and an artifact only one side writes is not a difference.
+/// anything about.
 ///
 /// Three shapes here, and the third is the one that is easy to get wrong: a
 /// component jails cannot sample disables the *class*, because every
@@ -584,25 +530,20 @@ app Demo {
         assert!(status.contains(assertion), "{assertion} missing:\n{status}");
     }
 
-    // JUnit's own assertions, not AssertJ: a canonical project is not
-    // guaranteed to declare AssertJ, and the other canonical test emitters
-    // already write JUnit. A companion test that drags in a dependency would
+    // JUnit's own assertions, not AssertJ: a project is not guaranteed to
+    // declare AssertJ, and the other test emitters write JUnit. A companion
+    // test that drags in a dependency would
     // be a generator supplying one for a file the reader did not ask for.
     for source in [&note, &plain, &odd, &status] {
         assert!(!source.contains("assertj"), "{source}");
     }
 }
 
-/// A canonical project can run its own formatter.
+/// A project can run its own formatter.
 ///
-/// `jails fmt` refused on one, telling the reader to run the formatter
-/// directly. The legacy route's ceremony -- format a scratch tree synthesised
-/// from the projection, commit the diff as file operations -- exists because
-/// the legacy engine generates into `src/`, so a half-finished Spotless run
-/// leaves jails' own output half-rewritten. A canonical project keeps its
-/// reproducible output under `.jails/generated`, rendered from the model, so
-/// the only thing in the formatter's path is the reader's own code, which is
-/// what the command is for.
+/// Reproducible output lives under `.jails/generated`, rendered from the
+/// model, so the only thing in the formatter's path is the reader's own code,
+/// which is what the command is for.
 #[test]
 fn a_canonical_project_runs_its_own_formatter() {
     if !real_mvn_available() {
@@ -641,18 +582,13 @@ app Demo {
     assert!(formatted.status.success(), "{told}");
 }
 
-/// `model init`: the on-ramp for a repository jails did not create.
-///
-/// **This is what kept the legacy engine load-bearing.** `new` seeds a model,
-/// so a project jails creates is canonical from its first command, and
-/// `model import` carries a legacy *ledger* across. Neither reaches somebody
-/// else's repository, which has no model and no ledger -- so every mutation
-/// there went through the legacy path, and no command could change that.
+/// `model init`: the on-ramp for a repository jails did not create. `new`
+/// seeds a model, so a project jails creates has one from its first command;
+/// somebody else's repository has none.
 ///
 /// What it writes is the app block and nothing else. The reader's Java is not
 /// adopted, moved or rewritten; what changes is that the next `jails g`
-/// renders through the compiler into `.jails/generated` instead of splicing
-/// into `src/`.
+/// renders through the compiler into `.jails/generated`.
 #[test]
 fn model_init_makes_a_foreign_project_canonical_without_touching_its_sources() {
     let root = temp_dir("model-init-foreign");
@@ -682,7 +618,7 @@ fn model_init_makes_a_foreign_project_canonical_without_touching_its_sources() {
     // jails has installed no database here, so the model claims none.
     assert!(model.contains("storage none"), "{model}");
 
-    // Canonical from here: the generator renders into the managed tree.
+    // From here the generator renders into the managed tree.
     let generated = jails_cmd(&root, None)
         .args(["g", "record", "Note", "title:string!"])
         .output()
@@ -705,7 +641,7 @@ fn model_init_makes_a_foreign_project_canonical_without_touching_its_sources() {
     assert_eq!(fs::read_to_string(&reader).unwrap(), untouched);
 }
 
-/// One editable source, which is the rule the whole cutover turns on.
+/// One editable source.
 #[test]
 fn model_init_refuses_a_project_that_already_has_a_model_or_a_ledger() {
     let modelled = jdl_project(
@@ -729,11 +665,10 @@ app Demo {
     let told = String::from_utf8_lossy(&refused.stderr);
     assert!(told.contains("already has an application model"), "{told}");
 
-    // A ledger a previous jails wrote is refused by name rather than treated
-    // as an absence. There is no one-way door across any more -- the engine
-    // that wrote it is deleted, so nothing here can read what it holds, and
-    // seeding a model beside declarations this binary cannot see would strand
-    // a project's whole contents outside the model that now owns it.
+    // A `.jails/ledger.toml` is refused by name rather than treated as an
+    // absence: nothing here can read what it holds, and seeding a model
+    // beside declarations this binary cannot see would strand a project's
+    // whole contents outside the model that owns it.
     let legacy = temp_dir("model-init-legacy-ledger");
     write_plain_fixture(&legacy);
     fs::create_dir_all(legacy.join(".jails")).unwrap();
@@ -1338,10 +1273,9 @@ app Notes {
         vec![
             "g", "strategy", "Policy", "Fast", "Safe", "--on", "Task", "--yields", "Task",
         ],
-        // **`--method post`, because `--on` declares a request body.** The
-        // default is GET, which carries none, and the component linker refuses
-        // that pair by name -- the rule the `SourceUnit` linker always had and
-        // this one gained when the draft's own test was ported.
+        // `--method post`, because `--on` declares a request body. The default
+        // is GET, which carries none, and the component linker refuses that
+        // pair by name.
         vec![
             "g",
             "controller",
@@ -1464,7 +1398,7 @@ app Notes {
         vec!["g", "idempotency", "Request"],
         // The encoder, the decoder and the filter chain that reads the token
         // are one story, so `g auth` refuses without the capability that
-        // carries the other two -- on the canonical path as on the legacy one.
+        // carries the other two.
         vec!["add", "security"],
         vec!["g", "auth", "Api"],
         vec![
@@ -1483,8 +1417,8 @@ app Notes {
         ],
         // `--on` is the command it runs later and `--yields` the entity that
         // command creates -- the row whose presence tells a retry from a
-        // repeat. The payload is the command's own `Input`, so unlike the
-        // legacy generator there are no fields to repeat here.
+        // repeat. The payload is the command's own `Input`, so there are no
+        // fields to repeat here.
         vec![
             "g",
             "durable-job",
@@ -1499,11 +1433,9 @@ app Notes {
         ],
         vec!["g", "presence", "Online"],
     ];
-    // **Nothing here is unserved any more**, and the list stays because the
-    // property it holds is what `audit.md` A1.2 was about: this loop used to
-    // assert only that the CLI exited zero, and fourteen of these wrote a
-    // declaration, reported success, and emitted nothing at all. A kind added
-    // without a backend belongs here rather than in the success path.
+    // Empty, and the list stays: a kind added without a backend belongs here
+    // rather than in the success path, because the loop above must not accept
+    // a declaration that reports success and emits nothing.
     const UNSERVED: &[&str] = &[];
     for command in commands {
         let output = jails_cmd(&root, None).args(&command).output().unwrap();
@@ -1581,12 +1513,9 @@ app Notes {
         "route PATCH \"/tasks/{id}\"",
         "component cases Acceptance @id(cmp_cases_acceptance)",
         "source \"acceptance.md\"",
-        // The fourteen kinds with no compiler backend are gone from this list
-        // because they no longer reach the source: a canonical mutation
+        // A kind with no compiler backend never reaches the source: a mutation
         // compiles before it writes, so refusing to emit is refusing to
-        // record. Their CST rendering is still real code and now has no
-        // coverage through the CLI -- `audit.md` A1.2b tracks giving it a
-        // direct test against the syntax editor.
+        // record.
     ] {
         assert!(
             source.contains(declaration),
@@ -1920,14 +1849,10 @@ fn canonical_source_units_merge_every_main_and_test_file_and_wire_both_roots() {
         "{jdl}"
     );
 
-    // **A component carries no package of its own, and the refusal is the
-    // contract rather than a gap in the parser.** The pre-v1 draft let a
-    // reader write `@package(core)` on a unit and the compiler moved the file;
-    // v1 derives every managed placement from the closed projection registry,
-    // so the reader-owned destination is `model eject`'s job. Asserted here
-    // because this is the test that used to prove the move, and a deleted
-    // assertion is indistinguishable from a feature that quietly stopped
-    // working.
+    // A component carries no package of its own, and the refusal is the
+    // contract rather than a gap in the parser: v1 derives every managed
+    // placement from the closed projection registry, so a reader-owned
+    // destination is `model eject`'s job.
     let before = snapshot_tree(&root);
     fs::write(
         root.join(".jails/model.jdl"),
@@ -2153,11 +2078,9 @@ fn canonical_sealed_types_evolve_through_merge_and_destroy_as_one_semantic_unit(
         assert!(source.contains("Pending"), "{relative}: {source}");
     }
     let jdl = fs::read_to_string(&jdl_path).unwrap();
-    // **Above the declaration, not inside it.** A v1 component is a block and
+    // Above the declaration, not inside it. A v1 component is a block and
     // evolving it replaces the whole declaration span, so a comment *inside*
-    // would need the editor to merge prose it did not write. The pre-v1 draft
-    // spelled a sealed type on one line, where a trailing comment was the only
-    // place a reader could put one; the property being proved is the same --
+    // would need the editor to merge prose it did not write. The property:
     // the reader's wording in the model source outlives an evolve.
     assert!(
         jdl.contains("// reader model note\ncomponent sealed Outcome @id(cmp_sealed_outcome) {"),
@@ -3584,21 +3507,6 @@ enum Status @id(ent_status) {
 }
 
 #[test]
-fn two_editable_model_sources_refuse_instead_of_choosing_an_authority() {
-    let root = jdl_project("model-two-sources", NOTES_JDL);
-    fs::write(root.join(".jails/model.toml"), TOML_MODEL).unwrap();
-    let before = snapshot_tree(&root);
-    let refused = jails_cmd(&root, None).args(["sync"]).output().unwrap();
-    assert!(!refused.status.success());
-    let stderr = String::from_utf8(refused.stderr).unwrap();
-    assert!(
-        stderr.contains("two editable application models"),
-        "{stderr}"
-    );
-    assert_eq!(snapshot_tree(&root), before);
-}
-
-#[test]
 fn jdl_destroy_removes_nested_operations_and_entities_without_legacy_state() {
     let root = jdl_project("model-jdl-destroy", NOTES_JDL);
     for arguments in [
@@ -4209,12 +4117,6 @@ fn canonical_projects_fail_closed_before_legacy_mutation_routes() {
     let root = model_project("model-no-legacy-routes", MODEL);
     apply_canonical_model(&root, "initial-no-legacy-routes");
     for case in [
-        // `undo`, `history` and `show` were here and are gone entirely: they
-        // read an authenticated receipt store, and a canonical project keeps
-        // none. There is nothing to unwind because the plan is
-        // content-addressed and re-running converges, which is what `undo`'s
-        // own refusal already said -- so the honest form is not a command that
-        // reports an empty list forever.
         // The textual rename is not routed anywhere -- it is a different
         // operation, and it works. What it refuses is a type the *model*
         // declares, because carrying only the Java would leave the next
@@ -4224,31 +4126,16 @@ fn canonical_projects_fail_closed_before_legacy_mutation_routes() {
             vec!["rename", "Note", "Memo"],
             "declared in this project's application model",
         ),
-        // `fmt` was here and is not any more: it does not reach the legacy
-        // engine at all now. The ceremony that put it there -- format a
-        // scratch tree, commit the diff -- exists because the legacy engine
-        // generates into `src/`, and a canonical project's output is under
-        // `.jails/generated`, so the only thing in the formatter's path is the
-        // reader's own code. `a_canonical_project_runs_its_own_formatter`
-        // holds the new behaviour.
-        //
-        // `app plan` and `apply` were here and are not any more. They planned
-        // `jails.toml`, a ledger and capability Java outside
-        // `.jails/generated` against a model they never read -- but the
-        // objection was to the *engine*, not to the file: a `[[generate]]` row
-        // is a `GenerateArgs`, the same value `jails g` parses. Replaying one
-        // into the model is an import, not a second editable source, and
-        // `a_manifest_replays_into_the_model_and_converges` holds it.
-        //
-        // `init` still refuses, and for the reason the other two stopped
-        // needing to: it *writes* the manifest, which beside a model is the
-        // second editable source the cutover forbids.
+        // `fmt`, `app plan` and `app apply` all work on a modelled project:
+        // `a_canonical_project_runs_its_own_formatter` and
+        // `a_manifest_replays_into_the_model_and_converges` hold them. `init`
+        // refuses: it *writes* the manifest, which beside a model is a second
+        // editable source.
         ("app init", vec!["app", "init"], "does not route"),
     ] {
-        // `adopt` and `modernize` were here and are not: both run *before* a
-        // project has a model and neither claims anything a later command
-        // reconciles, so they write directly and are the two commands a
-        // canonical project may still run.
+        // `adopt` and `modernize` are not refused: both run *before* a project
+        // has a model and neither claims anything a later command reconciles,
+        // so they write directly.
         let (label, arguments, told) = case;
         let before = snapshot_tree(&root);
         let output = jails_cmd(&root, None).args(&arguments).output().unwrap();
@@ -4979,12 +4866,10 @@ fn jdl_rename_keeps_the_stable_identity_and_reader_edits() {
         jdl_source.contains("entity WorkItem @id(ent_task)"),
         "{jdl_source}"
     );
-    // **The table is pinned, and the label is not.** The pre-v1 draft carried
-    // `@as(task)` to hold the semantic label still; v1 has no such attribute,
-    // because the label is a projection off the name and the two things a
-    // rename must not move -- the stable id and the SQL table -- are stated
-    // outright. `preserve-table` writes the table, which is what the strategy
-    // is named for.
+    // The table is pinned, and the label is not: the label is a projection
+    // off the name, and the two things a rename must not move -- the stable
+    // id and the SQL table -- are stated outright. `preserve-table` writes
+    // the table, which is what the strategy is named for.
     assert!(jdl_source.contains(r#"table "tasks""#), "{jdl_source}");
     let model = jails_model::parse_jdl(&jdl_source).unwrap();
     let entity = model.entities.values().next().unwrap();
@@ -5768,13 +5653,13 @@ fn fake_capability_is_a_global_compiler_profile_and_remove_is_recompilation() {
         "{}",
         String::from_utf8_lossy(&removed.stderr)
     );
-    // **The adapter stays, and that is the capability's meaning changing
-    // rather than removal failing.** A repository port always has exactly one
+    // The adapter stays, and that is the capability's meaning rather than
+    // removal failing. A repository port always has exactly one
     // implementation: with `db` declared it is the JDBC adapter, and without
     // it this one, or the scaffold's service would be constructor-injecting a
-    // port no bean satisfies. So `fake` no longer *adds* the in-memory
-    // adapter to a project that has no storage -- it is already there -- and
-    // what removal takes back is the declaration.
+    // port no bean satisfies. So `fake` does not *add* the in-memory adapter
+    // to a project that has no storage -- it is already there -- and what
+    // removal takes back is the declaration.
     assert!(adapter_path.exists());
     let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(!model.contains("[capabilities.fake]"), "{model}");
@@ -5955,14 +5840,11 @@ fn dependency_reconciliation_crosses_the_kotlin_gradle_binary_boundary() {
 
 #[test]
 fn unsupported_capabilities_refuse_before_the_legacy_engine_can_write() {
-    // **`format` on Gradle, because it is the one capability the canonical
-    // backend still cannot install.** Spotless needs its plugin entry inside
-    // `plugins { }`, which is legal only as the script's first statement, and
-    // the Gradle backend's whole contract is that it appends a marked block
-    // and touches nothing else. This test used to reach the same refusal
-    // through `add db` on `.jails/model.toml` -- the compatibility input could
-    // not state a storage axis -- which is a front end rather than a
-    // capability, and `docs/10-language.md` A4.4 removed it.
+    // `format` on Gradle, because it is the one capability the Gradle backend
+    // cannot install: Spotless needs its plugin entry inside `plugins { }`,
+    // which is legal only as the script's first statement, and the Gradle
+    // backend's whole contract is that it appends a marked block and touches
+    // nothing else.
     let root = gradle_model_project(
         "model-capability-refusal",
         EMPTY_MODEL,
@@ -6419,13 +6301,11 @@ fn maven_build_compiles_the_managed_source_root_end_to_end() {
         return;
     }
 
-    // **The fixture's own Spring pom, not a bare one.** This test overwrote it
-    // with a dependency-free Maven build while `scaffold` meant four
-    // framework-free facets; under `jdl 1` it means a DTO, a controller and a
-    // service, so a build with nothing on the classpath is a build the
-    // compiler refuses by name rather than a stricter check. Compiling the
-    // whole scaffold against the dependencies it declares is the stronger
-    // question anyway, and the one the managed source root has to answer.
+    // The fixture's own Spring pom, not a bare one: `scaffold` means a DTO, a
+    // controller and a service, so a build with nothing on the classpath is a
+    // build the compiler refuses by name. Compiling the whole scaffold against
+    // the dependencies it declares is the question the managed source root
+    // has to answer.
     let root = model_project("model-maven-real-compile", EMPTY_MODEL);
     let applied = jails_cmd(&root, None)
         .args([
@@ -6647,11 +6527,10 @@ fn canonical_data_capability_packs_keep_the_iterative_loop_and_eject_as_one_boun
             .contains("readerJsonTestHelper")
     );
 
-    // **A capability carries no package of its own.** The pre-v1 draft spelled
-    // one as `@package(ingest)` and moving it moved the pack's files; v1
-    // derives a capability's destination from the closed projection registry,
-    // so the only reader-owned destination is the one `model eject` produces
-    // -- which is what the rest of this test exercises.
+    // A capability carries no package of its own: v1 derives its destination
+    // from the closed projection registry, so the only reader-owned
+    // destination is the one `model eject` produces -- which is what the rest
+    // of this test exercises.
     let model_path = root.join(".jails/model.jdl");
     let declared = fs::read_to_string(&model_path).unwrap();
     fs::write(
@@ -6670,10 +6549,9 @@ fn canonical_data_capability_packs_keep_the_iterative_loop_and_eject_as_one_boun
     assert_eq!(snapshot_tree(&root), before_package);
     fs::write(&model_path, &declared).unwrap();
 
-    // **The move that v1 does state is an entity's**, and it is the same
+    // The move that v1 does state is an entity's, and it is the same
     // machinery: the managed tree relocates, the reader's delta rides across,
-    // and an overlapping edit refuses before anything is written. Proved here
-    // because the capability move above used to be what proved it.
+    // and an overlapping edit refuses before anything is written.
     let recorded = jails_cmd(&root, None)
         .args(["g", "record", "Feed", "title:string!"])
         .output()
@@ -6817,7 +6695,7 @@ fn canonical_data_capability_packs_keep_the_iterative_loop_and_eject_as_one_boun
         "{}",
         String::from_utf8_lossy(&frozen.stderr)
     );
-    // The build check for this pack now lives in
+    // The build check for this pack lives in
     // `every_orthogonal_capability_pack_compiles_and_tests_in_one_project`,
     // which compiles it beside the other orthogonal packs in one project.
     // What *this* test asserts is what the pack writes, and that needs no JVM.
@@ -7163,7 +7041,7 @@ fn canonical_sqlite_pack_moves_merges_ejects_and_builds_as_one_boundary() {
     );
     assert!(!pom.contains("<goal>add-resource</goal>"), "{pom}");
 
-    // The build check for this pack now lives in
+    // The build check for this pack lives in
     // `every_orthogonal_capability_pack_compiles_and_tests_in_one_project`,
     // which compiles it beside the other orthogonal packs in one project.
     // What *this* test asserts is what the pack writes, and that needs no JVM.
@@ -7360,12 +7238,10 @@ fn canonical_actuator_pack_merges_ejects_only_java_and_builds() {
     assert!(properties.contains("reader.actuator=survives"));
     assert!(!properties.contains("management.endpoints.web.exposure.include=*"));
 
-    // The build check for this pack now lives in
+    // The build check for this pack lives in
     // `every_orthogonal_capability_pack_compiles_and_tests_in_one_project`,
-    // which compiles it beside the other orthogonal packs in one project: one
-    // Maven start and one cached Spring context for five packs instead of five
-    // of each, measured at 15.7s against 115.3s. What *this* test asserts is
-    // what the pack writes, and that needs no JVM at all.
+    // which compiles it beside the other orthogonal packs in one project.
+    // What *this* test asserts is what the pack writes, and that needs no JVM.
 }
 
 #[test]
@@ -7468,12 +7344,10 @@ fn canonical_cache_pack_merges_ejects_the_java_boundary_and_builds() {
         );
     }
 
-    // The build check for this pack now lives in
+    // The build check for this pack lives in
     // `every_orthogonal_capability_pack_compiles_and_tests_in_one_project`,
-    // which compiles it beside the other orthogonal packs in one project: one
-    // Maven start and one cached Spring context for five packs instead of five
-    // of each, measured at 15.7s against 115.3s. What *this* test asserts is
-    // what the pack writes, and that needs no JVM at all.
+    // which compiles it beside the other orthogonal packs in one project.
+    // What *this* test asserts is what the pack writes, and that needs no JVM.
 }
 
 #[test]
@@ -7560,12 +7434,10 @@ fn canonical_cors_pack_merges_ejects_the_java_boundary_and_builds() {
     assert!(properties.contains("app.cors.allowed-origins=https://example.invalid"));
     assert!(properties.contains("reader.cors=survives"));
 
-    // The build check for this pack now lives in
+    // The build check for this pack lives in
     // `every_orthogonal_capability_pack_compiles_and_tests_in_one_project`,
-    // which compiles it beside the other orthogonal packs in one project: one
-    // Maven start and one cached Spring context for five packs instead of five
-    // of each, measured at 15.7s against 115.3s. What *this* test asserts is
-    // what the pack writes, and that needs no JVM at all.
+    // which compiles it beside the other orthogonal packs in one project.
+    // What *this* test asserts is what the pack writes, and that needs no JVM.
 }
 
 #[test]
@@ -7678,12 +7550,10 @@ fn canonical_observability_pack_merges_ejects_and_serves_prometheus() {
         );
     }
 
-    // The build check for this pack now lives in
+    // The build check for this pack lives in
     // `every_orthogonal_capability_pack_compiles_and_tests_in_one_project`,
-    // which compiles it beside the other orthogonal packs in one project: one
-    // Maven start and one cached Spring context for five packs instead of five
-    // of each, measured at 15.7s against 115.3s. What *this* test asserts is
-    // what the pack writes, and that needs no JVM at all.
+    // which compiles it beside the other orthogonal packs in one project.
+    // What *this* test asserts is what the pack writes, and that needs no JVM.
 }
 
 #[test]
@@ -7794,7 +7664,7 @@ fn canonical_security_pack_merges_ejects_and_keeps_cors_buildable() {
         assert!(pom.contains(&format!("<artifactId>{artifact}</artifactId>")));
     }
 
-    // The build check for this pack now lives in
+    // The build check for this pack lives in
     // `every_orthogonal_capability_pack_compiles_and_tests_in_one_project`,
     // which compiles it beside the other orthogonal packs in one project.
     // What *this* test asserts is what the pack writes, and that needs no JVM.
@@ -7903,12 +7773,10 @@ fn canonical_sse_pack_merges_ejects_across_packages_and_runs_its_proof() {
         );
     }
 
-    // The build check for this pack now lives in
+    // The build check for this pack lives in
     // `every_orthogonal_capability_pack_compiles_and_tests_in_one_project`,
-    // which compiles it beside the other orthogonal packs in one project: one
-    // Maven start and one cached Spring context for five packs instead of five
-    // of each, measured at 15.7s against 115.3s. What *this* test asserts is
-    // what the pack writes, and that needs no JVM at all.
+    // which compiles it beside the other orthogonal packs in one project.
+    // What *this* test asserts is what the pack writes, and that needs no JVM.
 }
 
 #[test]
@@ -8010,7 +7878,7 @@ fn canonical_redis_pack_keeps_source_and_compose_in_the_iterative_loop() {
         );
     }
 
-    // The build check for this pack now lives in
+    // The build check for this pack lives in
     // `the_health_indicator_capability_packs_compile_and_test_in_one_project`,
     // which compiles it beside the other health-indicator pack in one project.
     // What *this* test asserts is what the pack writes, and that needs no JVM.
@@ -8121,7 +7989,7 @@ fn canonical_kafka_pack_keeps_source_and_compose_in_the_iterative_loop() {
         );
     }
 
-    // The build check for this pack now lives in
+    // The build check for this pack lives in
     // `the_health_indicator_capability_packs_compile_and_test_in_one_project`,
     // which compiles it beside the other health-indicator pack in one project.
     // What *this* test asserts is what the pack writes, and that needs no JVM.
@@ -8514,12 +8382,9 @@ fn canonical_database_query_keeps_the_iterative_loop_and_ejects_only_its_adapter
     let adapter = managed.join("adapters/jdbc/JdbcOpenNotesQuery.java");
     let abi = managed.join("application/queries/OpenNotesQuery.java");
     let original = fs::read_to_string(&adapter).unwrap();
-    // **The column list is declaration order**, not alphabetical. Both were
-    // once true here: the pre-v1 path lost the author's order across its TOML
-    // hop (`audit.md` A2.2b), so `id, title, status` became `id, status,
-    // title` in the SQL as well as in the record. One column list feeds the
-    // DDL, the select, the insert and the row mapper, so this is the same
-    // property the record's positional constructor is.
+    // The column list is declaration order, not alphabetical. One column list
+    // feeds the DDL, the select, the insert and the row mapper, so this is the
+    // same property the record's positional constructor is.
     for contract in [
         "implements OpenNotesQuery",
         "select id, title, status from notes",
@@ -9657,11 +9522,10 @@ fn jdl_field_evolution_keeps_ids_edits_and_forward_schema_history() {
         .iter()
         .find(|field| field.id.to_string() == "fld_note_title")
         .unwrap();
-    // **The label follows the name; the identity and the column do not.** v1
+    // The label follows the name; the identity and the column do not. v1
     // derives a field's label from what it is called, so a preserve-column
     // rename moves the label and pins the column with `@map(title)` -- which
-    // is the whole point of the strategy. The pre-v1 draft held the label
-    // still with `@as(title)` instead, and v1 has no such attribute.
+    // is the whole point of the strategy.
     assert_eq!(title.label, "headline");
     assert_eq!(title.names.java_member, "headline");
     assert_eq!(title.names.sql_column, "title");
@@ -10229,17 +10093,10 @@ fn canonical_storage_drop_needs_exact_confirmation_and_appends_one_drop_table() 
 /// A transition's field roles come from `select`/`update`/`emit` and nowhere
 /// else, and every emitted event is published.
 ///
-/// `audit.md` A2.4 and A2.5. The linked transition carried a flat
-/// `sets`/`yields` pair beside `semantics.update`/`semantics.emits`, the
-/// emitters read the flat pair, and the JDL frontend synthesised it as *every*
-/// parameter whenever `update` was omitted -- so the row selector and the
-/// `@version` guard were both reported as writes and `jdl-sol.md` §4 could not
-/// link, while a second `emit` was silently dropped on the floor.
-///
-/// The four assertions are the four roles §12.4 separates: `id` selects,
-/// `version` guards and is incremented by the compiler, `status` updates, and
-/// both events publish. It reads the emitted SQL rather than the model,
-/// because the model was already right -- what was wrong is what reached Java.
+/// The four assertions are the four roles JDL v1 §12.4 separates: `id`
+/// selects, `version` guards and is incremented by the compiler, `status`
+/// updates, and both events publish. It reads the emitted SQL rather than the
+/// model, because the property is what reaches Java.
 #[test]
 fn a_transition_separates_selector_guard_and_update_and_emits_every_event() {
     let root = jdl_project(
@@ -10308,15 +10165,10 @@ entity Task {
     );
 }
 
-/// A command publishes the events it declares.
-///
-/// `audit.md` A2.4's other half. `CommandSemantics::emits` was linked and read
-/// by nobody, so `command Create(...) { emit TaskCreated }` generated the
-/// payload record, generated an adapter, and never connected them -- a
-/// project whose model says an event is published where nothing publishes it.
-/// Unlike the transition's, this was not a duplication: it was simply never
-/// implemented, and both now go through one `publications` helper so the rule
-/// cannot get two answers.
+/// A command publishes the events it declares: `command Create(...) { emit
+/// TaskCreated }` connects the payload record to the adapter. Commands and
+/// transitions go through one `publications` helper so the rule cannot get
+/// two answers.
 #[test]
 fn a_command_publishes_every_event_it_declares() {
     let root = jdl_project(
@@ -10372,14 +10224,9 @@ entity Task {
     );
 }
 
-/// A declared sort direction reaches the SQL.
-///
-/// `audit.md` A2.3. The linked `Query` carried `order_by: Vec<FieldId>` beside
-/// `semantics.order: Vec<Ordering>`; a `FieldId` has nowhere to hold a
-/// direction, and the emitter read the flat list -- so `order by [createdAt
-/// desc, id]` compiled to `order by created_at, id` and a query declared
-/// newest-first returned oldest-first, silently. There was no test: the whole
-/// suite never wrote `desc` in an `order by`.
+/// A declared sort direction reaches the SQL: `order by [createdAt desc, id]`
+/// compiles to `order by created_at desc, id`, so a query declared
+/// newest-first returns newest-first.
 #[test]
 fn a_query_orders_by_the_direction_it_declares() {
     let root = jdl_project(
@@ -10432,13 +10279,10 @@ entity Task {
 
 /// A record's components come out in the order the entity declared them.
 ///
-/// `audit.md` A2.2. `Entity::fields` was a `BTreeMap<FieldId, Field>`, so the
-/// compiler re-sorted every entity by stable id: a source declaring
-/// `zulu, id, alpha` emitted `record Task(String alpha, UUID id, String
-/// zulu)`. `jdl-sol.md` §7.3 lists entity fields first among the orders that
-/// MUST be retained, and the reason is not aesthetic -- a caller compiled
-/// against the positional constructor keeps compiling against a re-sorted one
-/// and silently passes the wrong arguments.
+/// JDL v1 §7.3 lists entity fields first among the orders that MUST be
+/// retained, and the reason is not aesthetic -- a caller compiled against the
+/// positional constructor keeps compiling against a re-sorted one and
+/// silently passes the wrong arguments.
 ///
 /// The labels here sort differently from the way they are written on purpose;
 /// alphabetical and declaration order have to disagree or this proves nothing.
@@ -10497,14 +10341,11 @@ entity Task {
 
 /// Adding a field leaves the model and the source it just wrote agreeing.
 ///
-/// `audit.md` A2.2, second attempt. Keeping declaration order made `AddField`
-/// positional, and the first version guessed the position by reading the
-/// existing order: "already sorted by label" was taken to mean "the source
-/// states no order". That is true for `.jails/model.jdl` and for the pre-v1
-/// JDL draft, which reaches the linker by rendering that same TOML -- and
-/// false for a JDL v1 entity that happens to be declared alphabetically.
-/// Appending `delta` to `alpha, beta, gamma` then put it third in the model
-/// and fourth in the file.
+/// `AddField` is positional, and "already sorted by label" must not be read
+/// as "the source states no order": a JDL v1 entity can be declared
+/// alphabetically by chance,
+/// where appending `delta` to `alpha, beta, gamma` would put it third in the
+/// model and fourth in the file.
 ///
 /// The entities below are chosen so the two answers differ: each is in label
 /// order, and each added field sorts into the middle. `model check --frozen`
@@ -10591,250 +10432,7 @@ entity Task {
     );
 }
 
-/// `jdl-sol.md` §22's bridge, end to end on a real project.
-///
-/// The property that matters is not that the file changed shape -- it is that
-/// **nothing was re-identified**. The two dialects derive a field's stable ID
-/// from different things (`fld_<entity label>_<field>` against
-/// `fld_<entity id>_<field>`), so a translation that only fixed the syntax
-/// would hand the next `sync` a model where every field is new: a dropped
-/// column and an added one, against a table that is already there. So this
-/// asserts the generated tree is byte-identical across the upgrade, which is
-/// the observable form of "the identities held".
-#[test]
-fn jdl_upgrade_moves_a_pre_v1_draft_onto_v1_without_re_identifying_anything() {
-    let root = temp_dir("jdl-upgrade-to-v1");
-    write_spring_fixture(&root);
-    fs::create_dir_all(root.join(".jails")).unwrap();
-    let draft = "// the demo application\n\
-                 application Demo @id(project_demo)\n\
-                 package com.example.demo\n\
-                 java 26\n\
-                 dialect postgresql\n\
-                 \n\
-                 capability api @id(cap_api)\n\
-                 dependency org.apache.commons:commons-csv = \"1.13.0\"\n\
-                 setting server.port = \"8080\"\n\
-                 \n\
-                 entity Task @id(ent_task) @scaffold {\n\
-                 \x20 id: uuid @pk\n\
-                 \x20 title: string!\n\
-                 \x20 done: boolean?\n\
-                 }\n";
-    fs::write(root.join(".jails/model.jdl"), draft).unwrap();
-
-    let sync = jails_cmd(&root, None).arg("sync").output().unwrap();
-    assert!(
-        sync.status.success(),
-        "{}",
-        String::from_utf8_lossy(&sync.stderr)
-    );
-    let before = generated_tree(&root);
-    assert!(
-        before.keys().any(|path| path.ends_with("domain/Task.java")),
-        "{before:?}"
-    );
-
-    // **A draft compiles and no longer accepts an edit.** `docs/10-language.md`
-    // A4.4 removed the second implementation of every mutating command by
-    // making this the one refusal, so a draft is read-only rather than
-    // maintained -- and the refusal has to name the way out, because otherwise
-    // the project is stuck on a front end nothing edits.
-    let refused = jails_cmd(&root, None)
-        .args(["g", "record", "Note", "title:string!"])
-        .output()
-        .unwrap();
-    assert!(!refused.status.success());
-    let told = String::from_utf8_lossy(&refused.stderr);
-    assert!(told.contains("pre-v1 JDL draft"), "{told}");
-    assert!(told.contains("jails model upgrade --to 1"), "{told}");
-    assert_eq!(generated_tree(&root), before, "the refusal wrote a plan");
-
-    let upgrade = jails_cmd(&root, None)
-        .args(["model", "upgrade", "--to", "1"])
-        .output()
-        .unwrap();
-    assert!(
-        upgrade.status.success(),
-        "{}",
-        String::from_utf8_lossy(&upgrade.stderr)
-    );
-
-    let upgraded = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
-    assert!(upgraded.starts_with("jdl 1\n"), "{upgraded}");
-    assert!(upgraded.contains("platform spring"), "{upgraded}");
-    assert!(upgraded.contains("build maven"), "{upgraded}");
-    assert!(upgraded.contains("storage postgres"), "{upgraded}");
-    assert!(upgraded.contains("// the demo application"), "{upgraded}");
-    assert!(upgraded.contains("@id(ent_task)"), "{upgraded}");
-
-    // **Every artifact that existed still exists, byte for byte, except the
-    // record.** That is the identity property stated observably: a re-keyed
-    // field would change a JDBC column, an artifact id, or a file path, and
-    // all three are in this comparison.
-    let after = generated_tree(&root);
-    // The advice and its test are the *one* exception, and it is the same
-    // documented fact the note below reports rather than a second one: the
-    // upgrade gains the `db` capability, `DuplicateKeyException` is Spring's
-    // from `spring-tx`, and that arrives with the JDBC starter. The arm is
-    // asserted by name below, so this is a narrowed comparison rather than a
-    // hole.
-    let gains_the_conflict_arm = |path: &str| {
-        path.ends_with("api/ApiExceptionHandler.java")
-            || path.ends_with("api/ApiExceptionHandlerTest.java")
-    };
-    // The second consequence of the same gained capability, and the reason it
-    // is a *removal* rather than a change: with no storage the in-memory
-    // adapter is the bean that keeps a scaffold able to start, and once the
-    // JDBC adapter carries `@Repository` a second implementation of the same
-    // port would make two beans qualify for one injection point.
-    // Its companion goes with it, and not as a second exception: a test whose
-    // subject is no longer emitted has nothing to construct. The contract it
-    // called stays, because the JDBC proof that replaces it calls the same one.
-    let replaced_by_the_jdbc_bean = |path: &str| {
-        path.ends_with("adapters/memory/InMemoryTaskRepository.java")
-            || path.ends_with("adapters/memory/InMemoryTaskRepositoryTest.java")
-    };
-    for (path, bytes) in &before {
-        let Some(upgraded) = after.get(path) else {
-            assert!(
-                replaced_by_the_jdbc_bean(path),
-                "`{path}` disappeared across the upgrade"
-            );
-            let jdbc = after
-                .keys()
-                .find(|candidate| candidate.ends_with("adapters/jdbc/JdbcTaskRepository.java"))
-                .unwrap_or_else(|| panic!("the in-memory bean went with nothing to replace it"));
-            assert!(after[jdbc].contains("@Repository"), "{jdbc}");
-            continue;
-        };
-        if gains_the_conflict_arm(path) {
-            assert!(
-                !bytes.contains("DuplicateKeyException"),
-                "`{path}` already handled a duplicate key before the upgrade"
-            );
-            assert!(
-                upgraded.contains("DuplicateKeyException"),
-                "`{path}` gained the `db` capability without the 409 arm that \
-                 makes a unique-constraint violation a conflict rather than a 500"
-            );
-            continue;
-        }
-        assert_eq!(upgraded, bytes, "`{path}` changed across the upgrade");
-    }
-
-    // **`domain/Task.java` used to be excluded from that comparison**, and is
-    // not any more. The pre-v1 path rendered intermediate TOML and lost
-    // declaration order, so upgrading re-ordered `Task(done, id, title)` into
-    // `Task(id, title, done)` -- a moved positional constructor, which the
-    // command had to report as a note. `audit.md` A2.2b fixed it at the
-    // source, so the two dialects now agree and the whole tree is
-    // byte-identical across the upgrade. An exclusion removed is worth more
-    // than the note it replaced: this is the property the test claims to be
-    // asserting, now asserted without a hole in it.
-    let told = String::from_utf8_lossy(&upgrade.stdout);
-    assert!(told.contains("note: the `db` capability"), "{told}");
-    assert!(
-        !told.contains("declaration order"),
-        "the upgrade still moves a record's constructor: {told}"
-    );
-
-    // And the order itself is the declared one, on both sides of the upgrade.
-    let record = after
-        .get("main/java/com/example/demo/domain/Task.java")
-        .unwrap();
-    let components = record
-        .split_once("public record Task(")
-        .unwrap()
-        .1
-        .split_once(')')
-        .unwrap()
-        .0;
-    assert!(
-        components.find("UUID id").unwrap() < components.find("String title").unwrap(),
-        "{components}"
-    );
-    assert!(
-        components.find("String title").unwrap()
-            < components.find("Optional<Boolean> done").unwrap(),
-        "{components}"
-    );
-
-    // The storage axis is the other one: `dialect postgresql` has no v1
-    // spelling that leaves the `db` capability out, so the JDBC adapter it
-    // implies arrives with it.
-    assert!(
-        after
-            .keys()
-            .any(|path| path.ends_with("adapters/jdbc/JdbcTaskRepository.java")),
-        "{:?}",
-        after.keys().collect::<Vec<_>>()
-    );
-
-    // The upgraded source is the one file nobody hand-wrote, so it must
-    // already satisfy the formatter and must be idempotent under `sync`.
-    let formatted = jails_cmd(&root, None)
-        .args(["model", "fmt", "--check"])
-        .output()
-        .unwrap();
-    assert!(
-        formatted.status.success(),
-        "{}",
-        String::from_utf8_lossy(&formatted.stderr)
-    );
-    let resync = jails_cmd(&root, None).arg("sync").output().unwrap();
-    assert!(
-        resync.status.success(),
-        "{}",
-        String::from_utf8_lossy(&resync.stderr)
-    );
-    assert_eq!(
-        generated_tree(&root),
-        after,
-        "`sync` after the upgrade is not a no-op"
-    );
-
-    // Upgrading twice is a refusal, not a second rewrite.
-    let again = jails_cmd(&root, None)
-        .args(["model", "upgrade", "--to", "1"])
-        .output()
-        .unwrap();
-    assert!(!again.status.success());
-    assert!(
-        String::from_utf8_lossy(&again.stderr).contains("already JDL v1"),
-        "{}",
-        String::from_utf8_lossy(&again.stderr)
-    );
-}
-
-/// Every file under the managed root, so two trees can be compared as one
-/// value.
-fn generated_tree(root: &Path) -> std::collections::BTreeMap<String, String> {
-    let mut tree = std::collections::BTreeMap::new();
-    let generated = root.join(".jails/generated");
-    if !generated.exists() {
-        return tree;
-    }
-    let mut stack = vec![generated.clone()];
-    while let Some(directory) = stack.pop() {
-        for entry in fs::read_dir(&directory).unwrap() {
-            let path = entry.unwrap().path();
-            if path.is_dir() {
-                stack.push(path);
-            } else {
-                let relative = path.strip_prefix(&generated).unwrap();
-                tree.insert(
-                    relative.to_string_lossy().replace('\\', "/"),
-                    fs::read_to_string(&path).unwrap_or_default(),
-                );
-            }
-        }
-    }
-    tree
-}
-
-/// `g client` on a canonical project, which was a refusal until its emitter
-/// landed.
+/// `g client` on a canonical project.
 ///
 /// The three files are one declaration and the two the project cannot start
 /// without are the ones easiest to forget: the `spring-boot-starter-restclient`
@@ -10886,8 +10484,7 @@ fn canonical_client_emits_its_registration_dependency_and_base_url() {
         interface.contains("public interface LedgerClient"),
         "{interface}"
     );
-    // The collection route the frontend materialized, matching what the
-    // legacy generator defaults to rather than a second guess here.
+    // The collection route the frontend materialized.
     assert!(
         interface.contains("@GetExchange(\"/ledgers\")"),
         "{interface}"
@@ -11306,8 +10903,7 @@ fn canonical_idempotency_appends_its_table_once_and_only_when_new() {
 ///
 /// v1's closed capability registry has no `db`: `storage postgres` is what the
 /// reader declares and the `db` capability is what the linker materializes
-/// from it. Appending `cap db` wrote a model that no longer parsed, so the
-/// command refused on every v1 project -- fail-closed, and completely broken.
+/// from it; appending `cap db` would write a model that does not parse.
 #[test]
 fn add_db_on_a_v1_model_sets_the_storage_axis() {
     let root = temp_dir("v1-add-db");
@@ -11417,8 +11013,8 @@ fn canonical_handlers_share_one_error_envelope_without_a_framework() {
         "{handler}"
     );
 
-    // The envelope is the same file the legacy engine renders, from the same
-    // template, so this is the shape the golden trees already pin.
+    // The envelope is rendered from the shared template, so this is the shape
+    // the golden trees already pin.
     let envelope = fs::read_to_string(
         root.join(".jails/generated/main/java/com/example/demo/domain/ApiError.java"),
     )
@@ -11431,15 +11027,13 @@ fn canonical_handlers_share_one_error_envelope_without_a_framework() {
     );
 }
 
-/// Canonical `storage postgres` wires the test half, not just the main half.
+/// `storage postgres` wires the test half, not just the main half.
 ///
 /// Once `spring-boot-starter-jdbc` is present, JDBC auto-configuration demands
 /// a `DataSource` for **every** `@SpringBootTest` — including the
 /// `contextLoads` test that shipped with the project and never touches a
-/// database. Before this, canonical `storage postgres` added the starter and
-/// none of the wiring, so a project that declared it and touched nothing else
-/// failed `mvn verify` on a test nobody wrote, with "Failed to determine a
-/// suitable driver class".
+/// database — so a starter with none of the wiring fails `mvn verify` on a
+/// test nobody wrote, with "Failed to determine a suitable driver class".
 #[test]
 fn canonical_storage_postgres_writes_the_container_compose_and_datasource() {
     let root = temp_dir("canonical-db-wiring");
@@ -11546,14 +11140,11 @@ fn canonical_storage_postgres_writes_the_container_compose_and_datasource() {
 
 /// The command that declares a capability is the command that wires it.
 ///
-/// **Capture reads the pre-patch model; the compiler emits from the patched
-/// one.** Which reader trees `capture` reads was decided from the model on
-/// disk, so on the command that *introduces* `storage postgres` the test tree
-/// was not read -- the shipped `contextLoads` test was invisible, the
-/// `@Import` splice had nothing to splice into, and `jails add db` reported
-/// success over a project whose `mvn verify` now fails with "Failed to
-/// determine a suitable driver class". A second, unrelated command repaired
-/// it, which is why running two of them hid this.
+/// Capture decides which reader trees to read from the *intended* model, not
+/// the one on disk: on the command that *introduces* `storage postgres` the
+/// shipped `contextLoads` test has to be visible for the `@Import` splice to
+/// land. A second, unrelated command would repair the omission, which is why
+/// each command is asserted on its own.
 #[test]
 fn canonical_add_db_wires_the_shipped_test_on_the_command_that_declares_it() {
     let root = temp_dir("canonical-db-declaring-command");
@@ -11586,15 +11177,11 @@ fn canonical_add_db_wires_the_shipped_test_on_the_command_that_declares_it() {
     );
 }
 
-/// A canonical command run from a subdirectory is still canonical.
+/// A command run from a subdirectory is about the same project.
 ///
-/// **The dispatch switch and the legacy engine disagreed about which
-/// directory a command was about.** `owns` tested `.jails/model.jdl` against
-/// the process directory while the legacy engine walked up to the build file,
-/// so `jails g record` typed in `src/main/java` of a canonical project
-/// dispatched to the legacy engine: Java went into the reader's own tree
-/// instead of `.jails/generated`, and a `.jails/ledger.toml` appeared in a
-/// project that must never have one. Both walks are the same walk now.
+/// The dispatch switch and the build-file walk are one walk: `jails g record`
+/// typed in `src/main/java` renders into `.jails/generated` and writes no
+/// `.jails/ledger.toml`.
 #[test]
 fn a_canonical_command_run_from_a_subdirectory_is_still_canonical() {
     let root = temp_dir("canonical-subdirectory");
@@ -11659,13 +11246,11 @@ fn a_canonical_command_run_from_a_subdirectory_is_still_canonical() {
 
 /// `model eject` resolves the boundary against the project it is in.
 ///
-/// **It re-emits the tree to find which files an ejection owns, and it did so
-/// with a hardcoded `spring_boot: None`.** Every `BootCondition::Spring`
-/// capability pack therefore emitted nothing *there* while emitting normally
-/// everywhere else, so ejecting one refused "emits no ejectable Java
-/// implementation" with the files plainly on disk. A pack that is
-/// `BootCondition::Any` ejected fine, which made it look like a property of
-/// the capability rather than of the resolver.
+/// It re-emits the tree to find which files an ejection owns, and that
+/// emission has to see the captured Boot version: a `BootCondition::Spring`
+/// capability pack emits nothing under `spring_boot: None`, and an ejection
+/// resolved that way refuses "emits no ejectable Java implementation" with
+/// the files plainly on disk.
 #[test]
 fn canonical_eject_transfers_a_spring_only_capability_pack() {
     let root = temp_dir("canonical-eject-spring-pack");
@@ -11919,13 +11504,11 @@ fn canonical_cli_registers_its_commands_and_claims_the_entry_point() {
 
 /// `g usecase --yields <Event>` writes both lines an outbox needs.
 ///
-/// **The flag is a delivery policy, not just an event.** `--yields` has
-/// always been the spelling that made the legacy generator build a
+/// The flag is a delivery policy, not just an event: `--yields` asks for a
 /// transactional outbox, so writing `emit E` alone would honour it with
 /// direct publication -- a write and a publish that can fail independently --
 /// under a flag that asked for the stronger guarantee. That substitution is
 /// exactly what `deliver` exists to make impossible, so it is what this pins.
-/// `audit.md` A1.7.
 #[test]
 fn canonical_usecase_yields_writes_an_outbox_delivery_policy() {
     let root = temp_dir("canonical-usecase-yields");
@@ -11940,8 +11523,7 @@ fn canonical_usecase_yields_writes_an_outbox_delivery_policy() {
     for command in [
         ["g", "scaffold", "Task", "id:uuid@pk", "title:string!"].as_slice(),
         // The store encodes the staged payload with `Json`, so the capability
-        // that writes it is a prerequisite -- the legacy outbox refuses the
-        // same way, naming the same command.
+        // that writes it is a prerequisite.
         ["add", "json"].as_slice(),
         // `id: uuid` rather than `id`: the event's own identity, minted, not
         // the row's. An outbox staged on the row's id makes
@@ -12075,12 +11657,10 @@ fn canonical_outbox_delivery_reaches_disk_and_its_table_is_written_once() {
     assert_eq!(migrations(), after_first, "sync re-emitted a migration");
 }
 
-/// `g search` and `g seed` write the projection the compiler already reads.
+/// `g search` and `g seed` write the projection the compiler reads.
 ///
-/// Both had complete backends and no syntax editor, so the CLI refused with a
-/// `fix:` line telling the reader to hand-edit `.jails/model.jdl` -- true, and
-/// exactly the half-answer `audit.md` A1.1 is about. The interesting half is
-/// `search`: it is the only projection carrying an argument, because *which*
+/// The interesting half is `search`: it is the only projection carrying an
+/// argument, because *which*
 /// components are indexed is a decision rather than a derivation. A `tsvector`
 /// over every text column indexes ids and status codes as if they were prose,
 /// and the reader then cannot tell why a search for "active" returns
@@ -12258,8 +11838,8 @@ fn canonical_association_writes_a_relation_and_its_foreign_key() {
 
 /// `g migration` allocates a file and writes no SQL into it.
 ///
-/// **The one generator that is deliberately not a model declaration.**
-/// `jdl-sol.md` §2.1 puts ordered migration files outside JDL -- "immutable,
+/// The one generator that is deliberately not a model declaration. JDL v1
+/// §2.1 puts ordered migration files outside JDL -- "immutable,
 /// append-only history" -- §12.6 says authors never name managed migrations in
 /// JDL, and §2 lists writing one among the *non-model* actions a familiar
 /// command may map to. So what this pins is that the model is untouched and
@@ -12347,13 +11927,9 @@ fn canonical_migration_allocates_a_file_without_declaring_anything() {
     assert!(!refused.status.success());
 }
 
-/// The digest a reader reviews is the digest that gets applied.
-///
-/// `simplify-sol.md`'s fitness rules: "preview, plan export, confirmation and
-/// apply reference the same digest". It is the whole reason apply may execute
-/// a bundle rather than recompute one -- `CLAUDE.md`'s fifth contract says
-/// "apply never replans" -- and the question `simplify-sol.md` exists to
-/// delete is exactly *did preview and apply run the same computation?*
+/// The digest a reader reviews is the digest that gets applied: preview, plan
+/// export, confirmation and apply reference the same digest, which is the
+/// whole reason apply may execute a bundle rather than recompute one.
 ///
 /// Four surfaces, one number. `--pretend` is what a human reads, `--plan-out`
 /// is what leaves the machine, and the execution report is what happened; a
@@ -12439,20 +12015,11 @@ fn preview_export_and_apply_all_name_one_plan_digest() {
     );
 }
 
-/// `remove <storage>` is the exact inverse of `add <storage>`.
-///
-/// **A project could enter a storage it could not leave.** `add h2` on a JDL
-/// v1 project sets `storage h2` rather than appending `cap h2` -- storage is
-/// an axis in v1 and the closed capability registry has no `h2` in it -- and
-/// removal went looking for the declaration `add` had deliberately not
-/// written. It refused with a diagnostic naming a `cap h2` that was never
-/// going to exist, which reads like a corrupt model rather than a missing
-/// inverse.
-///
-/// `CLAUDE.md` states the rule this restores: `remove` is the exact inverse of
-/// `add`. Found by porting the differential corpus onto JDL v1 (`audit.md`
-/// A5.3) -- on the pre-v1 dialect `dialect postgresql` was inert, so nothing
-/// exercised the axis at all.
+/// `remove <storage>` is the exact inverse of `add <storage>`: `add h2` on a
+/// JDL v1 project sets `storage h2` rather than appending `cap h2` -- storage
+/// is an axis in v1 and the closed capability registry has no `h2` in it --
+/// so removal clears the axis rather than looking for a declaration `add`
+/// deliberately did not write.
 #[test]
 fn canonical_storage_add_and_remove_are_inverses() {
     let root = temp_dir("canonical-storage-inverse");
@@ -12462,8 +12029,8 @@ fn canonical_storage_add_and_remove_are_inverses() {
          platform spring\n  build maven\n  storage none\n}\n";
     fs::write(root.join(".jails/model.jdl"), source).unwrap();
 
-    // **`h2`, not `db`.** Both are axis kinds and both were broken the same
-    // way, but removing `db` is refused by a *different* rule -- it would
+    // `h2`, not `db`. Both are axis kinds, but removing `db` is refused by a
+    // *different* rule -- it would
     // abandon accepted storage, and retiring tables is an explicit schema
     // policy with its own tests. Asserting through it here would be asserting
     // two things at once and reporting the wrong one when either moved.
@@ -12543,17 +12110,11 @@ fn canonical_storage_add_and_remove_are_inverses() {
 /// Every orthogonal capability pack, in one project, built once.
 ///
 /// Each `canonical_*_pack_*` test above proves what its capability *writes* --
-/// the merged tree, the ejected boundary, the properties the reader keeps.
-/// Those assertions are filesystem work costing milliseconds. What each one
-/// used to append was a whole `mvn test` purely to show the result still
-/// compiles: thirteen runs averaging 20.4s, **265s of the suite's 730s of
-/// Maven time**, measured with `JAILS_TEST_PROFILE`.
-///
-/// That collapses because the cost is per *project*, not per assertion. A
-/// Maven start is 1.54s and javac 1.45s, and the Spring context boot which
-/// dominates the rest is cached per configuration inside one JVM -- measured
-/// in this repository at 6.56s for one `@SpringBootTest` class against 6.49s
-/// for eight. Nine capabilities in one project cost about one run, not nine.
+/// the merged tree, the ejected boundary, the properties the reader keeps --
+/// which is filesystem work costing milliseconds. Whether the result compiles
+/// is proved here, once: the cost of a Maven run is per *project*, not per
+/// assertion, because the Spring context boot that dominates it is cached per
+/// configuration inside one JVM, measured.
 ///
 /// It is also the *stronger* check, for the reason `spring-core-toolbox`
 /// gives: a capability that only contradicts another in company -- two owners
@@ -12566,15 +12127,15 @@ fn canonical_storage_add_and_remove_are_inverses() {
 /// They are not orthogonal to this set, and folding them in would mean
 /// asserting less rather than more.
 ///
-/// **`redis`, `kafka` and `mail` are excluded for a reason worth keeping.**
-/// Each registers a Spring health indicator, and `actuator` exposes health --
+/// `redis`, `kafka` and `mail` are excluded. Each registers a Spring health
+/// indicator, and `actuator` exposes health --
 /// so in one project the actuator test asks a `MailHealthIndicator` for its
 /// verdict, it tries `localhost:1025`, and the build fails on
 /// `MailConnectException` rather than on anything either capability got wrong.
 /// They are orthogonal to each other but not to this set, so they belong in a
 /// second toolbox of their own rather than in this one.
 ///
-/// **`coverage` is excluded for a different reason, and a sharper one.** Its
+/// `coverage` is excluded for a different reason, and a sharper one. Its
 /// check is `verify`, where JaCoCo enforces a *ratio over the whole project*.
 /// That is not a property of the capability at all: drop five other packs'
 /// largely-untested generated code into the same tree and the same coverage
@@ -12614,9 +12175,9 @@ fn every_orthogonal_capability_pack_compiles_and_tests_in_one_project() {
         );
     }
 
-    // The per-pack tests each built *after* ejecting their own boundary, so
-    // this has to eject too or it would be proving a different tree from the
-    // one they assert about.
+    // The per-pack tests each assert the tree *after* ejecting their own
+    // boundary, so this has to eject too or it would be proving a different
+    // tree.
     for artifact in [
         "cap_actuator",
         "cap_cache",
@@ -12661,16 +12222,14 @@ fn every_orthogonal_capability_pack_compiles_and_tests_in_one_project() {
 /// `MailConnectException` having proved nothing about either capability.
 ///
 /// `redis` and `kafka` are orthogonal to *each other*, so they share a project
-/// of their own with no `actuator` in it -- two Maven starts and two Spring
-/// context boots collapsed to one.
+/// of their own with no `actuator` in it.
 ///
-/// **`mail` keeps its own build, and the reason is a trap worth recording.**
-/// Its check is `verify`, not `test`, so folding it in here would mean running
-/// `verify` -- which runs the Failsafe `*IT`s, and `redis` generates a
-/// `KeyValueStoreIT` that starts a Testcontainers Redis. `mail` alone needed
-/// no container; `mail` beside `redis` under `verify` does. Merging it would
-/// have quietly added a Docker requirement to a test that never had one, so
-/// the cheaper-looking merge is the one that makes the suite less portable.
+/// `mail` keeps its own build. Its check is `verify`, not `test`, so folding
+/// it in here would mean running `verify` -- which runs the Failsafe `*IT`s,
+/// and `redis` generates a `KeyValueStoreIT` that starts a Testcontainers
+/// Redis. `mail` alone needs no container; `mail` beside `redis` under
+/// `verify` does, and merging them would quietly add a Docker requirement to
+/// a test that has none.
 #[test]
 fn the_health_indicator_capability_packs_compile_and_test_in_one_project() {
     if !real_mvn_available() || !real_java_supports_target_release() {
@@ -12707,15 +12266,10 @@ fn the_health_indicator_capability_packs_compile_and_test_in_one_project() {
     );
 }
 
-/// `jails resource status` used to answer `state: ambiguous` /
-/// `this project has no recorded resource state` about an entity the model
-/// describes completely.
-///
-/// That is not a missing answer but a wrong one: the legacy report reads
-/// `.jails/ledger.toml`, a canonical project has none, and every authority the
-/// report names is present and readable somewhere else. This drives all four
-/// -- declaration, generated, migration history, and the SQL table -- and the
-/// two states that are not `consistent`.
+/// `jails resource status` answers about an entity the model describes, from
+/// every authority it names. This drives all four -- declaration, generated,
+/// migration history, and the SQL table -- and the two states that are not
+/// `consistent`.
 #[test]
 fn resource_status_answers_from_the_model_when_the_project_is_canonical() {
     let root = jdl_project(
@@ -12834,14 +12388,12 @@ entity Memo {
     );
 }
 
-/// `jails doctor` said `all clear` about a canonical project whose generated
-/// tree had been edited and part of it deleted.
+/// `jails doctor` reports a generated tree that has been edited and one that
+/// is partly deleted.
 ///
-/// Its managed-output checks read `.jails/ledger.toml`, and a canonical
-/// project has none -- so the whole tree jails writes was outside the report.
-/// Both rows here are worded from what the binary does rather than from what
-/// the design suggests: `sync` refuses while an accepted file is missing, and
-/// merges an edited one forward without writing anything.
+/// Both rows are worded from what the binary does: `sync` refuses while an
+/// accepted file is missing, and merges an edited one forward without writing
+/// anything.
 #[test]
 fn doctor_reports_the_generated_tree_of_a_canonical_project() {
     let root = jdl_project(
@@ -12877,10 +12429,8 @@ entity Visit {
         "a freshly synced project reports both managed rows clean:\n{clean}"
     );
 
-    // The `jails.toml` capability row reported "records none -- nothing to
-    // reconcile" about a project whose model declares capabilities. It now
-    // says where they live, and the accepted-model row is what reconciles
-    // them.
+    // The `jails.toml` capability row says where a modelled project's
+    // capabilities live, and the accepted-model row is what reconciles them.
     let capability = jails_cmd(&root, None)
         .args(["add", "json"])
         .output()
@@ -12907,7 +12457,7 @@ entity Visit {
 
     // Every column the record carries exists in the migrations. `doctor`
     // answers "are these the bytes jails wrote"; this is the half that answers
-    // "is this project coherent", and a canonical project had neither.
+    // "is this project coherent".
     assert!(
         clean.contains("`visits` has every column the record carries"),
         "the stored entity's lineage should be checked:\n{clean}"
@@ -12958,13 +12508,9 @@ entity Visit {
     );
 }
 
-/// `jails routes` and `jails beans` read `src/main/java`, and a canonical
-/// project's controllers are not there.
-///
-/// `bugs.md` B56 already recorded the shape of this: *a route jails emitted
-/// and cannot see is worse than a gap, because the reader cannot tell an
-/// unlisted route from an absent one.* Moving reproducible output to
-/// `.jails/generated` reintroduced it for every route at once.
+/// `jails routes` and `jails beans` read the managed tree as well as
+/// `src/main/java`: a route jails emitted and cannot see is worse than a gap,
+/// because the reader cannot tell an unlisted route from an absent one.
 #[test]
 fn routes_and_beans_see_the_tree_a_canonical_project_generates_into() {
     let root = jdl_project(
@@ -13083,12 +12629,11 @@ app Bare {
     );
 }
 
-/// The incoherence `doctor` could not see: the Java carries a component the
-/// schema history does not.
+/// An incoherence `doctor` reports: the Java carries a component the schema
+/// history does not.
 ///
 /// Every file is byte-identical to what jails wrote, so nothing else has a
-/// reason to complain, and only a query at runtime finds it. `schema_lineage`
-/// answers this for a legacy project; a canonical one had no answer at all.
+/// reason to complain, and only a query at runtime would find it.
 #[test]
 fn doctor_names_a_column_the_record_carries_and_the_migrations_do_not() {
     let root = jdl_project(
@@ -13168,17 +12713,8 @@ entity Bed {
 }
 
 /// `jails adopt` and `jails model init` are each other's obvious next step in
-/// a foreign repository, and they refused each other.
-///
-/// `adopt` records a `jails.toml` layout row through the legacy engine, which
-/// creates a ledger. `model init` refused any ledger by file existence and
-/// sent the reader to `model import`; `model import` answered "no supported
-/// record or enum declarations", because a layout row declares no entity. A
-/// dead end reachable by running the two commands a foreign project most
-/// naturally runs, in the order it would naturally run them.
-///
-/// A ledger is a reason to refuse only when it holds something `model import`
-/// could carry.
+/// a foreign repository, so `adopt` must leave nothing `model init` refuses
+/// on: a layout row is configuration, not a transition.
 #[test]
 fn a_project_that_only_recorded_its_layout_can_still_become_canonical() {
     let root = temp_dir("adopt-then-model-init");
@@ -13231,60 +12767,16 @@ fn a_project_that_only_recorded_its_layout_can_still_become_canonical() {
     );
 }
 
-/// `jails sql check` reads `.jails/app.toml`, and a canonical project has
-/// never had one.
+/// `.jails/app.toml` is an import format, not a second editable source.
 ///
-/// The answer was `failed to read application manifest
-/// /path/.jails/app.toml: No such file or directory (os error 2)` -- an OS
-/// error naming an internal path the reader never wrote, with no fix line and
-/// no hint that the command does not apply to their project. An absent
-/// manifest is a refusal with a reason.
-#[test]
-fn sql_check_says_why_a_canonical_project_has_no_application_manifest() {
-    let root = jdl_project(
-        "jdl-v1-sql-check-manifest",
-        r#"jdl 1
-app Vault {
- pkg com.example.vault
- java 26
- platform plain
- build maven
- storage none
-}
-"#,
-    );
-    write_plain_fixture(&root);
-
-    let refused = jails_cmd(&root, None)
-        .args(["sql", "check"])
-        .output()
-        .unwrap();
-    let refused = String::from_utf8_lossy(&refused.stderr).to_string();
-    assert!(
-        refused.contains("legacy application manifest") && refused.contains("fix:"),
-        "an absent manifest is a refusal with a reason:\n{refused}"
-    );
-    assert!(
-        !refused.contains("os error"),
-        "and not an OS error about an internal path:\n{refused}"
-    );
-}
-
-/// `.jails/app.toml` becomes an import format rather than a second engine.
-///
-/// `app plan` and `app apply` refused a canonical project, which was right
-/// while the alternative was a parallel engine: the legacy route planned
-/// `jails.toml`, a ledger and capability Java outside `.jails/generated`
-/// against a model it never read. The objection was to the engine, not to the
-/// file. A `[[generate]]` row is a `GenerateArgs` -- the same value `jails g`
-/// parses -- so every row can go through the frontend that already knows how
-/// to declare it, and the manifest's own syntax is the only thing its parser
+/// A `[[generate]]` row is a `GenerateArgs` -- the same value `jails g`
+/// parses -- so every row goes through the frontend that already knows how to
+/// declare it, and the manifest's own syntax is the only thing its parser
 /// knows that the CLI does not.
 ///
 /// Row by row rather than one transition, which costs atomicity and buys
-/// something better: each frontend is idempotent, so an interrupted replay
-/// converges by being run again rather than by resuming a journal a canonical
-/// project does not have.
+/// convergence: each frontend is idempotent, so an interrupted replay
+/// converges by being run again.
 #[test]
 fn a_manifest_replays_into_the_model_and_converges() {
     let root = jdl_project(
@@ -13369,8 +12861,8 @@ fields = ["OPEN", "CLOSED"]
         String::from_utf8_lossy(&planned.stderr)
     );
 
-    // `app init` still refuses: it writes the manifest, and a manifest beside
-    // a model is the second editable source the cutover forbids.
+    // `app init` refuses: it writes the manifest, and a manifest beside a
+    // model is a second editable source.
     let refused = jails_cmd(&root, None)
         .args(["app", "init"])
         .output()
@@ -13382,18 +12874,9 @@ fields = ["OPEN", "CLOSED"]
     );
 }
 
-/// `resource index add` wrote a declaration its own parser rejects.
-///
-/// `.jails/model.jdl` may hold either syntax, and the two disagree about a
-/// constraint: v1 reads `index [ user_id, created_at desc ]` and allows only
-/// `@id` and `@map`, while v0 takes parentheses and names the index with
-/// `@as`. The renderer branched on the *filename*, so every v1 model got the
-/// v0 form and `resource index add` failed with "a constraint needs a
-/// bracketed field list" pointing at the entity's closing brace.
-///
-/// The covering test's model is v0 syntax in a `.jdl` file -- the one shape
-/// where the old branch was right -- so nothing exercised this until a proof
-/// application's `g scaffold --index` needed it.
+/// `resource index add` writes a declaration its own parser accepts: v1 reads
+/// `index [ user_id, created_at desc ]` and allows only `@id` and `@map`, and
+/// the renderer picks the form by dialect rather than by filename.
 #[test]
 fn an_index_on_a_v1_model_uses_the_grammar_that_model_is_written_in() {
     let root = jdl_project(
@@ -13477,17 +12960,12 @@ entity Crate {
     );
 }
 
-/// Five more operation flags the canonical frontend refused to translate.
+/// Five operation flags the frontend translates into the model: `set x = 1`,
+/// `select [a]`, `if-match optional`, `bind p from form "wire"` and `consumes
+/// form`, which `TransitionSemantics` carries as `select`, `assignments` and
+/// `precondition`.
 ///
-/// The same shape as `--via` and `--index` before them, and worth stating
-/// again because it is the pattern rather than the instance: the JDL parser
-/// has read `set x = 1`, `select [a]`, `if-match optional`,
-/// `bind p from form "wire"` and `consumes form` all along, and
-/// `TransitionSemantics` carries `select`, `assignments` and `precondition`.
-/// Only this frontend refused, so the `fix:` line told the reader to hand-edit
-/// `.jails/model.jdl` -- true, and useless.
-///
-/// **The selector is subtracted from the update**, which is the one part that
+/// The selector is subtracted from the update, which is the one part that
 /// is not a straight pass-through: a transition does not write the column it
 /// selects by, and naming a primary key in both is what the compiler refuses
 /// as rewriting a key.
@@ -13571,13 +13049,10 @@ entity Note {
     );
 }
 
-/// Four operation flags the canonical frontend refused to translate, each of
-/// which the model, the JDL grammar and the compiler had supported all along.
-///
-/// The pattern is the one `--index` had: the node exists, the frontend does
-/// not populate it, and the flag is rejected as "not represented". Found by
-/// applying a proof-application manifest to a canonical project, because
-/// nothing else asks for them together.
+/// Four operation flags the frontend translates into nodes the model, the JDL
+/// grammar and the compiler support -- `--via`, `--order-by`, an optional
+/// filter and `--on-conflict` -- asked for together, as a proof-application
+/// manifest does.
 #[test]
 fn a_canonical_query_carries_its_join_ordering_and_optional_filters() {
     let root = jdl_project(
@@ -13728,13 +13203,12 @@ entity Note {
 
 /// A marked block jails owns stays where it is.
 ///
-/// `ensure_maven_source_roots` strips its block and re-inserts it before
-/// `</plugins>`, which is position-stable only while it is the last thing in
-/// there -- and it was, until the integration-test plugin started landing
-/// beside it. After that every plan wanted to move one block past the other,
-/// so `jails model check --frozen` reported a pending operation on a project
-/// that had just been synchronised and the pom churned by a whole block on
-/// every run.
+/// Stripping the source-roots block and re-inserting it before `</plugins>`
+/// is position-stable only while it is the last thing in there; once the
+/// integration-test plugin lands beside it, every plan would move one block
+/// past the other, `jails model check --frozen` would report a pending
+/// operation on a project just synchronised, and the pom would churn by a
+/// whole block on every run.
 ///
 /// Two blocks is the smallest case that can show it, which is why this needs
 /// an operation: the failsafe plugin arrives with the first emitted `*IT`.
@@ -13803,13 +13277,10 @@ app Demo {
     assert_eq!(fs::read_to_string(root.join("pom.xml")).unwrap(), pom);
 }
 
-/// A canonical scaffold serves its resource.
-///
-/// The `http` facet emitted a one-method `interface <Name>HttpPort` with no
-/// implementation, no route and no caller, so nothing served the entity while
-/// the engine it replaces wrote a full CRUD controller for the same
-/// declaration. Compiling proved nothing: an unimplemented interface compiles,
-/// which is why this survived every file-level check the suite has.
+/// A scaffold serves its resource: the `http` facet emits a controller behind
+/// `<Name>HttpPort`, not a one-method interface with no implementation, no
+/// route and no caller. An unimplemented interface compiles, so this is held
+/// at the file level.
 ///
 /// It speaks the domain record rather than a request/response pair, which is
 /// the shape the operation controllers already use -- one wire convention per
@@ -13851,8 +13322,8 @@ entity Widget {
     assert!(!refused.status.success());
     let message = String::from_utf8_lossy(&refused.stderr);
     assert!(message.contains("was deleted by you"), "{message}");
-    // The fix line has to name a command that writes it back. It used to say
-    // `jails sync`, which is the command that just refused.
+    // The fix line has to name a command that writes it back, not `jails
+    // sync`, which is the command that just refused.
     assert!(message.contains("jails resource repair"), "{message}");
 
     let repaired = jails_cmd(&root, None)
@@ -13962,11 +13433,10 @@ app Demo {
             "missing {method}:\n{controller}"
         );
     }
-    // **The service, not the repository port.** The suite jails generates
-    // beside this controller forbids a `*Controller` depending on the
-    // repository package, so injecting the port here made a freshly
-    // scaffolded project fail its own `ArchitectureTest` on the first
-    // `mvn test`.
+    // The service, not the repository port: the suite jails generates beside
+    // this controller forbids a `*Controller` depending on the repository
+    // package, so injecting the port would fail a freshly scaffolded project's
+    // own `ArchitectureTest`.
     assert!(controller.contains("NoteService service"), "{controller}");
     assert!(
         !controller.contains("NoteRepository"),
@@ -14065,13 +13535,11 @@ app Demo {
 /// A command's and a transition's JDBC adapter each run against a real
 /// database.
 ///
-/// The query adapter had a proof; the write half had none. A command's
-/// `insert ... returning` and a transition's `update ... returning` were
-/// asserted by nothing, so a bind the driver will not take compiled and
-/// shipped -- which is exactly what the first run found: only the repository
-/// adapter passed its parameters through `bound_value`, so an enum reached
-/// PostgreSQL raw and `Can't infer the SQL type to use for an instance of
-/// Shelf` came back, naming neither the column nor the statement.
+/// A command's `insert ... returning` and a transition's `update ...
+/// returning` must pass every parameter through `bound_value`: a bind the
+/// driver will not take compiles, and an enum reaching PostgreSQL raw fails
+/// with `Can't infer the SQL type to use for an instance of Shelf`, naming
+/// neither the column nor the statement.
 #[test]
 fn canonical_write_adapters_run_against_real_postgres() {
     if !real_mvn_available() || !real_java_supports_target_release() {
@@ -14172,22 +13640,20 @@ app Demo {
     );
 }
 
-/// **`docs/01-jdl-v1.md` §21's first conformance family: the §4 complete example is a
-/// fixture, not prose.**
+/// JDL v1 §21's first conformance family: the §4 complete example is a
+/// fixture, not prose.
 ///
 /// §21 says the complete example "is an executable conformance fixture" and
 /// that documentation examples MUST be extracted in CI rather than copied into
-/// disconnected test strings. Nothing extracted it, so the flagship example of
-/// the language could stop linking and the only thing that would notice is a
-/// reader typing it in. It had: `version` is a `@version` field and the
-/// transition that guards on it is `if-match required`, which the linker
-/// rejected as a set target for months.
+/// disconnected test strings; otherwise the flagship example of the language
+/// could stop linking and the only thing that would notice is a reader typing
+/// it in.
 ///
-/// **The example is read out of `docs/01-jdl-v1.md` rather than pasted here**, which is
+/// The example is read out of `docs/01-jdl-v1.md` rather than pasted here, which is
 /// the whole point -- a copy is a second document that drifts silently, and a
 /// test asserting a copy links proves nothing about what a reader sees.
 ///
-/// **One line is a recorded gap rather than a passing assertion.** §16.4 says
+/// One line is a recorded gap rather than a passing assertion. §16.4 says
 /// the *preferred* ejection reference is a readable boundary path --
 /// `Entity.repo.fake` -- resolved by a boundary registry. There is no boundary
 /// registry: `known_targets` in the linker is the set of stable IDs, and
@@ -14254,139 +13720,46 @@ fn the_specification_complete_example_links_except_its_one_recorded_gap() {
     fs::remove_dir_all(&root).ok();
 }
 
-/// A project on `.jails/model.toml` has a route to `jdl 1`, and takes it once.
-///
-/// **This is A4.4's exit, and the state it removes is the one
-/// `docs/00-contracts.md` forbids.** Before this, `model check` accepted a
-/// TOML model, `jails g record` applied patches to it, and `model upgrade`
-/// refused it by name -- so the compatibility input was a second *editable*
-/// model source with no convergence at all. `model import`, which used to be
-/// the way across, no longer exists.
-///
-/// Three things are asserted because each has its own way of going wrong: the
-/// JDL is written, the TOML is **retired in the same plan** (leaving both is
-/// the forbidden state, and a crash between two plans would make it
-/// permanent), and every stable id survives -- an upgrade that renumbered
-/// `ent_note` would silently orphan the generated tree it names.
-///
-/// The axes are the fourth: `.jails/model.toml` carries neither `platform` nor
-/// `build`, and `ProjectIntent` defaults them to `spring`/`maven`. §22 says
-/// they are observed and "never guessed", so a plain project must come out
-/// `platform plain`. It did not, the first time this was run by hand.
+/// One model language. A `.jails/model.jdl` that does not open with `jdl 1`,
+/// and a project that still has only `.jails/model.toml`, are each refused by
+/// name with the file the model has to be.
 #[test]
-fn a_toml_project_upgrades_onto_jdl_v1_and_the_toml_is_retired_with_it() {
-    let root = temp_dir("toml-carry-across");
-    common::write_plain_fixture(&root);
+fn a_model_that_is_not_jdl_1_is_refused_by_name() {
+    let root = jdl_project("model-not-jdl-1", "application Notes\n");
+    let refused = jails_cmd(&root, None)
+        .args(["g", "record", "Task", "id:uuid"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success(), "{refused:?}");
+    let told = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        told.contains("`.jails/model.jdl` does not start with `jdl 1`"),
+        "{told}"
+    );
+    assert!(told.contains("fix: the model must be `jdl 1`"), "{told}");
+    fs::remove_dir_all(&root).ok();
+
+    let root = temp_dir("model-only-toml");
+    write_spring_fixture(&root);
     fs::create_dir_all(root.join(".jails")).unwrap();
-    // **Written by hand, because the front end no longer accepts an edit.**
-    // The entity and the operation used to arrive through `jails g record`;
-    // that command refuses on a TOML model now and names this one, which is
-    // the property asserted below.
-    //
-    // **The operation states its inputs as a flat `fields` list.** The TOML
-    // front end lets that stand in for parameters and `emit_java::input` reads
-    // it, so it is the request's whole shape -- and JDL v1 has no flat
-    // spelling for it. The renderer refuses it by name and the upgrade
-    // materialises the parameters, which is the only reason a project with a
-    // command can be carried across at all.
     fs::write(
         root.join(".jails/model.toml"),
-        r#"
-schema = "jails.model.v1"
-
-[project]
-id = "project_demo"
-name = "Demo"
-base_package = "com.example.demo"
-java_release = 26
-dialect = "none"
-
-[entities.note]
-id = "ent_note"
-facets = ["record"]
-
-[entities.note.fields.id]
-id = "fld_note_id"
-type = "uuid"
-primary_key = true
-
-[entities.note.fields.title]
-id = "fld_note_title"
-type = "string"
-
-[operations.create_note]
-kind = "command"
-id = "op_create_note"
-on = "note"
-fields = ["title"]
-"#,
+        "schema = \"jails.model.v1\"\n",
     )
     .unwrap();
-
-    // **It compiles, and it does not accept an edit.** Both halves matter:
-    // refusing to *read* would leave a project unable to see its own model
-    // before upgrading, and accepting an edit is what made the compatibility
-    // input a second editable model source with no convergence.
-    let synced = jails_cmd(&root, None).arg("sync").output().unwrap();
-    assert!(
-        synced.status.success(),
-        "{}",
-        String::from_utf8_lossy(&synced.stderr)
-    );
-    let before = generated_tree(&root);
-    let refused = jails_cmd(&root, None)
-        .args(["g", "record", "Tag", "id:uuid@pk"])
-        .output()
-        .unwrap();
-    assert!(!refused.status.success());
-    let told = String::from_utf8_lossy(&refused.stderr);
-    assert!(told.contains("temporary compatibility input"), "{told}");
-    assert!(told.contains("jails model upgrade --to 1"), "{told}");
-    assert_eq!(generated_tree(&root), before, "the refusal wrote a plan");
-
-    let upgraded = jails_cmd(&root, None)
-        .args(["model", "upgrade", "--to", "1"])
-        .output()
-        .unwrap();
-    assert!(upgraded.status.success(), "{upgraded:?}");
-    let told = String::from_utf8_lossy(&upgraded.stdout);
-    assert!(
-        told.contains("create_note` states its inputs as parameters"),
-        "the translation was silent:\n{told}"
-    );
-
-    assert!(
-        !root.join(".jails/model.toml").exists(),
-        "the compatibility input outlived the plan that replaced it"
-    );
-    let jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
-    assert!(jdl.starts_with("jdl 1"), "{jdl}");
-    assert!(
-        jdl.contains("platform plain"),
-        "the axes were guessed:\n{jdl}"
-    );
-    assert!(jdl.contains("build maven"), "the axes were guessed:\n{jdl}");
-    for id in [
-        "project_demo",
-        "ent_note",
-        "fld_note_id",
-        "fld_note_title",
-        "op_create_note",
+    for command in [
+        ["g", "record", "Task", "id:uuid"].as_slice(),
+        ["model", "check"].as_slice(),
     ] {
-        assert!(jdl.contains(id), "stable id `{id}` did not survive:\n{jdl}");
+        let refused = jails_cmd(&root, None).args(command).output().unwrap();
+        assert!(!refused.status.success(), "{command:?}: {refused:?}");
+        let told = String::from_utf8_lossy(&refused.stderr);
+        assert!(
+            told.contains("`.jails/model.toml` is not a model this jails reads"),
+            "{command:?}: {told}"
+        );
+        assert!(told.contains("write the model as `jdl 1`"), "{told}");
     }
-    // Named for the Java member the flat list rendered, so the request field
-    // an existing caller sends is the one it still sends.
-    assert!(
-        jdl.contains("command CreateNote(title)"),
-        "the flat input list was dropped:\n{jdl}"
-    );
-
-    // And the project keeps working on the source it was moved to.
-    let after = jails_cmd(&root, None)
-        .args(["g", "record", "Tag", "id:uuid@pk"])
-        .output()
-        .unwrap();
-    assert!(after.status.success(), "{after:?}");
+    assert!(!root.join(".jails/model.jdl").exists());
     fs::remove_dir_all(&root).ok();
 }

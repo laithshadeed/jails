@@ -73,8 +73,7 @@ pub(super) fn emit_compose_service(
 fn compose_block(service: &ComposeService) -> String {
     // Two spaces, because a marker at column zero inside a YAML mapping is a
     // parse error rather than a comment in the wrong place -- which is the
-    // reason `Marked::indented` exists, and the reason rendering this by hand
-    // was a second chance to get it wrong.
+    // reason `Marked::indented` exists.
     let marked = jails_codemod::Marked::indented(service.marker, "  ");
     // `render` indents every line it is given, so the body arrives one level
     // short of where it lands: the service name at zero becomes two spaces,
@@ -93,10 +92,10 @@ mod compose_block_tests {
 
     /// The block is written by `Marked` rather than by hand here.
     ///
-    /// Pinned because the two disagree in a way that reads as correct: the
-    /// splice indents *every* line it is handed, so a body that already
-    /// carried the service's two spaces came out four in and the compose file
-    /// silently changed shape.
+    /// Pinned because a hand-rendered block disagrees in a way that reads as
+    /// correct: the splice indents *every* line it is handed, so a body that
+    /// already carries the service's two spaces comes out four in and the
+    /// compose file silently changes shape.
     #[test]
     fn the_block_is_indented_exactly_as_compose_needs() {
         let service = ComposeService {

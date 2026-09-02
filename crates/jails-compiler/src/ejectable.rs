@@ -84,14 +84,11 @@ pub fn implementation_paths(
 
 /// Whether this component kind has an emitter behind it.
 ///
-/// `audit.md` A1.2. Fifteen of the twenty-three closed kinds linked, planned,
-/// applied and reported success while producing no file and no diagnostic.
-/// `component client Audit` was accepted, `model check` said "model valid",
-/// `sync` said "3 operations, 4 files written", and nothing in the tree
-/// mentioned it. A silent no-op on a declaration the author wrote is worse
-/// than a refusal, because there is nothing to notice.
+/// A kind that links, plans, applies and reports success while producing no
+/// file and no diagnostic is a silent no-op on a declaration the author
+/// wrote -- worse than a refusal, because there is nothing to notice.
 ///
-/// The match is exhaustive on purpose: `jdl-sol.md` §20.2 asks for a test that
+/// The match is exhaustive on purpose: JDL v1 §20.2 asks for a test that
 /// fails "when a registered role has no emitter", and the strongest version of
 /// that test is a compile error. Adding a kind stops the build here until
 /// somebody decides which arm it belongs in.

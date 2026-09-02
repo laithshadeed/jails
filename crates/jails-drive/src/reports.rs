@@ -7,8 +7,7 @@
 //! **One reader for Maven and Gradle**, because they write the same schema and
 //! differ only in where. Surefire and Failsafe put theirs under
 //! `target/*-reports/`; Gradle puts a `Test` task's under
-//! `build/test-results/<task>/`. It was called `surefire.rs` while only one of
-//! them existed.
+//! `build/test-results/<task>/`.
 //!
 //! They differ in one detail, and it is the kind that produces a plausible
 //! wrong answer rather than an error: **Gradle writes the method name with its
@@ -65,13 +64,12 @@ fn short_class(class: &str) -> &str {
     class.rsplit('.').next().unwrap_or(class)
 }
 
-/// Every case both plugins recorded, newest report layout first.
-///
-/// Both directories, because the split between them is Maven's, not the
-/// reader's: `jails test --failed` after a `verify` should offer to rerun the
-/// integration test that failed, not silently ignore it because it was
-/// Failsafe's.
 /// Where a build tool leaves its JUnit XML.
+///
+/// Surefire's and Failsafe's both, because the split between them is Maven's,
+/// not the reader's: `jails test --failed` after a `verify` should offer to
+/// rerun the integration test that failed, not silently ignore it because it
+/// was Failsafe's.
 ///
 /// Both tools' directories, always, rather than the ones this project's build
 /// file implies: a directory that is not there reads as no reports, which is
@@ -89,6 +87,7 @@ const REPORT_DIRECTORIES: &[&str] = &[
     "build/test-results/integrationTest",
 ];
 
+/// Every case any report directory recorded.
 pub(crate) fn cases(root: &Path) -> Vec<Case> {
     let mut found = Vec::new();
     for dir in REPORT_DIRECTORIES {

@@ -7,16 +7,9 @@ edition.workspace = true
 # `commands` walks the same `clap::Command` that parses the arguments, so
 # there is no second list of what jails can do.
 clap.workspace = true
-# Same layer, no cycle: `store.rs` is the one reader of `.jails/`, and asking
-# whether a transaction finished is a question about that directory. A second
-# reader here would be a second copy of the journal format.
-jails-commit.workspace = true
-jails-generate.workspace = true
 jails-java.workspace = true
 jails-project.workspace = true
-jails-protocol.workspace = true
 jails-spec.workspace = true
-jails-state.workspace = true
 jails-support.workspace = true
 
 [lints]

@@ -46,8 +46,7 @@ const K8S_FILES: [(&str, &str, crate::Template); 6] = [
 ];
 
 /// Pinned by commit, not by tag: a tag is mutable and a moved tag is a supply
-/// chain compromise nobody sees in the diff. Kept in step with
-/// `add/tooling.rs`, which pins the same two.
+/// chain compromise nobody sees in the diff.
 const CHECKOUT_SHA: &str = "de0fac2e4500dabe0009e67214ff5f5447ce83dd"; // v6.0.2
 const SETUP_JAVA_SHA: &str = "03ad4de0992f5dab5e18fcb136590ce7c4a0ac95"; // v5.6.0
 
@@ -171,7 +170,7 @@ fn lower_migration_directory(
     )
 }
 
-/// The verify workflow, from the template `add/tooling.rs` also reads.
+/// The verify workflow.
 ///
 /// One template, because two copies of a CI file drift on the pinned action
 /// SHAs -- and that is the drift nobody notices until an advisory names a
@@ -214,9 +213,9 @@ fn lower_ci(
 /// The production image: a Dockerfile, its ignore file, and the workflow that
 /// proves the image runs as a numeric non-root user.
 ///
-/// Same three templates the legacy engine reads. The build stage is chosen
-/// here rather than in a template, because which one applies depends on
-/// whether the project ships a wrapper -- structural, not substitution.
+/// The build stage is chosen here rather than in a template, because which
+/// one applies depends on whether the project ships a wrapper -- structural,
+/// not substitution.
 fn lower_docker(
     model: &AppModel,
     capability: &Capability,
@@ -272,7 +271,7 @@ fn lower_docker(
 /// `format`'s reader-facing half: the editor settings the formatter assumes.
 ///
 /// Spotless enforces Java; `.editorconfig` is what stops an editor fighting it
-/// in every other file, and it is the same bytes the legacy engine writes.
+/// in every other file.
 fn lower_format(
     capability: &Capability,
     output: &mut RenderedTree,
@@ -293,17 +292,14 @@ fn lower_format(
 
 /// The Helm chart, and the three declarations it cannot deploy without.
 ///
-/// The legacy engine reads the pom for two of these and the filesystem for the
-/// third. Canonically all three are model questions -- the capability is
-/// declared or it is not -- which is both simpler and stricter: a project that
-/// had `spring-boot-starter-actuator` spliced in by hand satisfied the old
-/// check while having no actuator capability for `sync` to reconcile.
+/// All three are model questions -- the capability is declared or it is not
+/// -- which is both simpler and stricter than reading the pom: a project with
+/// `spring-boot-starter-actuator` spliced in by hand has no actuator
+/// capability for `sync` to reconcile.
 ///
 /// The chart is named from the model's project name rather than the pom's
-/// artifactId. That is the canonical answer -- `AppModel` is where names come
-/// from -- and it is a real difference from the legacy chain of artifactId,
-/// then directory name, then `"application"`, for a project whose declared
-/// name and coordinate disagree.
+/// artifactId, because `AppModel` is where names come from; the two differ
+/// for a project whose declared name and coordinate disagree.
 fn lower_k8s(
     model: &AppModel,
     capability: &Capability,
@@ -370,9 +366,9 @@ fn lower_loadtest(
         // **Phrased as the state, not as the command**, because the compiler
         // is pure over (snapshot, patch) and cannot tell installing the
         // capability from removing the last route out from under one already
-        // installed. Naming only the first left the second sending the reader
-        // to run a command they had run -- and it is the same refusal every
-        // other reference the model protects gives.
+        // installed. Naming only the first would send the reader in the second
+        // case to run a command they have run -- and it is the same refusal
+        // every other reference the model protects gives.
         return Err(CompileError::new(
             "removing the last route would leave the `loadtest` capability pointing at nothing.\n       fix: keep a controller or routed operation, or run `jails remove loadtest`",
         ));

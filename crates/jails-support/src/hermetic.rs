@@ -1,17 +1,13 @@
 //! Running an external tool without letting it escape.
 //!
-//! ## Why it is not called `runner`
-//!
-//! It was, and it sat next to [`crate::process`] -- which runs a program with
-//! the reader's terminal, inherited environment and no timeout. Two
-//! near-identical names for two different safety contracts is how a caller
-//! reaches for the wrong one. This module's contract is in its name now:
-//! bounded time, bounded output, nothing inherited. `pending.md` §7.5.
+//! [`crate::process`] runs a program with the reader's terminal, inherited
+//! environment and no timeout. This module's contract is in its name: bounded
+//! time, bounded output, nothing inherited. Two near-identical names for two
+//! different safety contracts is how a caller reaches for the wrong one.
 //!
 //! ## Why this is not `Command::output()`
 //!
-//! Three things go wrong with the obvious version, and all three have been
-//! seen in the wild.
+//! Three things go wrong with the obvious version.
 //!
 //! A tool that writes more than a pipe buffer holds and is not being drained
 //! **deadlocks**: it blocks on write, the parent blocks on wait, and neither
@@ -24,8 +20,8 @@
 //! process group and the signal goes to the group.
 //!
 //! A tool that ignores `SIGTERM` and is then abandoned looks like a
-//! **success**. plan.md §R3.3 is explicit that failure to kill or wait is a
-//! refusal, never a detached success — so the escalation is `SIGTERM` to the
+//! **success**. Failure to kill or wait is a refusal, never a detached
+//! success -- so the escalation is `SIGTERM` to the
 //! group, poll for two seconds, `SIGKILL` to the group, wait the direct
 //! child, and require the group to be gone before returning.
 //!
@@ -34,7 +30,7 @@
 //! An inherited environment is whatever the operator happened to export, and
 //! a formatter that reads `MAVEN_OPTS` or a locale-dependent `LC_ALL` from it
 //! produces different bytes on two machines for reasons nothing records.
-//! `runner_schema` fixes the exact key set; changing it needs a new schema
+//! [`RUNNER_SCHEMA`] fixes the exact key set; changing it needs a new schema
 //! value, because a tool that saw a different environment is a different
 //! tool.
 
@@ -48,14 +44,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
-
-/// The environment and process rules one runner version guarantees.
-///
-/// §R3.3: *"changing any of those rules requires a new schema value"* — the
-/// minimal environment keys, the relative working directory, the stdin
-/// policy, the output caps and the process-group behaviour are all part of
-/// what a tool's identity means.
-pub const RUNNER_SCHEMA: u32 = 1;
 
 /// At most this much of each stream is kept. Beyond it the bytes are dropped
 /// and a truncation bit is set — a diagnostic that grows without bound is a
@@ -201,8 +189,8 @@ impl Run {
 pub struct Invocation {
     pub program: PathBuf,
     pub args: Vec<String>,
-    /// The working directory. §R3.3 makes this the scratch `project` child,
-    /// so every persisted argv can be a relative path.
+    /// The working directory: the scratch `project` child, so every persisted
+    /// argv can be a relative path.
     pub working_directory: PathBuf,
     /// The complete environment. Nothing is inherited.
     pub environment: BTreeMap<String, String>,
@@ -210,8 +198,8 @@ pub struct Invocation {
 }
 
 impl Invocation {
-    /// The minimal environment §R3.3 specifies: a `PATH`, a forced `C`
-    /// locale, and whatever cache or home the tool needs, under scratch.
+    /// The minimal environment: a `PATH`, a forced `C` locale, and whatever
+    /// cache or home the tool needs, under scratch.
     pub fn minimal_environment(path: &str, extra: &[(&str, &str)]) -> BTreeMap<String, String> {
         let mut environment = BTreeMap::from([
             ("PATH".to_string(), path.to_string()),
@@ -352,11 +340,11 @@ fn drain(mut stream: impl Read) -> Result<Captured> {
 
 /// A diagnostic summary of a failed run, built deterministically.
 ///
-/// §R3.3 and §R3.1 both insist this is *not* raw subprocess output: decode
-/// with replacement, normalise line endings, drop control characters, redact
-/// every absolute path the operator's machine happens to use, and truncate at
-/// a character boundary. A summary that carried a home directory or a
-/// `MAVEN_OPTS` value would put it into a journal that outlives the run.
+/// Deliberately *not* raw subprocess output: decode with replacement,
+/// normalise line endings, drop control characters, redact every absolute
+/// path the operator's machine happens to use, and truncate at a character
+/// boundary. A summary that carried a home directory or a `MAVEN_OPTS` value
+/// would put it into a record that outlives the run.
 pub fn summarise(run: &Run, redact: &[&Path], limit: usize) -> String {
     let mut text = String::from_utf8_lossy(&run.stderr.bytes).to_string();
     if text.trim().is_empty() {
@@ -437,7 +425,7 @@ mod tests {
     }
 
     /// A tool that ignores SIGTERM must still be gone when this returns.
-    /// Abandoning it and reporting success is the failure §R3.3 names.
+    /// Abandoning it and reporting success would be a detached success.
     #[test]
     fn a_tool_that_ignores_sigterm_is_killed_and_reported_as_timed_out() {
         let run = run(&sh(

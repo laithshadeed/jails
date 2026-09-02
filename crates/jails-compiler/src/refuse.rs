@@ -1,9 +1,8 @@
 //! What a model may declare that this compiler cannot yet honour.
 //!
-//! Split out of `Compiler::compile` when that file crossed the largest-module
-//! ceiling, and by a secret worth having its own file: every check here runs
-//! *before* anything is lowered, and every one exists because the alternative
-//! is silence. A capability with no backend, a component kind with no emitter,
+//! Every check here runs *before* anything is lowered, and every one exists
+//! because the alternative is silence. A capability with no backend, a
+//! component kind with no emitter,
 //! a delivery policy the emitters do not implement — each of these compiles
 //! perfectly well into *less* than it says, and less-than-it-says is the one
 //! outcome a compiler must not have.
@@ -114,8 +113,7 @@ pub(crate) fn preflight(
             // controller are an annotation with a class around them and mean
             // nothing without Spring; a strategy is a port, its
             // implementations and an evaluator that takes them as a
-            // constructor argument, all of which compile on plain Maven --
-            // which is what the legacy generator has always emitted there.
+            // constructor argument, all of which compile on plain Maven.
             jails_model::UnitKind::Service | jails_model::UnitKind::Controller
         )
     }) && snapshot.project.spring_boot.is_none()
@@ -125,12 +123,12 @@ pub(crate) fn preflight(
         ));
     }
     // **A capitalised field type is a type this project owns, and this is
-    // where that claim is checked.** `g scaffold Book author:Author` emitted a
-    // record naming `Author` and left the project unable to compile a file
-    // the reader never wrote -- the exact failure jails exists to remove, and
-    // one no later command could explain, because nothing in the model was
-    // wrong. The reader's own declarations are observed once during capture;
-    // the model's entities and enums are its own.
+    // where that claim is checked.** Unchecked, `g scaffold Book author:Author`
+    // emits a record naming `Author` and leaves the project unable to compile
+    // a file the reader never wrote -- the exact failure jails exists to
+    // remove, and one no later command could explain, because nothing in the
+    // model is wrong. The reader's own declarations are observed once during
+    // capture; the model's entities and enums are its own.
     for entity in next_model.entities.values().filter(|entity| entity.active) {
         for field in &entity.fields {
             let jails_model::TypeRef::External(name) = &field.ty else {
@@ -212,13 +210,12 @@ pub(crate) fn preflight(
             Some(version) => {
                 // **The floor is 3.1, and below it the refusal has to name the
                 // module.** `spring-boot-testcontainers` and
-                // `spring-boot-docker-compose` arrived there; on an older project the
-                // coordinates this capability declares resolve to nothing and the
-                // build stops resolving at all -- worse than the state before the
-                // command ran. The legacy engine has said so by name since
-                // `add/database.rs`; a canonical project that merely said "requires a
-                // captured Spring Boot project" would be telling a Boot 2.7 reader to
-                // add the Spring Boot they already have.
+                // `spring-boot-docker-compose` exist from there; on an older
+                // project the coordinates this capability declares resolve to
+                // nothing and the build stops resolving at all -- worse than
+                // the state before the command ran. A refusal that merely said
+                // "requires a captured Spring Boot project" would be telling a
+                // Boot 2.7 reader to add the Spring Boot they already have.
                 if let Some((major, minor)) = boot_major_minor(version)
                     && (major, minor) < (3, 1)
                 {

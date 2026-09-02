@@ -5,7 +5,8 @@
 //! caller's body, the path, the request context, a constant — and its
 //! constraints attached. Every emitter and every generated test then reads
 //! that resolved answer instead of re-deriving it from the declaration, which
-//! is the drift a route renderer and its own test suite once had between them.
+//! is the drift a route renderer and its own test suite would otherwise have
+//! between them.
 //!
 //! Every function takes `&mut Linker` and reports rather than returning early,
 //! so one pass over a model with several unresolved names produces one

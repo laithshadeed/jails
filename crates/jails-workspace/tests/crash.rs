@@ -1,14 +1,12 @@
-//! Convergence under interruption, for the executor that replaces the kernel.
+//! Convergence under interruption, for the one canonical executor.
 //!
-//! `simplify-sol.md` trades rollback away for convergence: *a crashed command
-//! may leave a temporarily mixed but individually valid tree; the next
-//! identical generation repairs it deterministically*. That sentence is the
-//! whole safety story of `jails-workspace::execute`, and until this file it
-//! was asserted only in prose (`audit.md` A5.5) while the kernel being
-//! deleted had twenty-two failpoints and a proof.
+//! The executor trades rollback away for convergence: *a crashed command may
+//! leave a temporarily mixed but individually valid tree; the next identical
+//! generation repairs it deterministically*. That sentence is the whole safety
+//! story of `jails-workspace::execute`, and this file is its proof.
 //!
-//! So the property here is deliberately **not** `jails-commit`'s. There is no
-//! journal to roll forward and no preimage to roll back. What is asserted is:
+//! There is no journal to roll forward and no preimage to roll back. What is
+//! asserted is:
 //!
 //! 1. every advertised failpoint is actually reached, so no row of the matrix
 //!    silently proves nothing;
@@ -238,13 +236,12 @@ fn crash_child_executes_and_dies() {
 
 /// Every failpoint again, in a process that dies there without unwinding.
 ///
-/// `simplify-sol.md`'s G4: *each advertised fault is asserted to fire in a
-/// child process that dies without unwinding; restart reaches exactly
-/// pre-plan or post-plan state, a second restart is idempotent.* For this
-/// executor "pre-plan or post-plan" is not the alternative on offer -- it
-/// converges forward, never back -- so what is asserted is the post-plan
-/// half, and the parent opens a project whose `apply.lock` is held by nobody
-/// because its owner was killed mid-flock.
+/// Each advertised fault is asserted to fire in a child process that dies
+/// without unwinding; a restart must then reach the post-plan state, and a
+/// second restart must be idempotent. This executor converges forward, never
+/// back, so the post-plan half is the only one on offer -- and the parent
+/// opens a project whose `apply.lock` is held by nobody because its owner was
+/// killed mid-flock.
 #[test]
 fn every_failpoint_converges_after_a_child_dies_there() {
     let binary = std::env::current_exe().expect("a test binary knows its own path");

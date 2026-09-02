@@ -1,9 +1,6 @@
 //! How a repository adapter is written, and which one gets the bean.
 //!
-//! Split out of `emit_java.rs` under `plan.md` P13.3: that module was the
-//! largest in the workspace and the ratchet had been red since it was written.
-//! This is the cut that made sense rather than the one that made the number --
-//! everything here answers one question, *what does storing this entity look
+//! Everything here answers one question, *what does storing this entity look
 //! like in Java*, and nothing else in the emitter asks it.
 //!
 //! **Two adapters, and exactly one of them is a bean.** The in-memory one
@@ -23,8 +20,8 @@ const FAKE_TEST: crate::Template = crate::template!("spring/fake_repository_test
 /// **`bean` is true exactly when nothing else implements the port.** With `db`
 /// declared the JDBC adapter carries `@Repository` and this one is a plain
 /// class a test constructs; without it, this *is* the implementation, and
-/// leaving it unannotated gave a scaffolded Spring project a service
-/// constructor-injecting a port no bean satisfied. Annotating both would make
+/// leaving it unannotated gives a scaffolded Spring project a service
+/// constructor-injecting a port no bean satisfies. Annotating both would make
 /// two beans qualify for one injection point, which is the ambiguity `jails
 /// beans` reports.
 pub(super) fn lower_fake_repository(
@@ -71,9 +68,9 @@ pub(super) fn lower_fake_repository(
     // **Keyed on the entity, not on whichever capability asked for it.** This
     // adapter is emitted whenever the port has no other implementation and
     // again when `fake` is declared, and the file is the same either way -- so
-    // an id carrying the owner made `add fake` on a project that already had
+    // an id carrying the owner makes `add fake` on a project that already has
     // the adapter look like a *different* artifact wanting a path the first one
-    // held, which the executor correctly reports as reader-owned. The
+    // holds, which the executor correctly reports as reader-owned. The
     // capability still shows in `semantic_ids`.
     let artifact_id = format!("art_{}_repository_memory", entity.id.as_str());
     let rendered = render(&package, &imports, &body, &artifact_id);
@@ -133,10 +130,9 @@ pub(super) fn lower_db_repository(
     let column_list = columns.join(", ");
     // **A `generated always as identity` key is not writable, so `save` must
     // not name it.** PostgreSQL answers an insert that does with *"cannot
-    // insert a non-DEFAULT value into column \"id\""*, which made `save`
-    // impossible on every canonical entity whose key jails assigns -- the
-    // default shape for `id:long@pk`. Nothing caught it because the generated
-    // integration tests had never been run: Failsafe was not configured.
+    // insert a non-DEFAULT value into column \"id\""*, which makes such a
+    // `save` impossible on every entity whose key jails assigns -- the default
+    // shape for `id:long@pk`.
     //
     // Insert-only in that case, rather than an upsert on a key the caller
     // cannot have. That is what the row coming back is *for*: the stored row
@@ -228,18 +224,6 @@ pub(super) fn lower_db_repository(
     })
 }
 
-/// The search port's JDBC implementation.
-///
-/// Two details decide whether this works at all, and both are easy to undo.
-///
-/// **`websearch_to_tsquery`, not `to_tsquery`.** The latter demands operator
-/// syntax and throws a syntax error on anything a person would actually type,
-/// a bare two-word phrase included. The former accepts what a search box
-/// produces -- quotes, `OR`, `-` -- and never throws on malformed input. A
-/// search endpoint that 500s on an apostrophe is what that avoids.
-///
-/// **The query is a bind parameter.** It is text PostgreSQL parses, not SQL it
-/// executes, so there is no injection surface and no escaping to get right.
 /// The integration test for the adapter above.
 ///
 /// **The only tier that answers the question this adapter exists for.** A
@@ -247,7 +231,7 @@ pub(super) fn lower_db_repository(
 /// that drifted, a type PostgreSQL will not accept, a `returning` clause that
 /// names a column the insert does not write -- every one of them compiles, and
 /// every one of them fails on the first real call. The unit tiers cannot see
-/// any of it, and the adapter shipped with no test at all.
+/// any of it.
 ///
 /// `None` when the entity has a component jails cannot sample: a guessed value
 /// would not compile, and a test that constructs nothing proves nothing. That
@@ -295,7 +279,7 @@ pub(super) fn lower_db_repository_it(
     };
     let (setup, autowired) = (fixtures.setup, fixtures.autowired);
     // The assertions are the contract's, not this test's: two copies of them
-    // is how the fake and the adapter came to be able to disagree.
+    // is how the fake and the adapter drift.
     let body = format!(
         "@SpringBootTest\n@Transactional\nclass {type_name} {{\n\n    @Autowired\n    private {record}Repository repository;\n\n{autowired}    @Test\n    void satisfiesThe{record}RepositoryContractAgainstTheRealDatabase() {{\n{setup}        {record}RepositoryContract.savesReadsAndDeletes(\n                repository, new {record}({arguments}));\n    }}\n\n    // Reader-owned cases belong below this stable boundary.\n}}"
     );
@@ -333,11 +317,9 @@ pub(super) fn lower_db_repository_it(
 
 /// One set of assertions both repository adapters are held to.
 ///
-/// **`docs/20-generated-java.md` P9.1 / `research.md` §4.6.** The JDBC adapter
-/// shipped with an integration test and the in-memory one shipped with none,
-/// so two implementations of one port could disagree indefinitely about what
-/// `save` returns, whether `deleteById` on a missing row is `false` or an
-/// error, and whether `findAll` contains what was just stored.
+/// Without it two implementations of one port can disagree indefinitely
+/// about what `save` returns, whether `deleteById` on a missing row is
+/// `false` or an error, and whether `findAll` contains what was just stored.
 ///
 /// Static methods rather than an abstract base class, because the two callers
 /// are not the same shape: the proof is a Spring test whose ancestor rows have
@@ -514,6 +496,18 @@ fn test_unit(
     })
 }
 
+/// The search port's JDBC implementation.
+///
+/// Two details decide whether this works at all, and both are easy to undo.
+///
+/// **`websearch_to_tsquery`, not `to_tsquery`.** The latter demands operator
+/// syntax and throws a syntax error on anything a person would actually type,
+/// a bare two-word phrase included. The former accepts what a search box
+/// produces -- quotes, `OR`, `-` -- and never throws on malformed input. A
+/// search endpoint that 500s on an apostrophe is what that avoids.
+///
+/// **The query is a bind parameter.** It is text PostgreSQL parses, not SQL it
+/// executes, so there is no injection surface and no escaping to get right.
 pub(super) fn lower_search_adapter(
     model: &AppModel,
     capability_id: &str,
@@ -596,11 +590,10 @@ mod tests {
 
     const BOTH: &str = "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage postgres\n}\n\ncap fake\n\nentity Task @id(ent_task) {\n  use repo\n  id: uuid @id(fld_task_id) @pk\n  title: string @id(fld_task_title)\n}\n";
 
-    /// **`docs/20-generated-java.md` P9.1.** One contract, both adapters.
+    /// One contract, both adapters.
     ///
-    /// The assertions used to live only in the JDBC proof and the in-memory
-    /// adapter had no test at all, so the fake could drift from what it stands
-    /// in for and every test using it stayed green.
+    /// Assertions living only in the JDBC proof let the fake drift from what
+    /// it stands in for while every test using it stays green.
     #[test]
     fn both_repository_adapters_are_held_to_one_contract() {
         let slice = slice(BOTH);
@@ -660,9 +653,9 @@ mod tests {
     /// capability-scoped artifact id therefore makes the same bytes a *new*
     /// artifact with no merge base, and reconciliation refuses it as
     /// reader-owned: `add fake` fails on a project that was fine a moment
-    /// earlier. The adapter has been entity-scoped for exactly this reason;
-    /// its test was written capability-scoped by copying the `db` proof, which
-    /// is safe there only because `db` never hands over.
+    /// earlier. The adapter and its test are entity-scoped for exactly this
+    /// reason; the `db` proof is capability-scoped, which is safe only
+    /// because `db` never hands over.
     #[test]
     fn declaring_fake_does_not_re_identify_the_in_memory_adapter_or_its_test() {
         let without = slice(

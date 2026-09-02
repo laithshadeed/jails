@@ -16,18 +16,12 @@ use super::*;
 
 /// A CLI name, as the Java type it names.
 ///
-/// `jails g enum currency GBP EUR` writes `Currency.java` on the legacy path
-/// and every generator that later says `currency:Currency` resolves against
-/// it -- which is the whole of
-/// `generators_compose_through_user_owned_field_types`. The canonical model
-/// requires a real Java type name and refused the lower-camel spelling
-/// outright, so the same command produced a project on one engine and a
-/// diagnostic on the other.
-///
-/// Capitalising here rather than loosening the model: `java_name` is a
-/// projection the model is right to hold to, and this is the CLI sugar
-/// resolving what the reader typed, which is where the legacy path does it
-/// too.
+/// `jails g enum currency GBP EUR` writes `Currency.java`, and every generator
+/// that later says `currency:Currency` resolves against it. The model requires
+/// a real Java type name and refuses the lower-camel spelling, so the
+/// capitalising happens here rather than by loosening the model: `java_name`
+/// is a projection the model is right to hold to, and this is the CLI sugar
+/// resolving what the reader typed.
 pub(crate) fn java_type_name(name: &str) -> String {
     let mut characters = name.chars();
     match characters.next() {
@@ -70,8 +64,7 @@ pub(crate) fn field_label_of(spec: &str) -> String {
 ///
 /// The single owner of the `item_owner` -> `itemOwner` direction, so
 /// `g association` and `destroy association` cannot disagree about which
-/// member they are naming -- which they did, and the destroy half reported the
-/// declaration as missing from the entity it was sitting in.
+/// member they are naming.
 pub(crate) fn relation_member_name(label: &str) -> String {
     let mut out = String::with_capacity(label.len());
     let mut capitalise = false;
@@ -139,15 +132,14 @@ pub(crate) fn entity_declaration_at(
         }
         parsed.push(field);
     }
-    // **A component called `version` is the row version.** The engine this
-    // replaces inferred it, every `--if-match` transition depends on it, and
-    // an entity that declared `version:long` without the marker got a plain
-    // column: the transition then refused with "entity `note` has 0 version
-    // fields" about a field the reader had just declared and named. Inferred
-    // in the frontend and written into the model as `@version`, so the
-    // convention is visible in `.jails/model.jdl` rather than hidden in the
-    // compiler -- and an entity that means something else by the word says so
-    // by editing the declaration.
+    // **A component called `version` is the row version.** Every `--if-match`
+    // transition depends on it, and an entity declaring `version:long`
+    // without the marker would get a plain column and a transition refusing
+    // with "entity `note` has 0 version fields" about a field the reader just
+    // named. Inferred in the frontend and written into the model as
+    // `@version`, so the convention is visible in `.jails/model.jdl` rather
+    // than hidden in the compiler -- and an entity that means something else
+    // by the word says so by editing the declaration.
     //
     for field in &mut parsed {
         if field.label == "version" && matches!(field.type_name.as_str(), "long" | "int") {
@@ -219,7 +211,7 @@ pub(crate) fn enum_declaration(java_name: &str, label: &str, values: &[String]) 
     let values = values
         .iter()
         .map(|value| {
-            jails_protocol::declaration::ConstantSpec::parse(value)
+            jails_spec::spec::constant::ConstantSpec::parse(value)
                 .map(|constant| constant.canonical())
         })
         .collect::<Result<Vec<_>>>()?;
@@ -302,7 +294,7 @@ pub(crate) fn render_v1_field_line(entity_label: &str, field: &ParsedField) -> S
 /// **Both spellings are accepted and mean one place.** A reader types what
 /// their editor shows -- `com.example.demo.billing` -- while the model stores
 /// what a capability's `@package` stores, the part below the base. Appending
-/// the absolute form to the base produced
+/// the absolute form to the base would produce
 /// `com.example.demo.com.example.demo.billing`, which is a directory nobody
 /// asked for and a package nothing imports.
 pub(crate) fn normalize_package(base: &str, package: &str) -> Result<String> {

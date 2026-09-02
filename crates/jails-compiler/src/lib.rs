@@ -311,9 +311,9 @@ impl Compiler {
         // parent's default build -- so an `*IT` in a project without the plugin
         // is a test that never runs while `mvn verify` reports success, which
         // is worse than having no test at all. The declaration-derived features
-        // above only see a capability pack's own files, so every `*IT` an
-        // operation or component emitter writes -- a presence adapter's, a
-        // query adapter's -- was written into a project that could not run it.
+        // above only see a capability pack's own files; an `*IT` an operation
+        // or component emitter writes -- a presence adapter's, a query
+        // adapter's -- needs the plugin just as much.
         if generated
             .files
             .keys()
@@ -326,8 +326,8 @@ impl Compiler {
         // a component, an entity facet -- rather than declared, so an artifact
         // the project states for itself answers the requirement and must not
         // be declared a second time. Without this a Gradle project carrying
-        // `spring-boot-starter-web` of its own was refused outright the moment
-        // an entity gained an HTTP facet, over a dependency it already had.
+        // `spring-boot-starter-web` of its own is refused outright the moment
+        // an entity gains an HTTP facet, over a dependency it already has.
         //
         // It does not cover `next_model.dependencies`: those the reader
         // declared *through jails*, so a copy outside the marked block is two
@@ -392,7 +392,7 @@ impl Compiler {
         // **Only when there is a build to declare it in.** A model with no
         // captured pom or Gradle script reaches the `BuildSystem::Unknown` arm
         // below, which refuses the moment any dependency is wanted -- so
-        // adding one unconditionally turned "this project has no build file"
+        // adding one unconditionally turns "this project has no build file"
         // into a compile error for every scaffold.
         if emit_architecture::applies(&next_model)
             && snapshot.project.build_system != BuildSystem::Unknown
@@ -724,14 +724,12 @@ fn property_entries(
 #[cfg(test)]
 mod tests {
     /// Every closed component kind is either emitted or refused, and never
-    /// silently dropped.
+    /// silently dropped (JDL v1 §20.2).
     ///
-    /// `audit.md` A1.2 and `jdl-sol.md` §20.2. Fifteen of the twenty-three
-    /// kinds linked, planned and applied while emitting nothing at all: the
-    /// linker's compatibility bridge ended in `_ => return None`, so an
-    /// unmapped kind produced no unit, no file and no diagnostic. The count
-    /// here is deliberate -- it fails when a kind is added and quietly filed
-    /// as unserved, which is the same silence arriving a different way.
+    /// A kind that links, plans and applies while emitting nothing produces
+    /// no unit, no file and no diagnostic. The count here is deliberate -- it
+    /// fails when a kind is added and quietly filed as unserved, which is the
+    /// same silence arriving a different way.
     #[test]
     fn every_component_kind_is_emitted_or_refused() {
         use jails_model::ComponentKind;
@@ -744,7 +742,7 @@ mod tests {
 
         // The refusal is reachable, not merely written down.
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\n",
+            "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage postgres\n}\n",
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
@@ -1064,16 +1062,11 @@ mod tests {
 
     /// A renamed layer is renamed for *every* artifact, not most of them.
     ///
-    /// `audit.md` A3.11b. `jails.toml`'s `[layout]` is the reader saying where
-    /// their code lives, and it reached entities and capabilities but not
-    /// source units: `linker::unit` built a package as `{base}.domain` before
-    /// the layout was on the model at all, and `emit_unit` compared against
-    /// that same spelling. So a project that calls its domain `core` got
-    /// `core` for its records and `domain` for its sealed types -- two
-    /// packages for one layer, in one tree, with nothing to report it.
-    ///
-    /// Nothing in the suite covered a renamed layout in either direction,
-    /// which is why it survived the registry that was built to find it.
+    /// `jails.toml`'s `[layout]` is the reader saying where their code lives,
+    /// and it has to reach entities, capabilities and source units alike: a
+    /// project that calls its domain `core` and gets `core` for its records
+    /// but `domain` for its sealed types has two packages for one layer, in
+    /// one tree, with nothing to report it.
     #[test]
     fn a_renamed_layer_moves_source_units_and_not_only_entities() {
         let model = jails_model::parse_jdl(
@@ -1103,12 +1096,12 @@ mod tests {
                 .cloned()
                 .collect::<Vec<_>>()
         };
-        // The entity already honoured the rename.
+        // The entity honours the rename.
         assert!(
             holding("/core/Note.java").len() == 1,
             "the record did not move to the renamed layer: {paths:?}"
         );
-        // The source units did not, and that is the defect.
+        // So do the source units.
         assert!(
             holding("/core/Outcome.java").len() == 1
                 && holding("/core/OutcomeTest.java").len() == 1,
@@ -1119,7 +1112,7 @@ mod tests {
                 && holding("/usecases/NotifierServiceTest.java").len() == 1,
             "a service and its test did not both move with the rename: {paths:?}"
         );
-        // ... and nothing was left behind under the default names, which is
+        // ... and nothing is left behind under the default names, which is
         // the half that makes the tree incoherent rather than merely oddly
         // placed.
         assert!(
@@ -1329,14 +1322,11 @@ mod tests {
     /// A projection that links must render *its own* artifact, not the
     /// nearest one.
     ///
-    /// `bugs.md` B59: `use seed` linked, validated against its prerequisites
-    /// and emitted `<Name>Factory.java`, because `ProjectionKind::Seed` was
-    /// mapped onto `Facet::Factory` and `Facet` is the emitter's dispatch key.
-    /// The model reported success over a test fixture nobody asked for, which
-    /// is a worse failure than a missing file: there is nothing to notice.
-    ///
-    /// The gap is filled now, and this is what stops it reopening the same
-    /// way -- seed emits three files and a factory is not among them.
+    /// `Facet` is the emitter's dispatch key, so a `ProjectionKind` mapped
+    /// onto the wrong facet emits a file nobody asked for and reports
+    /// success -- a worse failure than a missing file, because there is
+    /// nothing to notice. Seed emits three files and a factory is not among
+    /// them.
     #[test]
     fn a_seed_projection_does_not_emit_a_factory() {
         let model = jails_model::parse_jdl(SEED_MODEL)
@@ -1379,13 +1369,11 @@ mod tests {
     /// A versionless dependency is correct under a Boot parent and fatal
     /// without one.
     ///
-    /// `audit.md` A2.1. These four were written inline with `version: None`
-    /// whatever the project was, so `storage postgres` on a plain Maven
-    /// project produced a pom Maven refuses to *read* -- every goal fails,
-    /// `validate` included. The two version boundaries are Boot's own:
-    /// `flyway-database-postgresql` is managed from 3.3, and
-    /// `spring-boot-flyway` exists only from 4.0, where omitting it means the
-    /// migrations never run and nothing says so.
+    /// `storage postgres` on a plain Maven project with `version: None` is a
+    /// pom Maven refuses to *read* -- every goal fails, `validate` included.
+    /// The two version boundaries are Boot's own: `flyway-database-postgresql`
+    /// is managed from 3.3, and `spring-boot-flyway` exists only from 4.0,
+    /// where omitting it means the migrations never run and nothing says so.
     #[test]
     fn storage_dependencies_follow_the_boot_the_project_actually_has() {
         let boot_4 = super::storage::storage_dependencies(Some("4.0.0"));
@@ -1432,105 +1420,43 @@ mod tests {
     use jails_contracts::{BuildSystem, ContentDigest, MigrationRecord, WorkspaceSnapshot};
     use jails_model::{FieldAddPolicy, FieldId};
 
-    const MODEL: &str = r#"
-schema = "jails.model.v1"
+    /// One entity with a command, a query, a transition and an event, over
+    /// a `fake` cap and no storage: the model every test below varies.
+    ///
+    /// `storage none` because most of these compile a detached snapshot
+    /// with no build, and a modelled storage declares dependencies that
+    /// need one; the database tests switch it on by replacement.
+    const MODEL: &str = "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  \
+         java 26\n  platform spring\n  build maven\n  storage none\n}\n\n\
+         cap fake @id(cap_fake)\n\n\
+         entity Note @id(ent_note) {\n  use repo, service, http\n  \
+         id: uuid @id(fld_note_id) @pk\n  title: string @id(fld_note_title) @notBlank\n\n  \
+         command CreateNote(title) @id(op_create_note) {\n    route POST \"/notes\"\n  }\n\n  \
+         query OpenNotes(title) @id(op_open_notes) {\n    order by [id]\n    limit 50\n    \
+         route GET \"/notes\"\n  }\n\n  \
+         transition RenameNote(title) @id(op_rename_note) {\n    update [title]\n    \
+         emit NoteCreated\n    route PATCH \"/notes/{id}\"\n  }\n\n  \
+         event NoteCreated(id, title) @id(op_note_created)\n}\n";
 
-[project]
-id = "project_notes"
-name = "Notes"
-base_package = "com.example.notes"
-java_release = 26
-dialect = "postgresql"
+    /// [`MODEL`] with its storage materialised.
+    fn stored_model() -> String {
+        MODEL.replace("storage none", "storage postgres")
+    }
 
-[capabilities.fake]
-id = "cap_fake"
-kind = "fake"
-
-[entities.note]
-id = "ent_note"
-facets = ["record", "repository", "service", "http", "events", "search"]
-
-[entities.note.fields.id]
-id = "fld_note_id"
-type = "uuid"
-primary_key = true
-
-[entities.note.fields.title]
-id = "fld_note_title"
-type = "string"
-non_blank = true
-
-[operations.note_created]
-kind = "event"
-id = "op_note_created"
-on = "note"
-fields = ["id", "title"]
-
-[operations.create_note]
-kind = "command"
-id = "op_create_note"
-on = "note"
-fields = ["title"]
-route = "POST /notes"
-
-[operations.open_notes]
-kind = "query"
-id = "op_open_notes"
-on = "note"
-filters = ["title"]
-order_by = ["id"]
-limit = 50
-route = "GET /notes"
-
-[operations.rename_note]
-kind = "transition"
-id = "op_rename_note"
-on = "note"
-fields = ["title"]
-sets = ["title"]
-yields = "note_created"
-route = "PATCH /notes/{id}"
-"#;
-
-    #[test]
-    fn equal_inputs_produce_equal_drafts() {
-        let model = jails_model::parse_toml(MODEL).unwrap();
-        let snapshot = WorkspaceSnapshot::detached(model);
-        let first = Compiler::compile(&snapshot, None).unwrap();
-        let second = Compiler::compile(&snapshot, None).unwrap();
-        assert_eq!(first, second);
-        assert!(
-            first
-                .generated
-                .files
-                .values()
-                .map(|file| file.provenance.artifact_id.as_str())
-                .collect::<BTreeSet<_>>()
-                .len()
-                == first.generated.files.len()
-        );
-        assert!(first.generated.files.keys().any(|path| {
-            path.as_str()
-                .ends_with("application/commands/CreateNoteCommand.java")
-        }));
-        assert!(first.generated.files.keys().any(|path| {
-            path.as_str()
-                .ends_with("adapters/memory/InMemoryNoteRepository.java")
-        }));
-        assert!(first.generated.files.keys().any(|path| {
-            path.as_str()
-                .ends_with("test/java/com/example/notes/testkit/Fake.java")
-        }));
-        assert!(first.generated.files.keys().any(|path| {
-            path.as_str()
-                .ends_with("test/java/com/example/notes/testkit/FakeTest.java")
-        }));
+    /// [`stored_model`] with one more field, declared as `summary`.
+    fn stored_model_with_summary(summary: &str) -> String {
+        stored_model().replace(
+            "  title: string @id(fld_note_title) @notBlank\n",
+            &format!(
+                "  title: string @id(fld_note_title) @notBlank\n  {summary} @id(fld_note_summary)\n"
+            ),
+        )
     }
 
     #[test]
     fn data_capabilities_lower_from_one_declarative_pack_registry() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncapability csv @id(cap_csv) @name(Dataset) @package(imports)\ncapability json @id(cap_json)\n",
+            "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncap csv Dataset @id(cap_csv)\ncap json @id(cap_json)\n",
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
@@ -1551,7 +1477,7 @@ route = "PATCH /notes/{id}"
         assert_eq!(packs.len(), 4);
         assert!(draft.generated.files.keys().any(|path| {
             path.as_str()
-                .ends_with("com/example/demo/imports/DatasetReader.java")
+                .ends_with("com/example/demo/adapters/DatasetReader.java")
         }));
         assert!(draft.generated.files.keys().any(|path| {
             path.as_str()
@@ -1588,7 +1514,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn test_packs_share_the_same_file_dependency_and_ejection_engine() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncapability fake @id(cap_fake)\ncapability http @id(cap_http) @name(Admin) @package(gateway)\ncapability testkit @id(cap_testkit)\n",
+            "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncap fake @id(cap_fake)\ncap http Admin @id(cap_http)\ncap testkit @id(cap_testkit)\n",
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
@@ -1600,8 +1526,8 @@ route = "PATCH /notes/{id}"
         let expected = [
             ".jails/generated/test/java/com/example/demo/testkit/Fake.java",
             ".jails/generated/test/java/com/example/demo/testkit/FakeTest.java",
-            ".jails/generated/main/java/com/example/demo/gateway/AdminServer.java",
-            ".jails/generated/test/java/com/example/demo/gateway/AdminServerTest.java",
+            ".jails/generated/main/java/com/example/demo/api/AdminServer.java",
+            ".jails/generated/test/java/com/example/demo/api/AdminServerTest.java",
             ".jails/generated/test/java/com/example/demo/testkit/Clocks.java",
             ".jails/generated/test/java/com/example/demo/testkit/Ids.java",
             ".jails/generated/test/java/com/example/demo/testkit/Fixtures.java",
@@ -1657,7 +1583,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn sqlite_pack_projects_java_roles_and_an_append_only_migration() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncapability sqlite @id(cap_sqlite) @name(Store) @package(storage)\n",
+            "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncap sqlite Store @id(cap_sqlite)\n",
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
@@ -1665,9 +1591,9 @@ route = "PATCH /notes/{id}"
         snapshot.project.spring_boot = Some("4.0.0".to_string());
         let draft = Compiler::compile(&snapshot, None).unwrap();
         let expected = [
-            ".jails/generated/main/java/com/example/demo/storage/StoreDatabase.java",
-            ".jails/generated/main/java/com/example/demo/storage/StoreMigrations.java",
-            ".jails/generated/test/java/com/example/demo/storage/StoreDatabaseTest.java",
+            ".jails/generated/main/java/com/example/demo/adapters/StoreDatabase.java",
+            ".jails/generated/main/java/com/example/demo/adapters/StoreMigrations.java",
+            ".jails/generated/test/java/com/example/demo/adapters/StoreDatabaseTest.java",
         ];
         for path in expected {
             let file = draft
@@ -1711,7 +1637,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn h2_pack_projects_one_test_dependency_set_and_two_property_targets() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect h2\ncapability h2 @id(cap_h2)\n",
+            "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage h2\n}\n",
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
@@ -1784,7 +1710,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn actuator_pack_projects_one_ejectable_test_dependency_and_owned_properties() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncapability actuator @id(cap_actuator)\n",
+            "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncap actuator @id(cap_actuator)\n",
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
@@ -1848,7 +1774,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn cache_pack_projects_two_ejectable_files_dependencies_and_bounded_configuration() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncapability cache @id(cap_cache)\n",
+            "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncap cache @id(cap_cache)\n",
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
@@ -1910,7 +1836,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn cors_pack_selects_boot_specific_tests_and_owns_one_property() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncapability cors @id(cap_cors)\n",
+            "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncap cors @id(cap_cors)\n",
         )
         .unwrap();
         let compile = |version: &str| {
@@ -2013,7 +1939,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn observability_pack_projects_versioned_metrics_dependencies_and_bounded_properties() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncapability observability @id(cap_observability)\n",
+            "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncap observability @id(cap_observability)\n",
         )
         .unwrap();
         let compile = |version: &str| {
@@ -2109,7 +2035,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn security_pack_projects_one_ejectable_boundary_and_enforces_its_boot_floor() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncapability security @id(cap_security)\n",
+            "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncap security @id(cap_security)\n",
         )
         .unwrap();
         let compile = |version: &str| {
@@ -2193,7 +2119,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn sse_pack_projects_one_multi_package_iterative_boundary() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncapability sse @id(cap_sse) @package(streaming)\n",
+            "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncap sse @id(cap_sse)\n",
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
@@ -2202,10 +2128,10 @@ route = "PATCH /notes/{id}"
         let draft = Compiler::compile(&snapshot, None).unwrap();
 
         for path in [
-            ".jails/generated/main/java/com/example/demo/streaming/EventHub.java",
-            ".jails/generated/main/java/com/example/demo/streaming/SchedulingConfig.java",
+            ".jails/generated/main/java/com/example/demo/EventHub.java",
+            ".jails/generated/main/java/com/example/demo/SchedulingConfig.java",
             ".jails/generated/main/java/com/example/demo/web/EventStreamController.java",
-            ".jails/generated/test/java/com/example/demo/streaming/EventHubTest.java",
+            ".jails/generated/test/java/com/example/demo/EventHubTest.java",
         ] {
             let file = draft
                 .generated
@@ -2229,7 +2155,7 @@ route = "PATCH /notes/{id}"
                 .clone(),
         )
         .unwrap();
-        assert!(controller.contains("import com.example.demo.streaming.EventHub;"));
+        assert!(controller.contains("import com.example.demo.EventHub;"));
         assert!(controller.contains("/events/{topic}/stream"));
 
         let dependencies = draft
@@ -2263,7 +2189,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn redis_pack_projects_merge_managed_source_compose_and_integration_build() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncapability redis @id(cap_redis)\n",
+            "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncap redis @id(cap_redis)\n",
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
@@ -2336,7 +2262,7 @@ route = "PATCH /notes/{id}"
 
     #[test]
     fn kafka_pack_projects_spring_sources_plain_client_and_one_compose_facet() {
-        let source = "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncapability kafka @id(cap_kafka)\n";
+        let source = "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncap kafka @id(cap_kafka)\n";
         let model = jails_model::parse_jdl(source).unwrap();
         let mut spring = WorkspaceSnapshot::detached(model.clone());
         spring.project.build_system = BuildSystem::Maven;
@@ -2434,7 +2360,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn mail_pack_projects_merge_managed_source_compose_and_boot_specific_tests() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncapability mail @id(cap_mail)\n",
+            "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncap mail @id(cap_mail)\n",
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model.clone());
@@ -2543,7 +2469,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn toxiproxy_pack_projects_merge_managed_testkit_sources_and_exact_test_dependencies() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncapability toxiproxy @id(cap_toxiproxy)\n",
+            "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncap toxiproxy @id(cap_toxiproxy)\n",
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
@@ -2596,7 +2522,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn coverage_pack_is_a_pure_build_feature_without_generated_files() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncapability coverage @id(cap_coverage)\n",
+            "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncap coverage @id(cap_coverage)\n",
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
@@ -2616,7 +2542,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn loadtest_projects_six_merge_managed_files_from_typed_controller_routes() {
         let model = jails_model::parse_jdl(
-            "application Demo\npackage com.example.demo\njava 26\ndialect postgresql\ncontroller Health\ncapability loadtest @id(cap_loadtest)\n",
+            "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  platform spring\n  build maven\n  storage none\n}\ncomponent controller Health\ncap loadtest @id(cap_loadtest)\n",
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
@@ -2655,104 +2581,14 @@ route = "PATCH /notes/{id}"
     }
 
     #[test]
-    fn database_capability_lowers_ejectable_operation_implementations() {
-        let source = MODEL.replace(
-            "[capabilities.fake]\nid = \"cap_fake\"\nkind = \"fake\"",
-            "[capabilities.db]\nid = \"cap_db\"\nkind = \"db\"",
-        );
-        let model = jails_model::parse_toml(&source).unwrap();
-        let mut snapshot = WorkspaceSnapshot::detached(model);
-        snapshot.project.spring_boot = Some("4.0.0".to_string());
-        snapshot.project.build_system = BuildSystem::Maven;
-        snapshot.project.spring_boot = Some("4.0.0".to_string());
-        let draft = Compiler::compile(&snapshot, None).unwrap();
-        let (path, file) = draft
-            .generated
-            .files
-            .iter()
-            .find(|(_, file)| file.provenance.artifact_id == "art_cap_db_op_open_notes_query")
-            .unwrap();
-        assert_eq!(
-            path.as_str(),
-            ".jails/generated/main/java/com/example/notes/adapters/jdbc/JdbcOpenNotesQuery.java"
-        );
-        assert!(file.provenance.ejectable);
-        assert_eq!(file.provenance.compiler_pass, "capability-db-query");
-        let source = String::from_utf8(file.bytes.clone()).unwrap();
-        assert!(source.contains("implements OpenNotesQuery"), "{source}");
-        assert!(source.contains("select id, title from note"), "{source}");
-        assert!(source.contains("title = :title"), "{source}");
-        assert!(source.contains("order by id"), "{source}");
-        assert!(source.contains("limit 50"), "{source}");
-        assert!(
-            source.contains("statement.query(Note.class).list()"),
-            "{source}"
-        );
-
-        let command = draft
-            .generated
-            .files
-            .values()
-            .find(|file| file.provenance.artifact_id == "art_cap_db_op_create_note_command")
-            .unwrap();
-        assert!(command.provenance.ejectable);
-        assert_eq!(command.provenance.compiler_pass, "capability-db-command");
-        let command = String::from_utf8(command.bytes.clone()).unwrap();
-        assert!(
-            command.contains("implements CreateNoteCommand"),
-            "{command}"
-        );
-        assert!(
-            command
-                .contains("insert into notes (id, title) values (:id, :title) returning id, title"),
-            "{command}"
-        );
-        assert!(command.contains("TimeOrderedUuid.next()"), "{command}");
-        let uuid7 = draft
-            .generated
-            .files
-            .values()
-            .find(|file| file.provenance.artifact_id == "art_app_time_ordered_uuid")
-            .map(|file| String::from_utf8(file.bytes.clone()).unwrap())
-            .expect("time-ordered UUID support");
-        assert!(uuid7.contains("| 0x70"), "{uuid7}");
-        assert!(uuid7.contains("| 0x80"), "{uuid7}");
-
-        let transition = draft
-            .generated
-            .files
-            .values()
-            .find(|file| file.provenance.artifact_id == "art_cap_db_op_rename_note_transition")
-            .unwrap();
-        assert!(transition.provenance.ejectable);
-        assert_eq!(
-            transition.provenance.compiler_pass,
-            "capability-db-transition"
-        );
-        let transition = String::from_utf8(transition.bytes.clone()).unwrap();
-        assert!(
-            transition.contains("implements RenameNoteTransition"),
-            "{transition}"
-        );
-        assert!(
-            transition.contains("update notes set title = :title where"),
-            "{transition}"
-        );
-        assert!(transition.contains("@Transactional"), "{transition}");
-        assert!(
-            transition
-                .contains("events.publishEvent(new NoteCreatedEvent(result.id(), result.title()))"),
-            "{transition}"
-        );
-    }
-
-    #[test]
     fn factory_is_an_ejectable_test_projection_of_the_entity_fields() {
         let model = jails_model::parse_jdl(
-            "application Notes\npackage com.example.notes\njava 26\ndialect postgresql\n\nentity Note @factory {\n  id: uuid @pk\n  title: string!\n  publishedAt: instant?\n}\n",
+            "jdl 1\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage postgres\n}\n\nentity Note {\n  use factory\n  id: uuid @pk\n  title: string @notBlank\n  publishedAt: instant?\n}\n",
         )
         .unwrap();
-        let draft = Compiler::compile(&WorkspaceSnapshot::detached(model), None).unwrap();
+        let mut snapshot = WorkspaceSnapshot::detached(model);
+        snapshot.project.build_system = BuildSystem::Maven;
+        let draft = Compiler::compile(&snapshot, None).unwrap();
         let (path, file) = draft
             .generated
             .files
@@ -2775,7 +2611,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn dto_is_three_independently_mergeable_managed_abi_files() {
         let model = jails_model::parse_jdl(
-            "application Notes\npackage com.example.notes\njava 26\ndialect postgresql\n\nentity Note @dto {\n  id: uuid @pk\n  title: string!\n  publishedAt: instant?\n}\n",
+            "jdl 1\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage postgres\n}\n\nentity Note {\n  use dto\n  id: uuid @pk\n  title: string @notBlank\n  publishedAt: instant?\n}\n",
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
@@ -2838,7 +2674,7 @@ route = "PATCH /notes/{id}"
 
     /// **A required primitive component stays primitive on the wire.**
     ///
-    /// `docs/20-generated-java.md` P6.6 §5.4: a `boolean` domain component
+    /// A `boolean` domain component
     /// arriving as a `Boolean` in the request and the response, with
     /// `@NotNull` compensating for the boxing, is three defects wearing one
     /// coat -- a wire type that admits a null the domain record cannot hold,
@@ -2853,7 +2689,7 @@ route = "PATCH /notes/{id}"
     #[test]
     fn a_required_primitive_is_not_boxed_or_annotated_on_either_dto_face() {
         let model = jails_model::parse_jdl(
-            "application Notes\npackage com.example.notes\njava 26\ndialect postgresql\n\nentity Note @dto {\n  id: uuid @pk\n  done: boolean\n  attempts: int\n  note: string?\n}\n",
+            "jdl 1\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage postgres\n}\n\nentity Note {\n  use dto\n  id: uuid @pk\n  done: boolean\n  attempts: int\n  note: string?\n}\n",
         )
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
@@ -2887,189 +2723,6 @@ route = "PATCH /notes/{id}"
         let response = face("art_ent_note_dto_response");
         assert!(response.contains("String note"), "{response}");
         assert!(response.contains("note().orElse(null)"), "{response}");
-    }
-
-    #[test]
-    fn accepted_projection_is_the_exact_merge_base_across_emitter_versions() {
-        let model = jails_model::parse_toml(MODEL).unwrap();
-        let first = Compiler::compile(&WorkspaceSnapshot::detached(model.clone()), None).unwrap();
-        let mut old_projection = first.generated.clone();
-        let record = old_projection
-            .files
-            .values_mut()
-            .find(|file| file.provenance.artifact_id == "art_ent_note_record")
-            .unwrap();
-        record
-            .bytes
-            .extend_from_slice(b"// old emitter projection\n");
-
-        let mut upgraded = WorkspaceSnapshot::detached(model.clone());
-        upgraded.accepted_model = Some(model);
-        upgraded.accepted_projection = Some(old_projection.clone());
-        upgraded.accepted_compiler = Some("0.0.0-old".to_string());
-        let draft = Compiler::compile(&upgraded, None).unwrap();
-
-        assert_eq!(draft.baseline, old_projection);
-        assert_ne!(draft.baseline, draft.generated);
-    }
-
-    #[test]
-    fn compilation_refuses_a_snapshot_model_disagreement() {
-        let model = jails_model::parse_toml(MODEL).unwrap();
-        let mut snapshot = WorkspaceSnapshot::detached(model);
-        snapshot.project.java_release = 21;
-        let error = Compiler::compile(&snapshot, None).unwrap_err();
-        assert!(error.to_string().contains("disagrees"));
-    }
-
-    #[test]
-    fn a_new_ejection_transfers_matching_units_and_removes_them_from_the_tree() {
-        let model = jails_model::parse_toml(MODEL).unwrap();
-        let snapshot = WorkspaceSnapshot::detached(model);
-        let before = Compiler::compile(&snapshot, None).unwrap();
-        let ejection = jails_model::Ejection {
-            id: jails_model::EjectionId::parse("eject_ent_note").unwrap(),
-            label: "note".to_string(),
-            target: "art_ent_note_repository_memory".to_string(),
-        };
-        let draft = Compiler::compile(&snapshot, Some(ModelPatch::AddEjection(ejection))).unwrap();
-        assert_eq!(
-            draft.generated.files.len() + 1,
-            before.generated.files.len()
-        );
-        let transferred = draft
-            .reader_document_intents
-            .iter()
-            .filter(|intent| matches!(intent, DocumentIntent::EjectFile { .. }))
-            .count();
-        assert_eq!(transferred, 1);
-        assert!(
-            draft
-                .generated
-                .files
-                .values()
-                .any(|file| file.provenance.artifact_id == "art_ent_note_record")
-        );
-        assert!(draft.generated.files.values().any(|file| {
-            file.provenance.artifact_id == "art_cap_fake_script"
-                && file.provenance.ejection_id.as_deref() == Some("cap_fake")
-        }));
-    }
-
-    #[test]
-    fn an_ejection_that_emits_nothing_is_rejected() {
-        let source = format!(
-            "{MODEL}\n[ejections.database]\nid = \"eject_database\"\ntarget = \"art_missing_repository\"\n"
-        );
-        let model = jails_model::parse_toml(&source).unwrap();
-        let snapshot = WorkspaceSnapshot::detached(model);
-        let error = Compiler::compile(&snapshot, None).unwrap_err();
-        assert!(
-            error.to_string().contains("emits no ejectable Java"),
-            "{error}"
-        );
-    }
-
-    #[test]
-    fn managed_abi_cannot_be_ejected() {
-        let source = format!(
-            "{MODEL}\n[ejections.note]\nid = \"eject_ent_note\"\ntarget = \"art_ent_note_record\"\n"
-        );
-        let model = jails_model::parse_toml(&source).unwrap();
-        let snapshot = WorkspaceSnapshot::detached(model);
-        let error = Compiler::compile(&snapshot, None).unwrap_err();
-        assert!(error.to_string().contains("managed ABI"), "{error}");
-    }
-
-    #[test]
-    fn database_capability_lowers_storage_dependencies_adapter_and_initial_schema() {
-        let source =
-            format!("{MODEL}\n[capabilities.database]\nid = \"cap_database\"\nkind = \"db\"\n");
-        let model = jails_model::parse_toml(&source).unwrap();
-        let mut snapshot = WorkspaceSnapshot::detached(model);
-        snapshot.project.build_system = BuildSystem::Maven;
-        // The adapters this asserts on are `JdbcClient` classes annotated
-        // `@Repository`, so the capability needs a Boot project to compile
-        // into. The fixture had none, which is how a versionless dependency
-        // set reached a pom with no parent to manage it.
-        snapshot.project.spring_boot = Some("4.0.0".to_string());
-        let draft = Compiler::compile(&snapshot, None).unwrap();
-        assert_eq!(draft.migrations.len(), 1);
-        assert_eq!(draft.migrations[0].logical_name, "create_notes");
-        let sql = String::from_utf8(draft.migrations[0].bytes.clone()).unwrap();
-        assert!(sql.contains("create table notes"), "{sql}");
-        assert!(sql.contains("id uuid not null primary key"), "{sql}");
-        assert!(draft.generated.files.keys().any(|path| {
-            path.as_str()
-                .ends_with("adapters/jdbc/JdbcNoteRepository.java")
-        }));
-        assert!(draft.reader_document_intents.iter().any(|intent| {
-            matches!(intent, DocumentIntent::ReconcileDependencies { dependencies }
-                if dependencies.iter().any(|dependency| dependency.artifact == "spring-boot-starter-jdbc"))
-        }));
-    }
-
-    #[test]
-    fn accepted_schema_and_field_policy_lower_one_forward_add_column() {
-        let source =
-            format!("{MODEL}\n[capabilities.database]\nid = \"cap_database\"\nkind = \"db\"\n");
-        let model = jails_model::parse_toml(&source).unwrap();
-        let next_source = format!(
-            "{source}\n[entities.note.fields.summary]\nid = \"fld_note_summary\"\ntype = \"string\"\nrequired = false\n"
-        );
-        let next = jails_model::parse_toml(&next_source).unwrap();
-        let field_id = FieldId::parse("fld_note_summary").unwrap();
-        let field = next
-            .entities
-            .values()
-            .find_map(|entity| entity.field(&field_id))
-            .unwrap()
-            .clone();
-        let mut snapshot = WorkspaceSnapshot::detached(model.clone());
-        snapshot.project.build_system = BuildSystem::Maven;
-        snapshot.project.spring_boot = Some("4.0.0".to_string());
-        snapshot.accepted_model = Some(model);
-        snapshot.migration_history.records.push(MigrationRecord {
-            version: "1".to_string(),
-            path: ProjectPath::parse("src/main/resources/db/migration/V001__create_note.sql")
-                .unwrap(),
-            digest: ContentDigest::parse(format!("sha256:{}", "0".repeat(64))).unwrap(),
-        });
-        let entity = next.entities.values().next().unwrap().id.clone();
-        let draft = Compiler::compile(
-            &snapshot,
-            Some(ModelPatch::AddField {
-                entity,
-                field,
-                policy: FieldAddPolicy::Nullable,
-                placement: jails_model::FieldPlacement::Last,
-            }),
-        )
-        .unwrap();
-        assert_eq!(draft.migrations.len(), 1);
-        assert_eq!(draft.migrations[0].logical_name, "add_summary_to_notes");
-        let sql = String::from_utf8(draft.migrations[0].bytes.clone()).unwrap();
-        assert_eq!(
-            sql,
-            "-- Generated by jails from the accepted semantic schema.\nalter table notes add column summary text;\n"
-        );
-    }
-
-    #[test]
-    fn required_direct_model_edit_refuses_without_an_explicit_backfill_policy() {
-        let source =
-            format!("{MODEL}\n[capabilities.database]\nid = \"cap_database\"\nkind = \"db\"\n");
-        let accepted = jails_model::parse_toml(&source).unwrap();
-        let next_source = format!(
-            "{source}\n[entities.note.fields.summary]\nid = \"fld_note_summary\"\ntype = \"string\"\n"
-        );
-        let next = jails_model::parse_toml(&next_source).unwrap();
-        let mut snapshot = WorkspaceSnapshot::detached(next);
-        snapshot.project.build_system = BuildSystem::Maven;
-        snapshot.project.spring_boot = Some("4.0.0".to_string());
-        snapshot.accepted_model = Some(accepted);
-        let error = Compiler::compile(&snapshot, None).unwrap_err();
-        assert!(error.to_string().contains("needs a backfill"), "{error}");
     }
 
     #[test]
@@ -3182,8 +2835,8 @@ entity Metric {
         );
         // `if-match required` binds the version through the optimistic-lock
         // parameter, not through the ordinary `guard_<column>` equality path a
-        // plain version parameter takes. Asserting the guard spelling here read
-        // as correct and pinned the wrong one of the two.
+        // plain version parameter takes; asserting the guard spelling here
+        // would pin the wrong one of the two.
         assert!(
             transition.contains("version = :expected_version"),
             "{transition}"
@@ -3377,5 +3030,295 @@ entity Task {
             "{transition}"
         );
         assert!(!transition.contains("param(\"status\""), "{transition}");
+    }
+    #[test]
+    fn a_new_ejection_transfers_matching_units_and_removes_them_from_the_tree() {
+        let model = jails_model::parse_jdl(MODEL).unwrap();
+        let snapshot = WorkspaceSnapshot::detached(model);
+        let before = Compiler::compile(&snapshot, None).unwrap();
+        let ejection = jails_model::Ejection {
+            id: jails_model::EjectionId::parse("eject_ent_note").unwrap(),
+            label: "note".to_string(),
+            target: "art_ent_note_repository_memory".to_string(),
+        };
+        let draft = Compiler::compile(&snapshot, Some(ModelPatch::AddEjection(ejection))).unwrap();
+        assert_eq!(
+            draft.generated.files.len() + 1,
+            before.generated.files.len()
+        );
+        let transferred = draft
+            .reader_document_intents
+            .iter()
+            .filter(|intent| matches!(intent, DocumentIntent::EjectFile { .. }))
+            .count();
+        assert_eq!(transferred, 1);
+        assert!(
+            draft
+                .generated
+                .files
+                .values()
+                .any(|file| file.provenance.artifact_id == "art_ent_note_record")
+        );
+        assert!(draft.generated.files.values().any(|file| {
+            file.provenance.artifact_id == "art_cap_fake_script"
+                && file.provenance.ejection_id.as_deref() == Some("cap_fake")
+        }));
+    }
+
+    #[test]
+    fn compilation_refuses_a_snapshot_model_disagreement() {
+        let model = jails_model::parse_jdl(MODEL).unwrap();
+        let mut snapshot = WorkspaceSnapshot::detached(model);
+        snapshot.project.java_release = 21;
+        let error = Compiler::compile(&snapshot, None).unwrap_err();
+        assert!(error.to_string().contains("disagrees"));
+    }
+
+    #[test]
+    fn accepted_projection_is_the_exact_merge_base_across_emitter_versions() {
+        let model = jails_model::parse_jdl(MODEL).unwrap();
+        let first = Compiler::compile(&WorkspaceSnapshot::detached(model.clone()), None).unwrap();
+        let mut old_projection = first.generated.clone();
+        let record = old_projection
+            .files
+            .values_mut()
+            .find(|file| file.provenance.artifact_id == "art_ent_note_record")
+            .unwrap();
+        record
+            .bytes
+            .extend_from_slice(b"// old emitter projection\n");
+
+        let mut upgraded = WorkspaceSnapshot::detached(model.clone());
+        upgraded.accepted_model = Some(model);
+        upgraded.accepted_projection = Some(old_projection.clone());
+        upgraded.accepted_compiler = Some("0.0.0-old".to_string());
+        let draft = Compiler::compile(&upgraded, None).unwrap();
+
+        assert_eq!(draft.baseline, old_projection);
+        assert_ne!(draft.baseline, draft.generated);
+    }
+
+    #[test]
+    fn database_capability_lowers_ejectable_operation_implementations() {
+        let source = stored_model().replace("cap fake @id(cap_fake)\n\n", "");
+        let model = jails_model::parse_jdl(&source).unwrap();
+        let mut snapshot = WorkspaceSnapshot::detached(model);
+        snapshot.project.spring_boot = Some("4.0.0".to_string());
+        snapshot.project.build_system = BuildSystem::Maven;
+        snapshot.project.spring_boot = Some("4.0.0".to_string());
+        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let (path, file) = draft
+            .generated
+            .files
+            .iter()
+            .find(|(_, file)| file.provenance.artifact_id == "art_cap_db_op_open_notes_query")
+            .unwrap();
+        assert_eq!(
+            path.as_str(),
+            ".jails/generated/main/java/com/example/notes/adapters/jdbc/JdbcOpenNotesQuery.java"
+        );
+        assert!(file.provenance.ejectable);
+        assert_eq!(file.provenance.compiler_pass, "capability-db-query");
+        let source = String::from_utf8(file.bytes.clone()).unwrap();
+        assert!(source.contains("implements OpenNotesQuery"), "{source}");
+        assert!(source.contains("select id, title from note"), "{source}");
+        assert!(source.contains("title = :title"), "{source}");
+        assert!(source.contains("order by id"), "{source}");
+        assert!(source.contains("limit 50"), "{source}");
+        assert!(
+            source.contains("statement.query(Note.class).list()"),
+            "{source}"
+        );
+
+        let command = draft
+            .generated
+            .files
+            .values()
+            .find(|file| file.provenance.artifact_id == "art_cap_db_op_create_note_command")
+            .unwrap();
+        assert!(command.provenance.ejectable);
+        assert_eq!(command.provenance.compiler_pass, "capability-db-command");
+        let command = String::from_utf8(command.bytes.clone()).unwrap();
+        assert!(
+            command.contains("implements CreateNoteCommand"),
+            "{command}"
+        );
+        assert!(
+            command
+                .contains("insert into notes (id, title) values (:id, :title) returning id, title"),
+            "{command}"
+        );
+        assert!(command.contains("TimeOrderedUuid.next()"), "{command}");
+        let uuid7 = draft
+            .generated
+            .files
+            .values()
+            .find(|file| file.provenance.artifact_id == "art_app_time_ordered_uuid")
+            .map(|file| String::from_utf8(file.bytes.clone()).unwrap())
+            .expect("time-ordered UUID support");
+        assert!(uuid7.contains("| 0x70"), "{uuid7}");
+        assert!(uuid7.contains("| 0x80"), "{uuid7}");
+
+        let transition = draft
+            .generated
+            .files
+            .values()
+            .find(|file| file.provenance.artifact_id == "art_cap_db_op_rename_note_transition")
+            .unwrap();
+        assert!(transition.provenance.ejectable);
+        assert_eq!(
+            transition.provenance.compiler_pass,
+            "capability-db-transition"
+        );
+        let transition = String::from_utf8(transition.bytes.clone()).unwrap();
+        assert!(
+            transition.contains("implements RenameNoteTransition"),
+            "{transition}"
+        );
+        assert!(
+            transition.contains("update notes set title = :title where"),
+            "{transition}"
+        );
+        assert!(transition.contains("@Transactional"), "{transition}");
+        assert!(
+            transition
+                .contains("events.publishEvent(new NoteCreatedEvent(result.id(), result.title()))"),
+            "{transition}"
+        );
+    }
+
+    #[test]
+    fn equal_inputs_produce_equal_drafts() {
+        let model = jails_model::parse_jdl(MODEL).unwrap();
+        let snapshot = WorkspaceSnapshot::detached(model);
+        let first = Compiler::compile(&snapshot, None).unwrap();
+        let second = Compiler::compile(&snapshot, None).unwrap();
+        assert_eq!(first, second);
+        assert!(
+            first
+                .generated
+                .files
+                .values()
+                .map(|file| file.provenance.artifact_id.as_str())
+                .collect::<BTreeSet<_>>()
+                .len()
+                == first.generated.files.len()
+        );
+        assert!(first.generated.files.keys().any(|path| {
+            path.as_str()
+                .ends_with("application/commands/CreateNoteCommand.java")
+        }));
+        assert!(first.generated.files.keys().any(|path| {
+            path.as_str()
+                .ends_with("adapters/memory/InMemoryNoteRepository.java")
+        }));
+        assert!(first.generated.files.keys().any(|path| {
+            path.as_str()
+                .ends_with("test/java/com/example/notes/testkit/Fake.java")
+        }));
+        assert!(first.generated.files.keys().any(|path| {
+            path.as_str()
+                .ends_with("test/java/com/example/notes/testkit/FakeTest.java")
+        }));
+    }
+
+    #[test]
+    fn required_direct_model_edit_refuses_without_an_explicit_backfill_policy() {
+        let accepted = jails_model::parse_jdl(&stored_model()).unwrap();
+        let next = jails_model::parse_jdl(&stored_model_with_summary("summary: string")).unwrap();
+        let mut snapshot = WorkspaceSnapshot::detached(next);
+        snapshot.project.build_system = BuildSystem::Maven;
+        snapshot.project.spring_boot = Some("4.0.0".to_string());
+        snapshot.accepted_model = Some(accepted);
+        let error = Compiler::compile(&snapshot, None).unwrap_err();
+        assert!(error.to_string().contains("needs a backfill"), "{error}");
+    }
+
+    #[test]
+    fn accepted_schema_and_field_policy_lower_one_forward_add_column() {
+        let model = jails_model::parse_jdl(&stored_model()).unwrap();
+        let next = jails_model::parse_jdl(&stored_model_with_summary("summary: string?")).unwrap();
+        let field_id = FieldId::parse("fld_note_summary").unwrap();
+        let field = next
+            .entities
+            .values()
+            .find_map(|entity| entity.field(&field_id))
+            .unwrap()
+            .clone();
+        let mut snapshot = WorkspaceSnapshot::detached(model.clone());
+        snapshot.project.build_system = BuildSystem::Maven;
+        snapshot.project.spring_boot = Some("4.0.0".to_string());
+        snapshot.accepted_model = Some(model);
+        snapshot.migration_history.records.push(MigrationRecord {
+            version: "1".to_string(),
+            path: ProjectPath::parse("src/main/resources/db/migration/V001__create_note.sql")
+                .unwrap(),
+            digest: ContentDigest::parse(format!("sha256:{}", "0".repeat(64))).unwrap(),
+        });
+        let entity = next.entities.values().next().unwrap().id.clone();
+        let draft = Compiler::compile(
+            &snapshot,
+            Some(ModelPatch::AddField {
+                entity,
+                field,
+                policy: FieldAddPolicy::Nullable,
+                placement: jails_model::FieldPlacement::Last,
+            }),
+        )
+        .unwrap();
+        assert_eq!(draft.migrations.len(), 1);
+        assert_eq!(draft.migrations[0].logical_name, "add_summary_to_notes");
+        let sql = String::from_utf8(draft.migrations[0].bytes.clone()).unwrap();
+        assert_eq!(
+            sql,
+            "-- Generated by jails from the accepted semantic schema.\nalter table notes add column summary text;\n"
+        );
+    }
+
+    #[test]
+    fn database_capability_lowers_storage_dependencies_adapter_and_initial_schema() {
+        let model = jails_model::parse_jdl(&stored_model()).unwrap();
+        let mut snapshot = WorkspaceSnapshot::detached(model);
+        snapshot.project.build_system = BuildSystem::Maven;
+        // The adapters this asserts on are `JdbcClient` classes annotated
+        // `@Repository`, so the capability needs a Boot project to compile
+        // into; without a parent, a versionless dependency set reaches a pom
+        // nothing manages.
+        snapshot.project.spring_boot = Some("4.0.0".to_string());
+        let draft = Compiler::compile(&snapshot, None).unwrap();
+        assert_eq!(draft.migrations.len(), 1);
+        assert_eq!(draft.migrations[0].logical_name, "create_notes");
+        let sql = String::from_utf8(draft.migrations[0].bytes.clone()).unwrap();
+        assert!(sql.contains("create table notes"), "{sql}");
+        assert!(sql.contains("id uuid not null primary key"), "{sql}");
+        assert!(draft.generated.files.keys().any(|path| {
+            path.as_str()
+                .ends_with("adapters/jdbc/JdbcNoteRepository.java")
+        }));
+        assert!(draft.reader_document_intents.iter().any(|intent| {
+            matches!(intent, DocumentIntent::ReconcileDependencies { dependencies }
+                if dependencies.iter().any(|dependency| dependency.artifact == "spring-boot-starter-jdbc"))
+        }));
+    }
+
+    #[test]
+    fn managed_abi_cannot_be_ejected() {
+        let source = format!("{MODEL}\neject id(art_ent_note_record) @id(eject_ent_note)\n");
+        let model = jails_model::parse_jdl(&source).unwrap();
+        let snapshot = WorkspaceSnapshot::detached(model);
+        let error = Compiler::compile(&snapshot, None).unwrap_err();
+        assert!(error.to_string().contains("managed ABI"), "{error}");
+    }
+
+    #[test]
+    fn an_ejection_that_emits_nothing_is_rejected() {
+        let source = format!("{MODEL}\neject id(art_missing_repository) @id(eject_database)\n");
+        let model = jails_model::parse_jdl(&source).unwrap();
+        let snapshot = WorkspaceSnapshot::detached(model);
+        let error = Compiler::compile(&snapshot, None).unwrap_err();
+        assert!(
+            error.to_string().contains("emits no ejectable Java"),
+            "{error}"
+        );
     }
 }

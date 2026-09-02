@@ -1,15 +1,13 @@
 //! `jails` end to end: the real compiled binary against real directories.
 //!
-//! One test binary, five subjects. It was one 8,142-line file, which is not a
-//! size anybody navigates -- `pending.md` §8.2. The split is by *subject*
-//! rather than by tier, because which tier a test belongs to is already
-//! visible in whether it calls `common::skip`, while what a test is about was
-//! visible nowhere.
+//! One test binary, several subjects. The split is by *subject* rather than
+//! by tier, because which tier a test belongs to is already visible in
+//! whether it calls `common::skip`.
 //!
-//! **One binary, not five.** Every `tests/*.rs` cargo finds is its own crate,
-//! its own link and its own process; five targets would pay the link five
-//! times and could not share a fixture. This is one target with the subjects
-//! as ordinary submodules, so the helpers below stay defined once and each
+//! One binary, not one per subject: every `tests/*.rs` cargo finds is its own
+//! crate, its own link and its own process, and separate targets would pay
+//! the link each time and could not share a fixture. The subjects are
+//! ordinary submodules, so the helpers below stay defined once and each
 //! subject reaches them through `use super::*`.
 //!
 //! `common/` is shared with the other test binaries, so it stays beside them
@@ -30,7 +28,6 @@ mod model;
 mod new;
 mod portable_plan;
 mod reports;
-mod sql;
 mod tooling;
 
 use common::*;
@@ -55,7 +52,6 @@ fn opts_line_for<'a>(script: &'a str, marker: &str) -> &'a str {
 
 /// Every file under a directory with its bytes, so "left it alone" is a claim
 /// about content rather than only about which names still exist.
-/// Every file in `dir`, for the "and it wrote nothing" half of a refusal.
 ///
 /// `.jails/apply.lock` is excluded because the executor has to *take* the lock
 /// before it can recheck a single precondition -- so a refusal necessarily
@@ -126,16 +122,13 @@ fn overlay_plain_toolbox_completions(root: &Path) {
         "/tests/fixtures/plain-toolbox-completions"
     ));
 
-    // **Where the file lives has moved, and the fixture names it once.**
     // These are hand-written completions for stubs the generator leaves
-    // empty, and they used to overlay a legacy project's `src/`. The toolbox
-    // is canonical now, so the file each one completes is under
-    // `.jails/generated` -- and copying it to `src/` as well is not an overlay
-    // but a second copy of the class, which javac reports as
-    // `duplicate class` for all seven at once.
+    // empty, and the file each one completes is under `.jails/generated`.
+    // Copying it to `src/` as well is not an overlay but a second copy of the
+    // class, which javac reports as `duplicate class` for all seven at once.
     //
     // Mapped rather than renamed in `FILES`, so the fixture paths keep saying
-    // where the reader would find the file in a project that is not canonical.
+    // where the reader would find the file.
     let generated = root.join(".jails/model.jdl").is_file();
     for relative in FILES {
         let source = fixtures.join(relative);
@@ -167,14 +160,11 @@ fn verified_plain_toolbox(path: &str) -> &'static std::path::PathBuf {
     static VERIFIED: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
     VERIFIED.get_or_init(|| {
         let workdir = temp_dir("plain-toolbox-verified");
-        // **The manifest is applied *at creation*, not after.** `new-cli`
-        // seeds `.jails/model.jdl`, so an ordinary plain project is canonical,
-        // and `--app` is the route that applies a manifest inside the
-        // publication -- which is what `plan.md` §R6.5 made it for. A
-        // canonical `app apply` would work too now that it replays into the
-        // model rather than refusing, but it would run against a project this
-        // fixture has already published, so the toolbox would be measuring a
-        // different command than the one it exists to cover.
+        // The manifest is applied *at creation*, not after: `--app` is the
+        // route that applies a manifest inside the publication. `app apply`
+        // would work too, but it would run against a project this fixture has
+        // already published, so the toolbox would be measuring a different
+        // command than the one it exists to cover.
         let manifest = workdir.join("ledger-cli.app.toml");
         fs::write(
             &manifest,
@@ -262,12 +252,11 @@ fn verified_plain_toolbox(path: &str) -> &'static std::path::PathBuf {
 
         // The manifest ran at creation, so its `format` capability formatted
         // what existed then, which is none of the sources above. One explicit
-        // pass now covers every file, which is what applying the manifest last
-        // used to do.
+        // pass covers every file.
         //
-        // Through Maven rather than `jails fmt`: a canonical project refuses
+        // Through Maven rather than `jails fmt`: a modelled project refuses
         // that command, and its own fix line says to run the project formatter
-        // directly, because canonical formatter ownership is not modeled yet.
+        // directly, because formatter ownership is not modelled yet.
         let output = real_maven_cmd(&root, path)
             .arg("spotless:apply")
             .output()
@@ -302,14 +291,9 @@ fn verified_plain_toolbox(path: &str) -> &'static std::path::PathBuf {
         assert_eq!(
             surefire,
             MavenReportSummary {
-                // 89 -> 80 when this toolbox became canonical. The same 29
-                // test classes, and the compiler writes a smaller suite in
-                // some of them -- one companion test per shape rather than the
-                // legacy generator's several. `skipped: 0` is the property
-                // this assertion is for and it is unchanged: a generated test
-                // that does not run proves nothing, and three of them arrived
-                // `@Disabled` before `null_checked` was taught the emitter's
-                // own rule.
+                // The compiler writes one companion test per shape. `skipped:
+                // 0` is the property this assertion is for: a generated test
+                // that does not run proves nothing.
                 reports: 29,
                 tests: 80,
                 failures: 0,
@@ -358,7 +342,7 @@ fn verified_spring_toolboxes(path: &str) -> &'static SpringToolboxes {
         // changes what the shared project proves, and without the salt the
         // cached tree from the previous run is reused and the new step never
         // runs -- a control that reports green over commands it did not
-        // execute. Same failure as a skipped tier-3 test, one level up.
+        // execute.
         let salt = include_str!("main.rs");
         let (core, core_fresh) = cached_toolchain_dir_with_salt("spring-core-toolbox", salt);
         let (services, services_fresh) =
@@ -367,11 +351,9 @@ fn verified_spring_toolboxes(path: &str) -> &'static SpringToolboxes {
         if core_fresh {
             write_spring_fixture(&core);
             // `cors` and `h2` are here because their templates are chosen by
-            // the project's Boot version and only the *legacy* branch was ever
-            // compiled: `add cors` is run through real `mvn test` against a
-            // Boot 2 fixture, and `add h2`'s Boot 4 branch adds a console
-            // module that had no test at all. A tier-3 test pinned to the old
-            // branch reports green for the branch every real project gets.
+            // the project's Boot version: `add cors` is also run against a
+            // Boot 2 fixture, and this is the Boot 4 branch every new project
+            // gets, including `add h2`'s console module.
             for capability in [
                 "api",
                 "cache",
@@ -421,12 +403,11 @@ fn verified_spring_toolboxes(path: &str) -> &'static SpringToolboxes {
                 &["generate", "dto", "Payout"][..],
                 // Not `Billing`: the model has one component namespace, so a
                 // service and a client of one name are one declaration and the
-                // second is refused by name. The engine this replaces put them
-                // in different packages and never had to decide.
+                // second is refused by name.
                 &["generate", "client", "Ledger"][..],
                 // The other client shape: the call the project makes rather
-                // than a REST collection to delete (missing.md M7). Its test
-                // is `@Disabled` and still has to compile.
+                // than a REST collection to delete. Its test is `@Disabled`
+                // and still has to compile.
                 &[
                     "generate",
                     "client",
@@ -438,14 +419,13 @@ fn verified_spring_toolboxes(path: &str) -> &'static SpringToolboxes {
                     "--path",
                     "/v1/ledger/entries",
                 ][..],
-                // Two kinds that only contradict each other in company.
+                // Two kinds that can only contradict each other in company:
                 // `g scaffold` writes an ArchUnit rule forbidding
                 // `org.springframework..` inside `domain..`, and `g strategy`
-                // wrote `@Component` implementations into it -- a red build on
-                // a clean generate, invisible to every scenario in the suite
-                // because each exercises one kind in one project. This toolbox
-                // is where a first-party generator meets the fitness function
-                // another first-party generator installed.
+                // writes `@Component` implementations, which must therefore
+                // land in `service`. This toolbox is where a first-party
+                // generator meets the fitness function another first-party
+                // generator installed.
                 // The WebSocket half. Its handler and test are ordinary Java,
                 // but the starter `g socket` splices is what decides whether
                 // `org.springframework.web.socket` resolves at all -- and a
@@ -562,10 +542,10 @@ fn verified_spring_services_toolbox(path: &str) -> &'static std::path::PathBuf {
 }
 
 /// Shared compile-and-unit-test proof for generators which require the JDBC
-/// capability. The dedicated `add_db_on_spring_makes_context_loads_pass` test
-/// still exercises the generated Testcontainers default against PostgreSQL;
-/// this toolbox uses H2 for the branches whose original contract was only
-/// javac/Surefire, avoiding three more Maven JVMs and containers.
+/// capability. `add_db_on_spring_makes_context_loads_pass` exercises the
+/// generated Testcontainers default against PostgreSQL; this toolbox uses H2
+/// for the branches whose contract is only javac/Surefire, avoiding more
+/// Maven JVMs and containers.
 fn verified_spring_db_toolbox(path: &str) -> &'static std::path::PathBuf {
     static VERIFIED: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
     VERIFIED.get_or_init(|| {
@@ -608,11 +588,11 @@ fn verified_spring_db_toolbox(path: &str) -> &'static std::path::PathBuf {
                 &["generate", "search", "Article", "title", "body"][..],
                 // The form-bound pair. They are here rather than in a test of
                 // their own because this fixture already runs `mvn test`, and
-                // a real build is the only oracle for the defect they cover:
-                // every `--consumes form` endpoint jails wrote shipped a proof
-                // that posted a JSON body at an `@ModelAttribute` parameter,
-                // which binds from request *parameters*. The goldens were
-                // green over it -- they compare bytes and never run the code.
+                // a real build is the only oracle for what they cover: a
+                // `--consumes form` endpoint's proof must post request
+                // *parameters* at its `@ModelAttribute` parameter, not a JSON
+                // body, and the goldens compare bytes without running the
+                // code.
                 &[
                     "generate",
                     "scaffold",
@@ -696,8 +676,8 @@ fn assert_surefire_test_count(root: &Path, class_name: &str, expected: usize) {
 
 /// Generate each proof application exactly once per `cargo test` process.
 /// Compilation and execution happen in `verified_app_fixtures`: Maven's
-/// `verify` lifecycle already includes compile and test-compile, so running a
-/// separate `test-compile` lifecycle first repeated three Maven startups while
+/// `verify` lifecycle already includes compile and test-compile, so a separate
+/// `test-compile` lifecycle first would repeat the Maven startups while
 /// proving a strict subset of the same result.
 fn generated_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::PathBuf)> {
     static GENERATED: std::sync::OnceLock<Vec<(&'static str, std::path::PathBuf)>> =
@@ -849,17 +829,12 @@ fn assert_proof_app_context_source(project: &Path, file: &str, class_name: &str)
 fn verified_app_unit_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::PathBuf)> {
     static VERIFIED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     let generated = generated_app_fixtures(path);
-    // **A cell that fails here has to say which app and why.** This used to
-    // assert inside the spawned closure and let the scope join re-panic, which
-    // reports `a scoped thread panicked` and nothing else -- the same
-    // diagnostic loss `common::parallel::catching` exists to prevent, in the
-    // one table that predates it. Worse, `-q` with `status()` sends Maven's
-    // output to the terminal rather than into the failure, so a red CI run
-    // showed neither the app nor the Surefire report and read as a flake.
-    //
-    // Each cell returns its finding instead, the scope collects them, and the
-    // assertion carries every failing app with the build output that explains
-    // it.
+    // A cell that fails here has to say which app and why: an assertion inside
+    // the spawned closure reports `a scoped thread panicked` and nothing else,
+    // and `-q` with `status()` sends Maven's output to the terminal rather
+    // than into the failure. Each cell returns its finding instead, the scope
+    // collects them, and the assertion carries every failing app with the
+    // build output that explains it.
     VERIFIED.get_or_init(|| {
         let failures = std::thread::scope(|scope| {
             let running = generated
@@ -952,40 +927,18 @@ fn verified_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::P
         assert_eq!(
             reports,
             MavenReportSummary {
-                // 70 -> 72: `aSinkThatAlreadyAcceptedIsNotSentTheEventAgain`,
-                // one per outbox, proving the relay's per-sink record survives
-                // a failed attempt (plan.md P6.3).
-                //
-                // **72 -> 31 when the corpus moved to the compiler**, and the
-                // number to watch is `skipped`, which is still zero. The
-                // legacy engine wrote an integration test per generated Java
-                // class; the compiler writes one per *operation* -- the write
-                // adapter against a real database, the query against the row
-                // it stored -- so a scaffold that produced five classes and
-                // five near-identical ITs now produces one that proves the
-                // statement. Nine of the old ones were scoped and `@Disabled`,
-                // which counted as passing and proved nothing; those run now,
-                // because the test that stores the row is the caller that can
-                // prove its tenancy.
-                //
-                // **28 -> 41 when the repository adapter gained its own.** A
-                // `JdbcClient` statement is a string until something runs it,
-                // and the adapter every scaffold emits had no test at all --
-                // so the column list, the `returning` clause and the types
-                // were only ever checked by the operations that happened to
-                // use them. `skipped` is still zero.
-                //
-                // **41 -> 53 when every declared relation gained one**, two
-                // tests each: a foreign key is the one thing in a generated
-                // project no unit test can observe, so a mapping written
-                // backwards read exactly like a correct one. Twelve relations
-                // across the three applications.
-                //
-                // **53 -> 56 when a declared event gained its Kafka slice.**
-                // The publisher and the listener are a contract nothing
-                // executed either: `MessagingIT` publishes through a real
-                // broker and waits for the record to come back, matched by id
-                // so it cannot pass on a neighbour's message.
+                // The number to watch is `skipped`, which is zero. The
+                // compiler writes one integration test per *operation* -- the
+                // write adapter against a real database, the query against the
+                // row it stored -- plus one per repository adapter (a
+                // `JdbcClient` statement is a string until something runs it),
+                // two per declared relation (a foreign key is the one thing in
+                // a generated project no unit test can observe, so a mapping
+                // written backwards reads exactly like a correct one), one
+                // `aSinkThatAlreadyAcceptedIsNotSentTheEventAgain` per outbox,
+                // and a `MessagingIT` per declared event that publishes
+                // through a real broker and waits for the record to come back,
+                // matched by id so it cannot pass on a neighbour's message.
                 reports: 56,
                 tests: 71,
                 failures: 0,
@@ -1005,11 +958,11 @@ fn verified_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::P
 fn verified_app_images(fixtures: &'static Vec<(&'static str, std::path::PathBuf)>) {
     static VERIFIED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     VERIFIED.get_or_init(|| {
-        // Podman does not single-flight concurrent pulls: three `docker build
-        // --pull` calls downloaded the same Maven and Temurin layers three times,
-        // consuming a gigabyte of memory without increasing coverage. Resolve
-        // every generated FROM image once, then let the still-parallel builds use
-        // the local content-addressed image store.
+        // Podman does not single-flight concurrent pulls, so concurrent
+        // `docker build --pull` calls download the same Maven and Temurin
+        // layers once each. Resolve every generated FROM image once, then let
+        // the still-parallel builds use the local content-addressed image
+        // store.
         let mut base_images = std::collections::BTreeSet::new();
         for (_, root) in fixtures {
             let dockerfile = fs::read_to_string(root.join("Dockerfile")).unwrap();
@@ -1044,11 +997,11 @@ fn verified_app_images(fixtures: &'static Vec<(&'static str, std::path::PathBuf)
                 );
             }
         }
-        // Podman serialises parts of its rootless storage graph internally.
-        // Three client processes made three cache-only builds take about six
-        // seconds each, versus roughly 1.2 seconds apiece in sequence. This
-        // loop still builds and inspects every image, while the whole image
-        // phase remains overlapped with the Maven application gate.
+        // Podman serialises parts of its rootless storage graph internally, so
+        // concurrent cache-only builds are slower than sequential ones,
+        // measured. This loop still builds and inspects every image, while the
+        // whole image phase remains overlapped with the Maven application
+        // gate.
         for (name, root) in fixtures {
             let image = format!("jails-dogfood-{name}:test");
             let mut command = real_docker_cmd(root);
@@ -1058,17 +1011,12 @@ fn verified_app_images(fixtures: &'static Vec<(&'static str, std::path::PathBuf)
                 // resolution before accepting its local copy; make this
                 // deliberately cached build local-only.
                 //
-                // **`--pull=false`, not `--pull=never`.** `never` is podman's
+                // `--pull=false`, not `--pull=never`: `never` is podman's
                 // spelling of this policy and real Docker rejects it outright
-                // -- `invalid argument "never" for "--pull" flag`, before the
-                // build starts -- so on Docker this gate could only ever fail,
-                // and it failed with `web-crawler failed its generated OCI
-                // image build`, which reads like the generated Dockerfile is
-                // wrong. Podman accepts the boolean spelling as an alias for
-                // `never`, so `false` is the one word both engines understand.
-                // The same trap as the `docker info --format` one CLAUDE.md
-                // records, in the other direction: this machine's `docker` is
-                // podman's shim, so a podman-only flag looks portable here.
+                // (`invalid argument "never" for "--pull" flag`), which reads
+                // like the generated Dockerfile is wrong. Podman accepts the
+                // boolean spelling as an alias for `never`, so `false` is the
+                // one word both engines understand.
                 .args(["build", "--pull=false", "--tag", &image]);
             for (from, to) in &substitutions {
                 command.args(["--build-context", &format!("{from}=docker-image://{to}")]);
@@ -1092,12 +1040,11 @@ fn verified_app_images(fixtures: &'static Vec<(&'static str, std::path::PathBuf)
     });
 }
 
-/// A minimal project skeleton (pom.xml + an *Application.java) good enough
-/// for generate/destroy's path resolution -- not a real, resolvable Maven
-/// project, since these tests never invoke Maven.
-/// The smallest thing jails will treat as a project: a pom, a package, a class.
+/// The smallest thing jails will treat as a project: a pom, a package, a
+/// class. Not a real, resolvable Maven project, since these tests never
+/// invoke Maven.
 ///
-/// **The release is part of "smallest".** A build that declares none is one
+/// The release is part of "smallest". A build that declares none is one
 /// jails refuses to model, because every record it would write needs a release
 /// this pom does not state -- so a fixture without one tests the refusal rather
 /// than whatever the test was about.
@@ -1122,11 +1069,11 @@ fn write_project_skeleton(root: &std::path::Path) {
 // ---- mocked mvn/mvnd: verify jails' own command-construction logic
 // (which binary, which args) without needing real Maven. ----
 
-// ---- real Maven + JDK 26, no network beyond Maven Central artifact
+// ---- real Maven + JDK, no network beyond Maven Central artifact
 // resolution (never start.spring.io): verify the actual bar the tool
 // exists for -- "does new-cli produce a project that passes mvn test?" and
-// "does generate scaffold produce a project that compiles?". Skipped
-// automatically if mvn isn't on PATH. ----
+// "does generate scaffold produce a project that compiles?". Runs only with
+// `JAILS_TOOLCHAIN=1`. ----
 
 // ---- add ----
 

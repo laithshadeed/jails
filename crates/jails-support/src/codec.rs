@@ -1,11 +1,9 @@
 //! The one binary framing every closed jails format shares.
 //!
-//! plan.md §R3.1: *"All closed binary formats share `src/codec.rs`; do not let
-//! each module invent framing."* That is the whole reason this module exists.
-//! Identities are hashes over encoded values, so two modules that frame a
-//! string differently do not produce a decode error -- they produce a
-//! *different identity for the same value*, which is the failure this format
-//! is meant to make impossible.
+//! No module invents its own framing. Identities are hashes over encoded
+//! values, so two modules that frame a string differently do not produce a
+//! decode error -- they produce a *different identity for the same value*,
+//! which is the failure this format exists to make impossible.
 //!
 //! ## What is normative
 //!
@@ -26,16 +24,15 @@
 //!
 //! ## Why the limits are checked before allocating
 //!
-//! Every length here arrives from a file jails did not write in this process
-//! -- a journal recovered after a crash, an object from a peer. A `u32` length
-//! read straight into `Vec::with_capacity` is a 4 GiB allocation from four
-//! attacker-chosen bytes. So a length is compared against its cap *and*
+//! Every length here arrives from bytes this process did not produce. A `u32`
+//! length read straight into `Vec::with_capacity` is a 4 GiB allocation from
+//! four attacker-chosen bytes. So a length is compared against its cap *and*
 //! against the bytes actually remaining before anything is reserved.
 //!
 //! ## Domain separation
 //!
 //! An identity is `SHA256(ASCII-prefix || encode(value))` and **the prefix is
-//! not length-prefixed** (§R1.1). It is a constant per identity kind, so it
+//! not length-prefixed**. It is a constant per identity kind, so it
 //! cannot be confused with a following length field, and keeping it raw is
 //! what lets a second implementation reproduce the exact hex.
 
@@ -44,23 +41,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// A type with one canonical encoding on this wire.
 ///
-/// plan.md §R1.1 states the property this makes checkable: *"there is one
-/// constructor per type and the codec calls it."* Before the trait existed
-/// that was prose. Every value on the wire had an inherent `encode`/`decode`
-/// pair with byte-identical signatures -- 114 of them -- and nothing in the
-/// language connected them, so nothing generic could be written over them.
-///
-/// The cost was visible in the shape of this module rather than in any bug.
-/// [`Encoder::option`] and [`Encoder::nested`] take **closures**, because a
-/// bound was not available to take instead. And where one collection shape
-/// recurred, somebody wrote a named monomorphisation of it -- `encode_strings`,
-/// `decode_strings`, `encode_paths`, `encode_owners`, `encode_service_set`,
-/// `decode_service_map`, `decode_vec` -- seven copies of a function that
-/// could not be written once.
-///
-/// With the bound, "this type is on the wire" is something the compiler
-/// knows, and [`Encoder::seq`]/[`Decoder::seq`] can be written for all of
-/// them at once.
+/// There is one constructor per type and the codec calls it. With the bound,
+/// "this type is on the wire" is something the compiler knows, so
+/// [`Encoder::seq`]/[`Decoder::seq`] are written once for every such type
+/// rather than as a named monomorphisation per collection shape.
+/// [`Encoder::option`] and [`Encoder::nested`] take closures for the shapes a
+/// bound cannot express.
 pub trait Codec: Sized {
     fn encode(&self, encoder: &mut Encoder) -> Result<()>;
     fn decode(decoder: &mut Decoder<'_>) -> Result<Self>;
@@ -79,19 +65,16 @@ mod wire;
 // Deriving the two shapes that are not decisions
 // ---------------------------------------------------------------------------
 /// 4,096 bytes per project path.
-pub const MAX_PATH_BYTES: usize = 4 * 1024;
+pub(crate) const MAX_PATH_BYTES: usize = 4 * 1024;
 /// 1 MiB per ordinary string or diagnostic.
-pub const MAX_STRING_BYTES: usize = 1024 * 1024;
+pub(crate) const MAX_STRING_BYTES: usize = 1024 * 1024;
 /// 1,000,000 entries in any one collection.
 pub(crate) const MAX_COLLECTION_ENTRIES: u32 = 1_000_000;
-/// The default per-object ceiling. A command may lower it; raising it needs an
-/// explicit CLI or config value.
-pub const DEFAULT_MAX_OBJECT_BYTES: u64 = 256 * 1024 * 1024;
 /// The aggregate cap on any one inline record, which per-field limits do not
 /// replace: a record of a million small strings is still a record too big.
-pub const MAX_PROTOCOL_RECORD: usize = 64 * 1024 * 1024;
+pub(crate) const MAX_PROTOCOL_RECORD: usize = 64 * 1024 * 1024;
 /// Recursive values carry a checked counter rather than recursing freely.
-pub const MAX_CODEC_DEPTH: usize = 64;
+pub(crate) const MAX_CODEC_DEPTH: usize = 64;
 
 /// A digest, ID or any other fixed 32-byte value.
 pub const DIGEST_BYTES: usize = 32;
@@ -241,10 +224,8 @@ impl Encoder {
     /// A sorted, duplicate-free set: the count, then the elements in order.
     ///
     /// The ordering check is [`ordered`]'s, applied here so every set on the
-    /// wire gets it. Before the trait, each set that needed it carried its own
-    /// copy of this loop -- `encode_owners` and `encode_service_set` were the
-    /// same eight lines with one type changed -- and a set whose author forgot
-    /// the check simply did not get one.
+    /// wire gets it rather than depending on each set's author remembering
+    /// the check.
     pub fn set<T: Codec + Ord + std::fmt::Debug>(&mut self, items: &BTreeSet<T>) -> Result<()> {
         self.count(items.len())?;
         let mut previous: Option<&T> = None;
@@ -331,15 +312,6 @@ impl<'a> Decoder<'a> {
             .into());
         }
         Ok(())
-    }
-
-    /// Whether the complete input has been claimed.
-    ///
-    /// Versioned container decoders use this only at an explicitly documented
-    /// append-only compatibility boundary; ordinary values still call
-    /// [`Self::finish`] and reject unread tails.
-    pub fn is_finished(&self) -> bool {
-        self.at == self.bytes.len()
     }
 
     fn take(&mut self, count: usize) -> Result<&'a [u8]> {
@@ -481,7 +453,7 @@ impl<'a> Decoder<'a> {
     }
 
     /// The inverse of [`Encoder::maybe`].
-    pub fn perhaps<T: Codec>(&mut self) -> Result<Option<T>> {
+    pub(crate) fn perhaps<T: Codec>(&mut self) -> Result<Option<T>> {
         self.option(T::decode)
     }
 
@@ -496,12 +468,6 @@ impl<'a> Decoder<'a> {
     }
 }
 
-/// Refuse a set or map whose keys did not arrive sorted and distinct.
-///
-/// Not a tidiness rule. Canonical encoding is what makes an identity a
-/// function of a *value*; if `{a,b}` and `{b,a}` both decoded, one set would
-/// have two encodings and therefore two hashes, and every comparison built on
-/// those hashes would be wrong in a way nothing reports.
 /// Encode a homogeneous sequence: its length, then each element.
 ///
 /// Paired with [`decode_all`]. Every closed jails format that carries a list
@@ -532,6 +498,12 @@ pub fn decode_all<T>(
     Ok(values)
 }
 
+/// Refuse a set or map whose keys did not arrive sorted and distinct.
+///
+/// Not a tidiness rule. Canonical encoding is what makes an identity a
+/// function of a *value*; if `{a,b}` and `{b,a}` both decoded, one set would
+/// have two encodings and therefore two hashes, and every comparison built on
+/// those hashes would be wrong in a way nothing reports.
 pub fn ordered<K: Ord + std::fmt::Debug>(previous: Option<&K>, next: &K) -> Result<()> {
     match previous {
         None => Ok(()),
@@ -566,7 +538,7 @@ pub fn hex(digest: &[u8; DIGEST_BYTES]) -> String {
 /// Exactly 64 lowercase hex characters, back to bytes.
 ///
 /// Uppercase rejects on purpose: parsing then rendering has to be
-/// byte-identical (§R1.1), and accepting both spellings would break that.
+/// byte-identical, and accepting both spellings would break that.
 pub fn unhex(text: &str) -> Result<[u8; DIGEST_BYTES]> {
     if text.len() != DIGEST_BYTES * 2 {
         return Err(format!(
@@ -582,39 +554,6 @@ pub fn unhex(text: &str) -> Result<[u8; DIGEST_BYTES]> {
         let hi = nibble(bytes[index * 2])?;
         let lo = nibble(bytes[index * 2 + 1])?;
         *slot = (hi << 4) | lo;
-    }
-    Ok(out)
-}
-
-/// Lowercase hex for an arbitrary byte string. Presentation only, like
-/// [`hex`], but for payloads rather than fixed-width digests.
-pub fn hex_bytes(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(char::from_digit((byte >> 4) as u32, 16).expect("a nibble is a hex digit"));
-        out.push(char::from_digit((byte & 0x0f) as u32, 16).expect("a nibble is a hex digit"));
-    }
-    out
-}
-
-/// The inverse of [`hex_bytes`]. Odd length and uppercase both reject, so one
-/// byte string has exactly one spelling.
-pub fn unhex_bytes(text: &str) -> Result<Vec<u8>> {
-    if !text.len().is_multiple_of(2) {
-        return Err(format!(
-            "hex has an odd length ({}); every byte is two characters",
-            text.len()
-        )
-        .into());
-    }
-    let bytes = text.as_bytes();
-    let mut out = Vec::with_capacity(text.len() / 2);
-    // `as_chunks::<2>()` rather than `chunks_exact(2)`: the size is a
-    // constant, so this hands back `&[u8; 2]` and the length is the type's
-    // rather than a runtime property nobody re-checks. The length guard above
-    // has already refused an odd-length string, so the remainder is empty.
-    for pair in bytes.as_chunks::<2>().0 {
-        out.push((nibble(pair[0])? << 4) | nibble(pair[1])?);
     }
     Ok(out)
 }
@@ -956,38 +895,20 @@ mod tests {
         assert!(unhex(&"g".repeat(64)).unwrap_err().contains("hexadecimal"));
     }
 
-    #[test]
-    fn an_object_body_is_u64_framed_and_capped() {
-        let mut encoder = Encoder::new();
-        encoder.object(b"body", DEFAULT_MAX_OBJECT_BYTES).unwrap();
-        let bytes = encoder.finish().unwrap();
-        assert_eq!(hex_of(&bytes), concat!("0000000000000004", "626f6479"));
-
-        let mut decoder = Decoder::new(&bytes).unwrap();
-        assert_eq!(decoder.object(DEFAULT_MAX_OBJECT_BYTES).unwrap(), b"body");
-        decoder.finish().unwrap();
-
-        let mut lowered = Decoder::new(&bytes).unwrap();
-        assert!(lowered.object(2).unwrap_err().contains("over the 2-byte"));
-    }
-
-    /// A 100,000-byte random file hashed by coreutils' `sha256sum`, compared
-    /// byte for byte. The published vectors prove the algorithm; this proved
-    /// it once against an independent implementation on input nobody chose,
-    /// at a length that is not a block multiple. The digest is pinned rather
-    /// than the file kept, so the test stays hermetic.
+    /// 100,000 bytes hashed by coreutils' `sha256sum`, compared byte for byte.
+    /// The published vectors prove the algorithm; this pins agreement with an
+    /// independent implementation on input nobody chose, at a length that is
+    /// not a block multiple. The digest is pinned rather than the file kept,
+    /// so the test stays hermetic.
     #[test]
     fn sha256_agreed_with_coreutils_on_random_bytes() {
-        // Verified against coreutils on 2026-08-23: writing this exact byte
-        // sequence to a file and running e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  - over it produced the
-        // digest below.
         let bytes: Vec<u8> = (0..100_000u32)
             .map(|i| (i.wrapping_mul(2654435761) >> 13) as u8)
             .collect();
         assert_eq!(hex(&sha256(&bytes)), SEEDED_DIGEST);
     }
 
-    /// Pinned from the run that produced it; see the test above.
+    /// coreutils' `sha256sum` over the bytes the test above builds.
     const SEEDED_DIGEST: &str = "da7d952c43183bf6d33a9110c955bb23227d7dc925819d3f579ce2e01e81b603";
 
     fn hex_of(bytes: &[u8]) -> String {

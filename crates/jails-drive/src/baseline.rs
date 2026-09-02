@@ -1,32 +1,24 @@
-//! `jails architecture baseline`: accepting the violations that were already
-//! there.
+//! `jails architecture baseline`: accept the violations an adopted project
+//! already has, so the generated ArchUnit suite fails only on new ones.
 //!
 //! Named `baseline` rather than `architecture` because `jails-generate` has an
 //! `architecture` module already, and `module_of` assigns a layer by basename:
 //! two modules of one name make the layer checker report an edge about a file
-//! neither is. `CLAUDE.md` records the same failure from `src/new/spring.rs`.
+//! neither is.
 //!
-//! `g scaffold` writes `RAW_JDBC_STAYS_IN_ADAPTERS`, and on a project written
-//! before jails arrived it fails over the reader's own code -- which turns
-//! "try jails on this project" into "jails broke my build", the adoption story
-//! in one line. The mechanism to accept that already existed and nothing
-//! pointed at it: the suite calls `FreezingArchRule.freeze`, so a
-//! `.jails/architecture-baseline` records today's violations and the rules
-//! fail only on new ones.
-//!
-//! Creating that store is deliberately gated, and the gate was four manual
-//! steps in a file jails wrote: set two properties true, run the suite, set
-//! them back, commit the store. Doing it by hand takes a minute and is the
-//! last thing between a legacy checkout and a green `jails check`, which is
-//! the wrong place to hand somebody a recipe.
+//! `g scaffold` writes `RAW_JDBC_STAYS_IN_ADAPTERS`, and on an adopted project
+//! it fails over the reader's own code. The suite calls
+//! `FreezingArchRule.freeze`, so a `.jails/architecture-baseline` records
+//! today's violations and the rules fail only on new ones. Creating that store
+//! is gated by two ArchUnit permissions, and this command grants them for one
+//! run rather than asking the reader to edit the properties file by hand.
 //!
 //! **Nothing on disk is rewritten.** `ArchConfiguration` merges system
 //! properties under the `archunit.` prefix over `archunit.properties`
-//! (`PropertiesOverwritableBySystemProperties`, verified in
-//! `deps/archunit`), so the permission is granted for one run and
-//! `archunit.properties` stays strict -- which is the reviewable default the
-//! generated file argues for. There is no half-applied state and nothing to
-//! roll back if the run fails.
+//! (`PropertiesOverwritableBySystemProperties`, verified in `deps/archunit`),
+//! so the permission is granted for one run and `archunit.properties` stays
+//! strict. There is no half-applied state and nothing to roll back if the run
+//! fails.
 
 use crate::run::run_inherited;
 use jails_support::Result;
@@ -43,19 +35,15 @@ const SUITE: &str = "ArchitectureTest";
 const STORE: &str = ".jails/architecture-baseline";
 
 /// The two permissions, as system properties. Creation alone writes an empty
-/// index and every rule still fails -- ArchUnit needs update permission to
-/// record what it froze, which is the half a reader following the recipe by
-/// hand most often missed.
+/// index and every rule still fails: ArchUnit needs update permission to
+/// record what it froze.
 const PERMISSIONS: [&str; 2] = [
     "-Darchunit.freeze.store.default.allowStoreCreation=true",
     "-Darchunit.freeze.store.default.allowStoreUpdate=true",
 ];
 
-/// The generated suite and the two paths that go with it, located once.
-///
-/// A value rather than four functions taking `root: &Path`: every one of them
-/// was re-deriving a location from a primitive, which is the rung this file
-/// would otherwise have moved the wrong way.
+/// The generated suite and the two paths that go with it, located once, so
+/// no caller re-derives a location from a bare `root: &Path`.
 struct Suite {
     root: PathBuf,
     test: PathBuf,

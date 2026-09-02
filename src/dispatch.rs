@@ -1,17 +1,7 @@
 //! How a parsed command becomes a transition, and a transition a report.
 //!
-//! It shipped as `invoke` for two years because `jails-java` already has a
-//! `dispatch` -- the splice that registers a generated command in a project's
-//! own CLI -- and every architecture gate identified a file by its basename, so
-//! two modules sharing a name were measured against each other's rules. That
-//! made a *test* the reason this file was not called what it is.
-//! `tests/architecture/`'s `module_of` answers `(crate, module)` now, and
-//! `pending.md` §10.3 is the entry about it.
-//!
-//! Split out of `main.rs` under the ladder's largest-module gate, and the cut
-//! is a real seam rather than a size one: `main.rs` says what the CLI
-//! *accepts* -- the clap definition, one arm per subcommand -- and this says
-//! what happens to the result of one.
+//! `main.rs` says what the CLI *accepts* -- the clap definition, one arm per
+//! subcommand -- and this says what happens to the result of one.
 //!
 //! **The flags ride on [`Invocation`], which `main` builds once.**
 //! `--pretend`, `--debug`, `--output`, `--diff`, `--ast` and the plan paths
@@ -54,37 +44,19 @@ pub(crate) fn finish_invocation(
         return std::process::ExitCode::FAILURE;
     }
 
-    let syntax = jails_protocol::request::CanonicalRequestSyntaxV1 {
-        command_path: command_path.to_vec(),
-        ..Default::default()
-    };
-    let fingerprint = match syntax.fingerprint() {
-        Ok(fingerprint) => fingerprint,
-        Err(_) => {
-            eprintln!("jails: {message}");
-            return std::process::ExitCode::FAILURE;
-        }
-    };
-    let envelope =
-        jails_prepare::command::CommandEnvelope::refused(jails_prepare::command::ErrorReport::new(
-            jails_prepare::command::ErrorCode::InvalidRequest,
-            message,
-        ));
-    let rendered = match output {
+    let schema = match output {
         Output::Human => unreachable!("handled above"),
-        Output::JsonV1 => jails_prepare::serialize::envelope(&envelope),
-        Output::Json => {
-            let envelope = jails_prepare::command::CommandEnvelopeV2::from_v1(
-                jails_prepare::command::CommandIdentity {
-                    path: command_path.to_vec(),
-                    fingerprint,
-                    read_only: false,
-                },
-                &envelope,
-            );
-            jails_prepare::serialize::envelope_v2(&envelope)
-        }
+        Output::JsonV1 => "jails.command-result.v1",
+        Output::Json => "jails.command-result.v2",
     };
+    let envelope = serde_json::json!({
+        "schema": schema,
+        "status": "refused",
+        "exit_code": 1,
+        "command": command_path,
+        "error": { "code": "invalid-request", "message": message },
+    });
+    let rendered = format!("{envelope}\n");
     print!("{rendered}");
     std::process::ExitCode::FAILURE
 }

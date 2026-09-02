@@ -170,17 +170,11 @@ pub(crate) fn add_field(request: AddFieldRequest, invocation: Invocation) -> Res
     // **Whether a field add touches SQL is a question about this entity, not
     // about the project.** A source-only record has no table whatever else the
     // project stores, so adding a field to one is a Java projection change with
-    // no migration and nothing to backfill -- which is exactly what the policy
-    // below already does for a project with no database at all, and what its
-    // "a source-only record has no rows to backfill" arm already says.
-    //
-    // `has_database` was standing in for that, and it is only equivalent while
-    // every entity in a stored project is itself stored. A refusal forced that
-    // assumption to hold, at the cost of making the same operation on the same
-    // kind of entity depend on an unrelated project property: `g record` then
-    // `g field` works in a project with no database and was refused in one that
-    // has a database elsewhere. Asking the entity removes the special case
-    // rather than moving it.
+    // no migration and nothing to backfill -- the same answer the policy below
+    // gives a project with no database at all. `has_database` alone is only
+    // equivalent while every entity in a stored project is itself stored, and
+    // `g record` then `g field` must not depend on an unrelated project
+    // property.
     let stored = has_database && entity.facets.contains(&Facet::Repository);
     let entity_id = entity.id.clone();
     let entity_label = entity.label.clone();
@@ -194,8 +188,8 @@ pub(crate) fn add_field(request: AddFieldRequest, invocation: Invocation) -> Res
     }
     // **Before the data plan, not after it.** A component that is already
     // declared cannot be added whatever backfill accompanies it, and asking
-    // for one first told the reader to supply a `--default-literal` for a
-    // field that was already there -- an instruction that cannot succeed.
+    // for one first would tell the reader to supply a `--default-literal` for
+    // a field that is already there -- an instruction that cannot succeed.
     if entity
         .fields
         .iter()
@@ -243,17 +237,9 @@ pub(crate) fn add_field(request: AddFieldRequest, invocation: Invocation) -> Res
                 .to_string(),
         )),
     };
-    // Where re-parsing the source we are about to write will put this field.
-    //
-    // **Both JDL dialects state field order now.** v1 always did -- its parser
-    // records the order its CST walked. The pre-v1 draft did not, because it
-    // reaches the linker by rendering intermediate TOML and a TOML table is
-    // unordered; `audit.md` A2.2b fixed that by having the renderer carry
-    // `field_order`, so an appended declaration in either dialect stays
-    // appended.
-    //
-    // `ByLabel` was `.jails/model.toml`'s, whose writer stated no order; that
-    // input no longer accepts an edit, so there is one placement left.
+    // Where re-parsing the source we are about to write will put this field:
+    // v1's parser records the order its CST walked, so an appended
+    // declaration stays appended.
     let placement = jails_model::FieldPlacement::Last;
     let line = crate::model_generate_jdl::render_v1_field_line(&entity_label, &parsed);
     let next_source =

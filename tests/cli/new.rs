@@ -22,10 +22,7 @@ fn new_cli_creates_expected_project_layout() {
     );
     // The entry point is a dispatcher, not a Hello World stub -- otherwise
     // `generate command` has nothing to register into, which is the whole point
-    // of `new-cli`. Asserted against the bytes `new-cli` actually writes: the
-    // same assertions used to live beside a *second* renderer of this template
-    // in the legacy generator, which production stopped calling, so they held
-    // while proving nothing about what ships.
+    // of `new-cli`. Asserted against the bytes `new-cli` actually writes.
     let app = fs::read_to_string(common::generated(
         &root,
         "src/main/java/com/example/demo/App.java",
@@ -180,10 +177,8 @@ fn new_refuses_a_project_name_that_maven_cannot_use() {
 
 #[test]
 fn new_cli_with_an_app_manifest_is_one_command_from_an_empty_directory() {
-    // plan.md §18 closes by asking which two commands should have been one,
-    // and answers itself: `new` + `mkdir .jails` + `cp app.toml` + `app apply`
-    // is four steps that only ever appear together. §0.4 tracks the count as a
-    // scorecard metric with a target of 1.
+    // `new` + `mkdir .jails` + `cp app.toml` + `app apply` is four steps that
+    // only ever appear together, so `--app` is one command.
     let workspace = temp_dir("new-app-manifest");
     fs::create_dir_all(&workspace).unwrap();
     let manifest = workspace.join("app.toml");
@@ -214,17 +209,9 @@ fields = [\"id:uuid\", \"label:string!\"]
     let root = workspace.join("demo");
     // The manifest is seeded where `app apply` will find it next time...
     assert!(root.join(".jails/app.toml").is_file());
-    // ...and the project it created is canonical, like every other project
-    // `new-cli` makes.
-    //
-    // **This assertion used to be its own negation**, and the reason it was is
-    // worth keeping: `app apply` refuses beside a model so that no project
-    // holds two editable sources, and `new --app` reached the apply directly
-    // rather than through that guard -- so seeding both produced exactly the
-    // state the refusal exists to prevent, silently. A manifest is not a
-    // second editable source once it replays *into* the model, which is what
-    // it does now, so the state the negative was guarding cannot arise: there
-    // is no ledger and nothing is written outside the managed tree.
+    // ...and the project it created holds a model, like every other project
+    // `new-cli` makes. A manifest is not a second editable source because it
+    // replays *into* the model; nothing is written outside the managed tree.
     assert!(
         root.join(".jails/model.jdl").is_file(),
         "a manifest-driven project should be canonical like any other"
@@ -234,8 +221,7 @@ fields = [\"id:uuid\", \"label:string!\"]
         "and must not also carry a legacy ledger"
     );
     // ...and its rows are already applied, against the project that was just
-    // created rather than whatever encloses the process CWD -- the edge this
-    // command has always been the one to hit.
+    // created rather than whatever encloses the process CWD.
     assert!(
         root.join(".jails/generated/main/java/com/example/demo/domain/Entry.java")
             .is_file(),
@@ -267,12 +253,9 @@ fn new_with_an_unreadable_app_manifest_says_so_with_a_fix() {
     assert!(stderr.contains("application manifest"), "{stderr}");
     assert!(stderr.contains("fix:"), "{stderr}");
 
-    // plan.md §R6.5: the destination is absent or complete. Everything
-    // `new-cli` writes goes into a scratch sibling and becomes real in one
-    // rename, so a manifest that cannot be read leaves nothing that reads
-    // like a project -- which is what the previous behaviour left: a pom, an
-    // App.java, and no manifest, in a directory the next run then refused to
-    // reuse.
+    // The destination is absent or complete. Everything `new-cli` writes goes
+    // into a scratch sibling and becomes real in one rename, so a manifest
+    // that cannot be read leaves nothing that reads like a project.
     assert!(
         !workspace.join("demo").exists(),
         "a refused `new-cli --app` leaves no half-written project behind"
@@ -324,19 +307,13 @@ fn a_new_project_publishes_atomically_into_a_directory_that_is_watched() {
     assert!(stderr.contains("already exists"), "{stderr}");
 }
 
-/// Can Maven *read* what jails wrote? (`plan.md` §8.8.)
+/// Can Maven *read* what jails wrote?
 ///
-/// `mvn -o validate` parses the pom and stops -- about two seconds a cell, no
-/// downloads, no compilation -- and it is the check nothing in this suite was
-/// doing. The 293-second manifest gate compiles far more, but every cell of it
-/// is a Spring Boot project, so a versionless dependency (correct under
-/// `spring-boot-starter-parent`, fatal without one) survived it and shipped:
-/// `g scaffold` on a plain Maven project wrote a `spring-boot-starter-validation`
-/// with no version, and *every* Maven goal then failed with
-/// `'dependencies.dependency.version' ... is missing` -- including `validate`
-/// itself. The golden suite had a snapshot of that pom and ratified it.
-///
-/// So the matrix is over the thing that differed: the flavour of project.
+/// `mvn -o validate` parses the pom and stops -- no downloads, no compilation.
+/// A versionless dependency is correct under `spring-boot-starter-parent` and
+/// fatal without one (every goal fails with `'dependencies.dependency.version'
+/// ... is missing`, `validate` included), so the matrix is over the flavour of
+/// project.
 #[test]
 fn every_generated_pom_is_one_maven_can_read() {
     if !real_mvn_available() {
@@ -465,16 +442,10 @@ fn a_freshly_generated_project_passes_check_with_no_manual_formatting() {
     assert!(pom.contains("spotless-maven-plugin"), "{pom}");
 }
 
-/// A file writer must not rediscover the project. `write_new_file` used to
-/// find it from process CWD, which is not the project being written to when
-/// `new-cli` creates a directory the CWD is not inside.
-///
-/// The visible cost: a `new-cli` project's own base package never got the
-/// null-marked `package-info.java` every other package gets. Run from
-/// nowhere, the lookup found no project and skipped; run from inside another
-/// Maven project, it read *that* project's pom and package. The audit's
-/// "every package jails writes a class into gets one" was simply not true for
-/// `App.java`.
+/// A file writer must not rediscover the project from the process CWD, which
+/// is not the project being written to when `new-cli` creates a directory the
+/// CWD is not inside. The visible property: a `new-cli` project's own base
+/// package gets the null-marked `package-info.java` every other package gets.
 #[test]
 fn new_cli_gives_its_own_base_package_a_package_info() {
     let workdir = temp_dir("new-cli-base-pkginfo");
@@ -532,8 +503,7 @@ fn new_cli_inside_another_project_uses_the_new_projects_root() {
     );
 }
 
-/// The whole point of `--gradle`: the project `build.rs`'s header names as the
-/// reason jails learned to read Gradle at all is now one jails can also write.
+/// `--gradle` writes a Boot 2 Gradle project jails can also read.
 ///
 /// Offline throughout. The wrapper jar is the one file this path fetches, and a
 /// test that needed the network would be a test that fails on a train.
@@ -597,8 +567,7 @@ fn new_gradle_writes_a_legacy_boot_build_file_the_maven_path_cannot_produce() {
     assert!(build.contains("runtimeOnly 'com.h2database:h2'"), "{build}");
 
     // Without this Gradle runs the JUnit 4 provider, collects nothing, and
-    // reports success. The first version of this template omitted it and the
-    // generated project was green over zero tests.
+    // reports success over zero tests.
     assert!(build.contains("useJUnitPlatform()"), "{build}");
 
     assert_eq!(
@@ -764,15 +733,10 @@ fn new_gradle_previews_for_real() {
 }
 
 /// jails picks the Gradle distribution and the Java release, so it must not
-/// pick a pair it has seen fail.
-///
-/// `bugs.md` B52's cause, one step earlier than the report found it.
-/// `--boot 2.7.18` pins Gradle 8.5 (Boot 2 does not run on Gradle 9.x) while
-/// `--java` still defaults to the current release -- and Gradle 8.5 dies on
-/// JDK 26 in its own build script, before reading one line of the project it
-/// was handed. So `jails new --gradle --boot 2.7.18` wrote a project that
-/// could not be built at all, and `doctor` reported `ok jdk java 26 on PATH,
-/// project targets 26` over it.
+/// pick a pair it has seen fail: `--boot 2.7.18` pins Gradle 8.5 (Boot 2 does
+/// not run on Gradle 9.x) while `--java` defaults to the current release, and
+/// Gradle 8.5 dies on JDK 26 in its own build script before reading one line
+/// of the project.
 ///
 /// Only a *measured* pairing refuses: `gradle::MEASURED` holds the runs, and
 /// anything absent from it is `Unknown` and allowed, because refusing on a

@@ -105,8 +105,8 @@ pub(super) fn files(
     let (arguments, disabled, sample_imports) = sample(model, event)?;
     // **What the sample expressions name.** Every one is a builtin literal,
     // but a literal is not import-free: `UUID.fromString(..)` and
-    // `Instant.parse(..)` are types, and a payload carrying either compiled
-    // everywhere except here.
+    // `Instant.parse(..)` are types, and without these a payload carrying
+    // either compiles everywhere except here.
     let sample_imports = sample_imports
         .iter()
         .map(|import| format!("import {import};\n"))

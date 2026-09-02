@@ -27,23 +27,18 @@ impl DependencyScope {
     }
 }
 
-/// Returns [`std::process::ExitCode`] rather than calling [`std::process::exit`].
-///
-/// `crate::process::exit` terminates without unwinding, so destructors on the
-/// current stack never run. jails holds real resources while a command is in
-/// flight -- `migrate` creates a scratch database it is responsible for
-/// dropping -- and anything staging a file beside its destination would be in
-/// the same position. Returning lets the stack unwind normally first.
 /// `group:artifact`, refused rather than guessed at.
 ///
 /// A coordinate with a third part is almost always a `group:artifact:version`
 /// pasted from somewhere -- so the refusal names `--version` rather than
 /// repeating the shape back.
-pub(crate) fn maven_coordinate(text: &str) -> Result<jails_protocol::coordinate::MavenCoordinate> {
+pub(crate) fn maven_coordinate(
+    text: &str,
+) -> Result<jails_spec::spec::coordinate::MavenCoordinate> {
     let mut parts = text.split(':');
     match (parts.next(), parts.next(), parts.next()) {
         (Some(group), Some(artifact), None) if !group.is_empty() && !artifact.is_empty() => {
-            jails_protocol::coordinate::MavenCoordinate::parse(group, artifact)
+            jails_spec::spec::coordinate::MavenCoordinate::parse(group, artifact)
         }
         (_, _, Some(_)) => Err(format!(
             "`{text}` names a version as well as a coordinate.\n       \

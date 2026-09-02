@@ -46,16 +46,10 @@ local STREAMING = {
 
 -- The CLI's own vocabulary, read from the CLI.
 --
--- These four tables used to be written out by hand, and they drifted exactly
--- as `plan.md` §6.1 predicts a copy will: eight generator kinds and three
--- capabilities reached the binary without the Lua moving, so `:Jails g <Tab>`
--- offered a stale menu -- the worst kind of stale, because a completion list
--- looks complete. `tests/editor.rs` then *pinned* them, which caught the drift
--- after the fact but left the copy there to drift again.
---
 -- `jails commands --json` is derived from the same clap definition that parses
--- the arguments, so there is nothing left to keep in step: adding a kind is one
--- edit and this menu follows. Read once per session and cached, because a
+-- the arguments, so there is no table here to keep in step: adding a kind is
+-- one edit and this menu follows. A hand-written copy drifts, and a stale
+-- completion list looks complete. Read once per session and cached, because a
 -- completion callback runs on every keystroke.
 local vocabulary_cache = nil
 local vocabulary_loading = false

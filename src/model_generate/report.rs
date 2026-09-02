@@ -113,13 +113,12 @@ fn disabled_tests(bundle: &jails_contracts::PlanBundle) -> Vec<String> {
     disabled
 }
 
-/// Refuse the legacy envelope rather than answering in a different shape.
+/// Refuse `--output json-v1` rather than answering in a different shape.
 ///
-/// **`json-v1` names a schema this path cannot produce.** It was the legacy
-/// engine's `jails.command-result.v1`, and on a canonical project the flag was
-/// simply ignored -- the caller asked for one shape, got another, and nothing
-/// said so. A machine consumer parsing the answer finds fields it did not ask
-/// for and misses every one it did.
+/// **`json-v1` names a schema this path cannot produce.** Ignoring the flag
+/// would hand the caller one shape when they asked for another, with nothing
+/// saying so: a machine consumer parsing the answer finds fields it did not
+/// ask for and misses every one it did.
 pub(crate) fn refuse_legacy_envelope(invocation: &Invocation) -> Result<()> {
     match invocation.output {
         Output::JsonV1 => Err(Failure::Told(
@@ -173,12 +172,10 @@ pub(crate) fn write_bundle(path: &Path, bundle: &jails_contracts::PlanBundle) ->
 
 /// Reader sources that name a managed type this transition removes.
 ///
-/// **jails does not delete a file it does not own**, and the engine it
-/// replaces did: `destroy strategy` swept every main source directory for
-/// implementations, on the grounds that one left behind stops the project
-/// compiling. That is true and it is not jails' file. The reader is told
-/// instead, by name, at the moment it becomes their problem -- which is the
-/// half the sweep was actually for.
+/// **jails does not delete a file it does not own.** A hand-written
+/// implementation left behind implementing a deleted interface stops the
+/// project compiling, and it is still not jails' file, so the reader is told
+/// by name, at the moment it becomes their problem.
 ///
 /// Matched on the whole identifier, the same rule `rename` follows. It reads
 /// the tree rather than the capture, and that is deliberate: which reader
@@ -280,11 +277,7 @@ fn names_identifier(source: &str, name: &str) -> bool {
 
 /// What `--ast` and `--diff` add, on a preview and on a commit alike.
 ///
-/// **`--ast` is the transition as values and `--diff` is the bytes.** They
-/// were the other way round: `--diff` printed the operation list and `--ast`
-/// the model patch, so the flag naming the *abstract* representation showed
-/// one JSON line and the flag asking for a diff showed no file contents at
-/// all.
+/// **`--ast` is the transition as values and `--diff` is the bytes.**
 ///
 /// Both are printed after a commit too, because "what did that change" is the
 /// same question whether it is asked before or after -- and the plan is the

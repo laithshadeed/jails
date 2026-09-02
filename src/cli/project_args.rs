@@ -1,19 +1,16 @@
 //! The arguments of creating a project.
 //!
 //! Its own module for the same reason `schema`, `sql` and `rename` are: this
-//! is one command's vocabulary rather than the command list. Keeping them
-//! inline made `cli.rs` the largest module in the tree, which is what the
-//! `abstract.md` §7 ladder's last rung asks about.
+//! is one command's vocabulary rather than the command list.
 
 use super::*;
 
 /// Everything `jails new` takes.
 ///
-/// A parameter object rather than fifteen fields on the enum variant, for the
-/// reason the `abstract.md` §7 ladder's first rung names: they are computed
-/// together and consumed together, as one `new::Request`. Keeping them inline
-/// meant `main.rs` destructured fifteen names and rebuilt them one for one,
-/// which is dispatch doing construction.
+/// A parameter object rather than fifteen fields on the enum variant: they
+/// are computed together and consumed together, as one `new::Request`, and
+/// destructuring them in dispatch only to rebuild them one for one is dispatch
+/// doing construction.
 #[derive(clap::Args)]
 pub(crate) struct NewArgs {
     pub(crate) name: String,

@@ -4,8 +4,8 @@
 //! network, no starter, no Spring: the projects `g record` and `g command`
 //! were written for, and the ones `add`'s framework-free capabilities target.
 //!
-//! `pending.md` §8.1's split. This is the half that does not know what Spring
-//! is; [`super::spring`] is the half that does.
+//! This is the half that does not know what Spring is; [`super::spring`] is
+//! the half that does.
 
 use super::seed::GITIGNORE;
 use super::*;
@@ -96,9 +96,7 @@ pub fn new_cli(request: &Request<'_>) -> Result<()> {
     )?;
     // The project is canonical from its first command, which is the whole
     // point of seeding this: `model_command::owns` is `.jails/model.jdl`
-    // exists, and without one every project jails created took the legacy
-    // path -- so the compiler could only ever be reached by a model somebody
-    // wrote by hand.
+    // exists.
     seed::seed_canonical_model(&tree, app, seed_model(name, &package, java))?;
     // Through write_new_file, not fs::write, so the entry point and its test
     // get the same import ordering as everything jails generates later --
@@ -111,17 +109,17 @@ pub fn new_cli(request: &Request<'_>) -> Result<()> {
     // moment you fix that by hand.
     // `tree.root()` is the project being created, not the process CWD. Passing it
     // is what gives a new-cli project's own base package the null-marked
-    // `package-info.java` every other package gets -- the lookup this
-    // replaced either found the surrounding project or found nothing.
-    crate::generate::write_new_file(
+    // `package-info.java` every other package gets -- a lookup from the CWD
+    // finds the surrounding project or nothing.
+    super::write::write_new_file(
         tree,
         &src_dir.join("App.java"),
-        &crate::generate::cli_java(&package, "App", name),
+        &super::write::cli_java(&package, "App", name),
     )?;
-    crate::generate::write_new_file(
+    super::write::write_new_file(
         tree,
         &test_dir.join("AppTest.java"),
-        &crate::generate::cli_test(&package, "App"),
+        &super::write::cli_test(&package, "App"),
     )?;
 
     write_fixtures_dir(&tree)?;

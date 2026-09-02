@@ -16,7 +16,7 @@ use names::*;
 /// The `api` capability's own files, as opposed to the per-operation adapters
 /// `emit_http` writes.
 ///
-/// Without these a canonical project got controllers and no way to describe a
+/// Without these a project has controllers and no way to describe a
 /// failure: `ApiException` is the sealed set the advice switches over, and the
 /// switch has no `default` -- so a new variant stops the build rather than
 /// quietly becoming a 500.

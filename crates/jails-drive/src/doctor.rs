@@ -145,18 +145,14 @@ fn unavailable(title: &str, program: &Path, required: bool, install: &str) -> Ch
 
 /// The PostgreSQL clients, and one failure only when there is no client at all.
 ///
-/// **Requiring `pgcli` made a machine with the ordinary client fail.** It is
-/// what `jails db console` defaults to, so it was probed as required; `psql`
-/// is what `jails db`, `jails migrate --check` and every live-schema question
-/// shell out to, and it was the optional one. `pgcli` is a pip package. Every
-/// CI runner and every server has `psql` and not it, so `doctor` called those
-/// projects broken over a convenience -- and a test asserting `doctor` exits
-/// zero passed on a laptop and failed everywhere else for eighteen hours.
-///
-/// Each client is still reported with its own path and version, because *which
-/// psql* is a question a reader asks. What changed is that a missing one is a
-/// warning naming the command that will refuse without it, and the failure is
-/// the case doctor is actually asking about: no client at all.
+/// Neither client is required on its own. `pgcli` is what `jails db console`
+/// defaults to, and it is a pip package; `psql` is what `jails db`, `jails
+/// migrate --check` and every live-schema question shell out to, and it is
+/// what a CI runner or a server has. Requiring either would call a working
+/// machine broken over a convenience. Each client is reported with its own
+/// path and version, because *which psql* is a question a reader asks; a
+/// missing one is a warning naming the command that will refuse without it,
+/// and the failure is the case doctor is asking about: no client at all.
 fn postgres_clients(project: &Project) -> Vec<Check> {
     let pgcli = probe(
         project,

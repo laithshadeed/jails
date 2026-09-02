@@ -1,6 +1,6 @@
 //! H2's URL grammar, and the two spellings of it that go wrong.
 //!
-//! Split from `wiring.rs` by subject: that module asks whether a capability is
+//! Apart from `wiring.rs` by subject: that module asks whether a capability is
 //! wired up, and this one reads one property against facts about H2 that are
 //! in `deps/h2database` rather than in the project.
 

@@ -1,17 +1,16 @@
 //! The checks that ask whether this project's *data path* is wired up.
 //!
-//! Split from [`super::wiring`] by what the question is about rather than by
+//! Apart from [`super::wiring`] by what the question is about rather than by
 //! size: everything here asks whether the project can reach a database and
 //! whether its schema will be there when it does -- the container a
 //! `@SpringBootTest` needs, which repository adapter is the bean, whether
 //! `spring.sql.init` was switched on and left with nothing to run. The
 //! siblings ask about the serving path instead.
 //!
-//! These are deliberately **not** derived from `add::plan_for`, which
-//! `doctor::capability_drift_checks` does do. A derived check knows a
-//! dependency is missing; it does not know that a `spring.factories` left
-//! behind starts a second container for every test. Those are interaction
-//! facts no plan carries, and `abstract.md` §6.2 says exactly that.
+//! These are hand-written rather than derived from a capability's plan. A
+//! derived check knows a dependency is missing; it does not know that a
+//! `spring.factories` left behind starts a second container for every test.
+//! Those are interaction facts no plan carries.
 
 use super::super::environment::tcp_reachable;
 use super::super::{Check, Status};
@@ -177,19 +176,6 @@ pub(crate) fn database_checks(project: &Project) -> Vec<Check> {
     checks
 }
 
-/// Testcontainers finds its engine through DOCKER_HOST or the well-known
-/// `/var/run/docker.sock`, and does *not* read the podman socket that
-/// podman's `docker` CLI shim talks to. On a rootless-podman machine the
-/// CLI therefore works perfectly while every @SpringBootTest dies with
-/// "Could not find a valid Docker environment" -- the two look at different
-/// sockets, which is why `jails start` succeeding proves nothing about
-/// whether the test suite can start a container.
-/// The test-side container wiring: which class declares the container, and
-/// which `@SpringBootTest` classes cannot see it.
-///
-/// Deliberately textual, like the rest of jails' Java reading -- it answers on
-/// a project that does not compile, which is the case that matters when
-/// something is already broken.
 /// Does this test import `class`, however the annotation is spelled?
 ///
 /// Not a substring match on `@Import(Foo.class)`: Spring's `@Import` is not
@@ -237,11 +223,11 @@ const JDBC_CONTAINERS: &[&str] = &[
 
 /// Every tree whose Java reaches the test classpath.
 ///
-/// **A canonical project keeps most of its tests in the managed tree**, and
-/// the build file declares `.jails/generated/test/java` as a source root, so
-/// reading only `src/test/java` answered "there is no container config" about
-/// a project that had one -- a `FAIL` telling the reader to run the command
-/// they had just run. Both trees, or the check is about the wrong project.
+/// **Most generated tests live in the managed tree**, and the build file
+/// declares `.jails/generated/test/java` as a source root, so reading only
+/// `src/test/java` would answer "there is no container config" about a
+/// project that has one -- a `FAIL` telling the reader to run the command
+/// they have just run. Both trees, or the check is about the wrong project.
 fn test_source_roots(root: &Path) -> Vec<std::path::PathBuf> {
     [
         root.join("src/test/java"),
@@ -252,14 +238,20 @@ fn test_source_roots(root: &Path) -> Vec<std::path::PathBuf> {
     .collect()
 }
 
+/// The test-side container wiring: which class declares the container, and
+/// which `@SpringBootTest` classes cannot see it.
+///
+/// Deliberately textual, like the rest of jails' Java reading -- it answers on
+/// a project that does not compile, which is the case that matters when
+/// something is already broken.
 pub(crate) fn test_container_wiring(root: &Path) -> (Option<String>, Vec<String>) {
     let tests = test_source_roots(root);
     // The config this check is about, and only that one. `add kafka` writes a
     // `@TestConfiguration` with `@ServiceConnection` too, and taking whichever
-    // the walk saw last made `doctor` report every `@SpringBootTest` in the
-    // project as missing an import of `KafkaTestcontainersConfig` -- under the
-    // heading "test datasource", with `jails add db` as the fix, on a project
-    // where `add db` was installed and correct.
+    // the walk saw last would make `doctor` report every `@SpringBootTest` in
+    // the project as missing an import of `KafkaTestcontainersConfig` -- under
+    // the heading "test datasource", with `jails add db` as the fix, on a
+    // project where `add db` is installed and correct.
     //
     // The discriminator is the container's *type*, because the invariant this
     // check exists for is specific to JDBC: once `spring-boot-starter-jdbc` is
@@ -415,16 +407,13 @@ pub(crate) fn sql_init_checks(project: &Project) -> Vec<Check> {
         ];
     }
     // Two schema authorities, and the older one wins the race. This is where
-    // a legacy adoption lands: the checkout arrives with an H2 `schema.sql`
+    // an adopted project lands: the checkout arrives with an H2 `schema.sql`
     // and `spring.sql.init.mode=always`, `jails add db` brings Flyway and a
     // PostgreSQL, and Spring then runs the H2 script against PostgreSQL before
     // Flyway sees the database. `INTEGER PRIMARY KEY AUTO_INCREMENT` is not
     // PostgreSQL, so the context fails to start -- and the failure names a
-    // script the reader did not know was still running.
-    //
-    // jails knows both facts and said `ok` over them. Measured on
-    // `minicom-15-01-2026-org/spring`: three tests red, one cause, and nothing
-    // in `doctor` pointing at it.
+    // script the reader did not know was still running. jails knows both
+    // facts, so it says so rather than reporting `ok` over them.
     if let Some(migrations) = flyway_migrations(project) {
         return vec![
             Check::new(
@@ -482,11 +471,11 @@ mod tests {
     /// not one.
     ///
     /// `add db` and `add kafka` both write a `@TestConfiguration` carrying
-    /// `@ServiceConnection`. Taking whichever the directory walk saw last made
-    /// `doctor` report every `@SpringBootTest` in the project as missing an
-    /// import of `KafkaTestcontainersConfig`, under the heading "test
-    /// datasource", and offer `jails add db` as the fix -- on a project where
-    /// `add db` was already installed and correct.
+    /// `@ServiceConnection`. Taking whichever the directory walk saw last
+    /// would make `doctor` report every `@SpringBootTest` in the project as
+    /// missing an import of `KafkaTestcontainersConfig`, under the heading
+    /// "test datasource", and offer `jails add db` as the fix -- on a project
+    /// where `add db` is installed and correct.
     #[test]
     fn the_datasource_check_ignores_a_broker_container_config() {
         let root = jails_support::scratch::ScratchDir::in_temp("jails-wiring-kafka")
@@ -536,15 +525,12 @@ mod tests {
 
     /// Two descriptions of one schema, and the older one wins the race.
     ///
-    /// This is where a legacy adoption lands: the checkout arrives with an H2
+    /// This is where an adopted project lands: the checkout arrives with an H2
     /// `schema.sql` and `spring.sql.init.mode=always`, `jails add db` brings
     /// Flyway and a PostgreSQL, and Spring runs the H2 script against
     /// PostgreSQL before Flyway sees the database. `INTEGER PRIMARY KEY
     /// AUTO_INCREMENT` is not PostgreSQL, so the context fails to start --
     /// naming a script the reader did not know was still running.
-    ///
-    /// Measured on `minicom-15-01-2026-org/spring`: three tests red, one
-    /// cause, and `doctor` reporting `ok` over both halves of it.
     #[test]
     fn a_schema_script_beside_flyway_migrations_is_reported_as_two_authorities() {
         let root = jails_support::scratch::ScratchDir::in_temp("jails-wiring-sql-init")

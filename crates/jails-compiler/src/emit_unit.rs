@@ -32,9 +32,9 @@ struct Unit {
 ///
 /// `SourceUnit::java_package` is written by the linker, which runs before the
 /// project's `[layout]` is on the model -- so it always spells the default.
-/// Reading it put a sealed type in `domain` on a project whose records had
-/// already moved to `core`: two packages for one layer, in one tree, and
-/// nothing to report it. `audit.md` A3.11b.
+/// Reading it puts a sealed type in `domain` on a project whose records live
+/// in `core`: two packages for one layer, in one tree, and nothing to report
+/// it.
 ///
 /// So the *layer* travels on the unit and the name is computed with the
 /// layout, which is what `package_for` is for. A unit whose package the reader
@@ -206,14 +206,14 @@ fn standalone_test_body(kind: UnitKind, type_name: &str) -> String {
 /// `@Component` on each implementation is how Spring collects them into the
 /// evaluator's `List<Port>`; without Spring the reader passes the list to the
 /// constructor themselves, which the evaluator already accepts. Nothing else
-/// about the shape changes, so `CLAUDE.md`'s rule holds -- "plain-Maven
-/// projects get the same layout with no annotation, because one placement is
-/// easier to explain than one that depends on the build file".
+/// about the shape changes: plain-Maven projects get the same layout with no
+/// annotation, because one placement is easier to explain than one that
+/// depends on the build file.
 ///
-/// `refuse.rs` used to group `Strategy` with `Service` and `Controller` and
-/// reject all three without Spring. That is right for the other two, whose
-/// whole body is an annotation, and wrong here: it made `g strategy` refuse on
-/// exactly the plain projects the legacy generator has always supported.
+/// `refuse.rs` rejects `Service` and `Controller` without Spring, and must not
+/// group `Strategy` with them. That is right for the other two, whose whole
+/// body is an annotation, and wrong here: it would make `g strategy` refuse
+/// on exactly the plain projects it supports.
 fn lower_strategy(
     source: &SourceUnit,
     model: &AppModel,
@@ -223,9 +223,9 @@ fn lower_strategy(
     let domain = &placed(source, model);
     // Compared against the *projection*, so a project that renames `domain`
     // to `core` is asked for `core` rather than refused for not saying
-    // `domain`. The rule is unchanged -- a strategy's port belongs in the
-    // domain layer, because `g scaffold` writes an ArchUnit rule forbidding
-    // Spring inside it -- and only its spelling now follows the reader's.
+    // `domain`. The rule stands -- a strategy's port belongs in the domain
+    // layer, because `g scaffold` writes an ArchUnit rule forbidding Spring
+    // inside it -- and only its spelling follows the reader's.
     if domain != &model.project.package_for(jails_model::Package::Domain) {
         return Err(CompileError::new(format!(
             "strategy `{}` must use the canonical domain package",
@@ -414,15 +414,13 @@ const MOCKMVC_TESTER_BOOT_MAJOR: u32 = 4;
 
 /// The controller's companion test: a request through the real dispatcher.
 ///
-/// **This asserts the route answers, not that the annotation says so.** The
-/// test this replaced read the mapping back off the handler by reflection,
-/// which holds whenever the annotation is present -- including when the
-/// application cannot start, the path collides with another controller, or the
-/// method is never dispatched. The legacy engine has driven MockMvc here since
-/// controllers existed, and a canonical project must not be handed the weaker
-/// check for having moved engines.
+/// **This asserts the route answers, not that the annotation says so.** A
+/// test that reads the mapping back off the handler by reflection holds
+/// whenever the annotation is present -- including when the application
+/// cannot start, the path collides with another controller, or the method is
+/// never dispatched -- and that is the weaker check.
 ///
-/// Two shapes, because the entry point moved. `MockMvcTester` is Spring's
+/// Two shapes, because the entry point differs by version. `MockMvcTester` is Spring's
 /// AssertJ front end and needs no `throws Exception`; `perform(...)` has
 /// existed since Spring 3 and still does in 7, so it is the fallback rather
 /// than the other way round -- the shape that compiles everywhere is the one
@@ -510,9 +508,9 @@ fn controller_test(test: ControllerTest<'_>) -> (BTreeSet<String>, String) {
 /// `@AutoConfigureMockMvc`'s package, which Boot 4 moved with no shim.
 ///
 /// The same sniff `emit_capability` does for its own templates. Below Boot 4
-/// -- and when the version cannot be read at all -- the legacy package is the
-/// safe answer: it is where the class has always been, and a project too old
-/// to have the new one is exactly the project that would fail to compile.
+/// -- and when the version cannot be read at all -- the older package is the
+/// safe answer: a project too old to have the new one is exactly the project
+/// that would fail to compile.
 fn mockmvc_autoconfigure_import(boot_major: Option<u32>) -> &'static str {
     if boot_major.is_some_and(|major| major >= 4) {
         "org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc"
@@ -703,13 +701,11 @@ mod tests {
 
     /// **The test drives the route; it does not read the annotation back.**
     ///
-    /// This replaced a reflection check that asserted
-    /// `handler.getAnnotation(PostMapping.class).path()[0]`. That holds
-    /// whenever the annotation is present -- including when the application
-    /// cannot start, when two controllers claim the path, and when the method
-    /// is never dispatched. The legacy engine has driven MockMvc here since
-    /// controllers existed; a canonical project must not get the weaker check
-    /// for having moved engines.
+    /// A reflection check asserting
+    /// `handler.getAnnotation(PostMapping.class).path()[0]` holds whenever
+    /// the annotation is present -- including when the application cannot
+    /// start, when two controllers claim the path, and when the method is
+    /// never dispatched -- so it is the weaker check.
     #[test]
     fn a_controller_test_issues_a_request_rather_than_reading_the_annotation() {
         let (imports, body) = rendered(true, Some("4.0.0"));

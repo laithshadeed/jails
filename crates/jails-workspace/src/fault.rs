@@ -1,27 +1,15 @@
 //! Named points a test can make the executor die at, and nothing in a release
 //! build.
 //!
-//! **This is `jails-commit::fault`'s method, not its code.** The legacy kernel
-//! has the same mechanism and the two ladders cannot depend on each other, so
-//! there are two copies of a small macro until the cutover deletes that one.
-//! What is *not* shared is the interesting half: the point set is this
-//! executor's publication sequence, and the property asserted at each one is
-//! different.
+//! ## The property
 //!
-//! ## The property, and why it is simpler here
-//!
-//! `jails-commit` proves *the transaction is either completely applied or
-//! completely absent*, which needs a journal and a roll-forward. This executor
-//! has neither, on purpose: `simplify-sol.md` trades rollback away for
-//! convergence — "a crashed command may leave a temporarily mixed but
-//! individually valid tree; the next identical generation repairs it
-//! deterministically".
-//!
-//! So what a crash test asserts here is that sentence: re-running *the same
-//! plan* after a death at any instant reaches the exact desired state, and a
-//! second run changes nothing. That was rigorously proved for the kernel being
-//! deleted and stated only in prose for the one replacing it (`audit.md`
-//! A5.5).
+//! This executor has no journal and no rollback, on purpose: it trades
+//! rollback away for convergence. A crashed command may leave a temporarily
+//! mixed but individually valid tree, and the next identical generation
+//! repairs it deterministically. So what a crash test asserts is that
+//! sentence: re-running *the same plan* after a death at any instant reaches
+//! the exact desired state, and a second run changes nothing. The point set
+//! is this executor's publication sequence.
 //!
 //! ## Compiled out
 //!
@@ -100,8 +88,7 @@ pub(crate) fn trip(_name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// **One declaration, two products** — the same rule `jails-commit`'s registry
-/// follows, and for the same two silent failures.
+/// One declaration, two products, against two silent failures.
 ///
 /// A point advertised and tripped nowhere arms a fault that can never fire, so
 /// an enumeration reports a pass over a path nothing exercised. Here its

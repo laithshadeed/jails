@@ -203,12 +203,10 @@ pub(crate) fn normalize_type(value: &str) -> String {
         // `jails_spec::builtin_by_java_name` is the authority on which Java
         // spellings are builtins and deliberately omits this one, because an
         // enum of the currencies a project deals in is an ordinary thing to
-        // generate -- so `currency:Currency` must mean the project's type.
-        // This table had the row, which made it the project's *second*
-        // authority on the same question and the two disagreed: a proof
-        // application declaring `enum Currency` got a record whose component
-        // was `java.util.Currency`, and the first use of it failed with
-        // `incompatible types`. The lowercase `currency` token is unaffected;
+        // generate -- so `currency:Currency` must mean the project's type. A
+        // row here would be a second authority on the same question, and a
+        // project declaring `enum Currency` would get a component of
+        // `java.util.Currency`. The lowercase `currency` token is unaffected;
         // it is jails' table by the field syntax's own case rule.
         other => other,
     }

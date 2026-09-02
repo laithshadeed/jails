@@ -38,7 +38,7 @@ pub(crate) struct PreparedMutation {
     /// A migration the *reader* authored, rather than one the compiler
     /// derived from a schema change.
     ///
-    /// `jdl-sol.md` §2.1 is explicit that ordered migration files are not JDL
+    /// JDL v1 §2.1 is explicit that ordered migration files are not JDL
     /// -- "immutable, append-only history" -- and §2 lists writing one among
     /// the *non-model* actions a familiar command may map to. So this is not
     /// smuggled into rendering: it joins `PlanDraft.migrations` beside the
@@ -61,12 +61,11 @@ pub(crate) fn report_already_declared(name: &str) {
 
 /// Where the wall clock went, under `--debug`.
 ///
-/// **Named for the canonical pipeline, because that is what runs.** The legacy
-/// engine's phases were `discover / observe / parse / project / prepare /
-/// verify`; the compiler's are the five contracts -- capture the workspace,
-/// apply the patch to the model, compile it, materialize the exact plan, and
-/// execute it. A timing list naming steps the binary no longer has is worse
-/// than none, because it sends the reader looking for the wrong thing.
+/// **Named for the pipeline's own steps, because that is what runs**: capture
+/// the workspace, apply the patch to the model, compile it, materialize the
+/// exact plan, and execute it. A timing list naming steps the binary does
+/// not have is worse than none, because it sends the reader looking for the
+/// wrong thing.
 ///
 /// `execute` is absent on a preview, and that absence is the point: it is how
 /// a reader confirms `--pretend` stopped before the only step that writes.
@@ -122,11 +121,6 @@ pub(crate) struct CarryAcross {
     /// The authoring sources retired in the same plan, so the project is
     /// never left with two.
     pub(crate) retires: Vec<ProjectPath>,
-}
-
-/// Move a project's authoring source to a new file, retiring the old one.
-pub(crate) fn finish_carry_across(prepared: PreparedMutation, carry: CarryAcross) -> Result<()> {
-    finish(prepared, &[], Some(carry))
 }
 
 fn finish(
@@ -239,12 +233,12 @@ fn finish(
         return refusal;
     }
     let stranded = report::stranded_reader_references(&root, &snapshot.model.model, &next_model);
-    // **Said only once the model exists, and only if it does.** The on-ramp
-    // used to be a transition of its own that ran before the mutation, so a
-    // refused command announced a conversion it had then abandoned. Reading
-    // the plan for a model file with no before-image says the same thing at
-    // the one moment it is true. It goes to stderr because stdout is the
-    // command's own output and a caller piping it did not ask for this.
+    // **Said only once the model exists, and only if it does.** Reading the
+    // plan for a model file with no before-image says it at the one moment
+    // it is true, where announcing it before the mutation would announce a
+    // conversion a refused command then abandons. It goes to stderr because
+    // stdout is the command's own output and a caller piping it did not ask
+    // for this.
     let converted = invocation.output == Output::Human
         && bundle.plan.operations.iter().any(|operation| {
             matches!(
@@ -343,9 +337,9 @@ pub(crate) fn operation_field_labels_via(
             // **A trailing `?` on a query filter is not a nullable column.**
             // `direction:MessageDirection?` means "filter by direction, or
             // do not" -- three independent optional filters is eight queries
-            // written by hand -- and the model has carried `optional_filter`
-            // for it all along. Compared against the entity's own optionality
-            // it read as a disagreement, so the query refused.
+            // written by hand -- and the model carries `optional_filter` for
+            // it. Compared against the entity's own optionality it would read
+            // as a disagreement and refuse.
             match optional_filters && field.ends_with('?') {
                 true => Ok(format!(
                     "{}?",
@@ -362,9 +356,9 @@ pub(crate) fn operation_field_labels_via(
 /// **The `?` stands in for the entity's own suffix rather than beside it.**
 /// `status:string?` on an entity whose `status` is `string!` is the natural
 /// spelling of "filter by status, or do not" -- nobody writes `status:string!?`
-/// -- so the optionality is what the marker replaced and comparing it against
-/// the column's read as a disagreement. The *type* is still compared, because
-/// filtering a `string` column with an `int` is a mistake either way.
+/// -- so the optionality is what the marker replaces and is not compared
+/// against the column's. The *type* is still compared, because filtering a
+/// `string` column with an `int` is a mistake either way.
 fn resolve_filter(
     model: &AppModel,
     entity: &str,

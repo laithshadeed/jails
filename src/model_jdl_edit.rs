@@ -66,12 +66,11 @@ pub(crate) fn set_field_required(
         })?;
         // **`@notBlank` cannot survive the relaxation.** A non-blank field
         // cannot be optional -- `model-non-blank-required` refuses the whole
-        // model -- so relaxing one has exactly one valid outcome. The pre-v1
-        // draft dropped it implicitly, because `string!` and `string?` were
-        // the same token with a different suffix; v1 states the two facts
-        // apart, so the editor has to drop it out loud. Without this the
-        // command wrote `title: string? @notBlank` and the very next read of
-        // the model refused, naming a contradiction the reader did not write.
+        // model -- so relaxing one has exactly one valid outcome. v1 states
+        // the two facts apart, so the editor drops the annotation out loud;
+        // otherwise `title: string? @notBlank` is written and the very next
+        // read of the model refuses, naming a contradiction the reader did
+        // not write.
         Ok(match required {
             true => rewritten,
             false => rewritten.replace(" @notBlank", ""),

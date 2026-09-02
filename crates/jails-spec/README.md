@@ -1,52 +1,17 @@
 # `jails-spec`
 
-Project specifications, field DSL parsing, artifact kind classifications, and project layout discovery.
+The closed CLI vocabularies and where a project is.
 
----
+- `spec::kind` -- `ArtifactKind`, `Capability` and the other `clap::ValueEnum`s,
+  so `clap_complete` can emit static completion lists and the CLI spelling is
+  the recorded spelling.
+- `spec::field` -- the compact `name:type[!?]` field syntax and its markers
+  (`@pk`, `@unique`, `@index`, `@positive`, `@nonnegative`, `@scope`). An
+  unknown marker is an error, never a no-op.
+- `spec::paths` and `spec::layout` -- `find_project_root` and the eleven
+  package layers.
+- `build` -- which build tool a directory uses, and nothing more. The door is
+  any recognised marker, nearest wins; jails never parses a foreign build file.
 
-## Purpose & Overview
-
-`jails-spec` defines the structural contracts of a project before any code generation occurs:
-1. **Build Tool Detection**: Identifies whether a directory is managed by Maven (`pom.xml`) or Gradle (`build.gradle`, `build.gradle.kts`) without parsing full project models.
-2. **Field Specification DSL**: Parses typed field arguments passed to generators (e.g. `title:string!`, `amount:bigdecimal`, `tags:list<string>`).
-3. **Artifact and Capability Kinds**: Classifies generator targets (`scaffold`, `record`, `controller`, `usecase`, etc.) and capabilities (`db`, `kafka`, `security`, `api`, etc.).
-4. **Layout Conventions**: Determines package hierarchies for domain layers (`domain`, `service`, `repository`, `controller`, `dto`).
-
----
-
-## Key Modules
-
-```mermaid
-flowchart TD
-    SPEC["jails-spec"]
-    SPEC --> FIELD["spec::field\n(Field DSL parser & type mapper)"]
-    SPEC --> KIND["spec::kind\n(ArtifactKind & Capability enums)"]
-    SPEC --> LAYOUT["spec::layout\n(Conventional package layer mappings)"]
-    SPEC --> PATHS["spec::paths\n(Project path canonicalization)"]
-    SPEC --> BUILD["build\n(Maven / Gradle root detector)"]
-```
-
-- [`spec::field`](../../crates/jails-spec/src/spec/field.rs):
-  - Parses field syntax: `name:type[modifiers]`.
-  - Recognizes built-in lowercase types: `string`, `int`, `long`, `double`, `boolean`, `uuid`, `instant`, `date`, `datetime`, `bigdecimal`, `duration`, `uri`, `path`, `zoneid`.
-  - Recognizes collections: `list<T>`, `map<K,V>`, `set<T>`.
-  - Modifiers:
-    - `!` : Required and non-blank (Jakarta `@NotBlank` / `@NotNull`).
-    - `?` : Optional component (maps to Java `Optional<T>`).
-    - `@scope` : Multi-tenancy partition key.
-    - `@unique` : Unique constraint in SQL migrations.
-    - `@index` : Database index flag.
-- [`spec::kind`](../../crates/jails-spec/src/spec/kind.rs):
-  - Defines [`ArtifactKind`](../../crates/jails-spec/src/spec/kind.rs): `Scaffold`, `Record`, `Controller`, `Service`, `Repo`, `Usecase`, `Query`, `Transition`, `DurableJob`, `HttpSink`, `Webhook`, `Auth`, `Migration`, etc.
-  - Defines [`Capability`](../../crates/jails-spec/src/spec/kind.rs): `Db`, `Kafka`, `Redis`, `Api`, `Actuator`, `Cache`, `Observability`, `Security`, `Toxiproxy`, `Mail`, `Sse`, `H2`, `Docker`, `Ci`, `Testkit`, etc.
-- [`build`](../../crates/jails-spec/src/build.rs):
-  - Discovers Maven reactors and Gradle multi-module root directories without executing JVM processes.
-- [`spec::layout`](../../crates/jails-spec/src/spec/layout.rs):
-  - Resolves conventional target directories (`src/main/java`, `src/test/java`, `src/main/resources`).
-
----
-
-## How It Connects to Other Crates
-
-- **Used by [`jails-generate`](../../crates/jails-generate/README.md)**: Generators query `spec::field` to construct typed Java record components, SQL columns, and validation annotations.
-- **Used by [`jails-project`](../../crates/jails-project/README.md)**: Project model discovery uses `build` to locate the active module and reactor root.
+This is where a symbol shared by several crates lives when it belongs to none
+of them.

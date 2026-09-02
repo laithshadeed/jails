@@ -1,8 +1,8 @@
 //! Field-level schema evolution: the policies a patch carries, and the DDL
 //! each one authorises.
 //!
-//! Split from [`super`] by secret. The parent answers *what schema does this
-//! model have* -- create table, create index, the type mapping -- and this
+//! [`super`] answers *what schema does this model have* -- create table,
+//! create index, the type mapping -- and this
 //! answers *what is a reader allowed to change about an accepted one, and what
 //! did they say they meant*. Every function here is reachable only from a
 //! `ModelPatch` that states an evolution policy, which is the line between
@@ -148,7 +148,8 @@ pub(super) fn evolve_field(
             // it. What must not move is everything else -- the type, the
             // optionality, the semantics, and under `preserve` the column,
             // which the editor pins with `@map`. Comparing the label as well
-            // made every v1 preserve-rename refuse as an unexplained change.
+            // would make every v1 preserve-rename refuse as an unexplained
+            // change.
             expected.label = after.label.clone();
             match column {
                 ColumnRenamePolicy::Preserve => {}

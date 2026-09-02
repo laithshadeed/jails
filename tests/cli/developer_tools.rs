@@ -2,12 +2,11 @@
 
 use super::*;
 
-/// A project with one route, canonical.
+/// A project with one route.
 ///
-/// **The model is what makes it a project rather than a directory.** `contract
-/// emit` reads the routes off the tree either way; the assertion that it
-/// leaves a lock and no receipts is about a canonical project, and a skeleton
-/// with no `.jails/model.jdl` is neither.
+/// The model is what makes it a project rather than a directory: `contract
+/// emit` reads the routes off the tree either way, but the assertion that it
+/// leaves a lock behind is about a project with `.jails/model.jdl`.
 fn web_fixture(label: &str) -> PathBuf {
     let root = temp_dir(label);
     write_project_skeleton(&root);
@@ -97,10 +96,9 @@ fn contract_out_uses_preview_and_transaction_commit() {
     );
     let document = fs::read_to_string(target).unwrap();
     assert!(document.contains("\"openapi\": \"3.1.0\""));
-    // **No receipts, and that is the assertion.** A canonical project's
-    // durable record is `.jails/compiler.lock.json`; the journal a legacy
-    // commit wrote is what the cutover removes, and a command that quietly
-    // created one would put the project back on a ledger nothing reads.
+    // The project's durable record is `.jails/compiler.lock.json` and nothing
+    // else; a command that quietly created other bookkeeping would put the
+    // project on a record nothing reads.
     assert!(root.join(".jails/compiler.lock.json").is_file());
     assert!(!root.join(".jails/receipts").exists());
 }
@@ -513,14 +511,10 @@ fn unsafe_spring_boots_print_preflight_and_require_yes_without_a_terminal() {
 
 /// Every `jails …` command jails tells a reader to run is one the CLI knows.
 ///
-/// research.md §0.2. The theme these messages belong to is *oracles that
-/// disagree*: a `fix:` line names a command, the reader runs it, and it
-/// refuses. `bugs.md` B41 was a whole chain of it -- `doctor` named `resource
-/// repair`, `repair` named `revive`, and `revive` answered with an internal
-/// planning term over an entity that was fully present on disk. The cheapest
-/// control is the one that catches the commonest form: a command, a kind, a
-/// capability or a flag that simply does not exist, because it was renamed
-/// somewhere else and the prose was not.
+/// A `fix:` line that names a command the reader runs and that refuses is an
+/// oracle disagreeing with itself; the commonest form is a command, a kind, a
+/// capability or a flag that does not exist because it was renamed somewhere
+/// else and the prose was not.
 ///
 /// The oracle is `jails commands --json`, which is walked out of the same
 /// `clap::Command` that parses arguments and the same `ValueEnum`s that
@@ -587,8 +581,7 @@ fn every_command_a_message_tells_the_reader_to_run_is_one_that_exists() {
         if matched.contains(' ') {
             continue;
         }
-        // The two closed vocabularies a message names most often, and the two
-        // that have been renamed under prose that stayed put.
+        // The two closed vocabularies a message names most often.
         let vocabulary = match *first {
             "generate" | "g" => Some((&kinds, "kind")),
             "add" | "remove" => Some((&capabilities, "capability")),
@@ -689,12 +682,9 @@ fn quoted_jails_commands() -> Vec<(String, String)> {
     out
 }
 
-/// A word jails does not have, answered with the thing it has instead.
-///
-/// `bugs.md` B55: `jails add websocket` answered with clap's bare list of 25
-/// capabilities and pointed at nothing, while `jails g socket <Name>` is the
-/// whole slice. A reader who knows the word and not the spelling was one
-/// command away and got a wall of alternatives.
+/// A word jails does not have, answered with the thing it has instead:
+/// `jails add websocket` points at `jails g socket <Name>` rather than at
+/// clap's bare list of capabilities.
 ///
 /// The table is deliberately only for words with a *real* answer. A synonym
 /// pointing at nothing would be worse than clap's list, which at least says
@@ -732,15 +722,10 @@ fn a_capability_jails_does_not_have_names_the_one_it_does() {
     // visible_alias for `db`, and an entry for it would claim a capability
     // that works does not exist.
     //
-    // **`--no-start`, because `postgres` really is `db`.** Being a working
-    // alias is the whole point being asserted, so this call *succeeds* -- and
-    // without this flag it succeeded all the way to `docker compose up`,
-    // starting a real PostgreSQL that the test never connects to and nothing
-    // ever takes down. Each full run leaked a container and, worse, the
-    // compose network beside it; after three runs Docker had no address pool
-    // left and unrelated container tests began failing with `all predefined
-    // address pools have been fully subnetted`. A suite that poisons the
-    // machine for its own next run is a flake with a delay on it.
+    // `--no-start`, because `postgres` really is `db`: being a working alias
+    // is the point being asserted, so this call *succeeds*, and without the
+    // flag it would run `docker compose up` and leak a PostgreSQL and its
+    // compose network that nothing takes down.
     for alias in ["postgres", "dbconsole"] {
         let refused = jails_cmd(&root, None)
             .args(["add", alias, "--no-start"])
@@ -770,21 +755,18 @@ fn a_capability_jails_does_not_have_names_the_one_it_does() {
 
 /// Every command path the binary advertises is exercised by some test.
 ///
-/// `simplify-sol.md`'s G2: *all live command paths map to at least one
-/// checked-in journey.* The catalog is the oracle -- `jails commands --json`
-/// walks the same `clap::Command` that parses arguments -- so a command added
-/// without a journey fails here rather than shipping untested.
+/// The catalog is the oracle -- `jails commands --json` walks the same
+/// `clap::Command` that parses arguments -- so a command added without a
+/// journey fails here rather than shipping untested.
 ///
-/// **A journey is an invocation, not a mention.** Comments are stripped before
+/// A journey is an invocation, not a mention. Comments are stripped before
 /// the scan: prose naming a command is not coverage, and a gate that counted
-/// it would pass on the strength of its own documentation. That is not
-/// hypothetical -- the protocol-fixture gate in `tests/golden.rs` did exactly
-/// that on its first run.
+/// it would pass on the strength of its own documentation.
 ///
 /// A command that cannot be exercised without infrastructure still needs a
-/// journey: its refusal is behaviour too, and G2 asks for success *and*
-/// refusal. `EXERCISED_ELSEWHERE` is for paths whose journey cannot live in
-/// this workspace at all, and it is empty on purpose.
+/// journey: its refusal is behaviour too. `EXERCISED_ELSEWHERE` is for paths
+/// whose journey cannot live in this workspace at all, and it is empty on
+/// purpose.
 #[test]
 fn every_advertised_command_path_has_a_journey() {
     /// Paths with no journey, each with the reason it cannot have one.
@@ -886,10 +868,8 @@ fn test_sources_without_comments() -> String {
 ///
 /// Eight subcommands that shell into the broker's own CLI tools inside the
 /// compose container. None can do its work without a project and a running
-/// broker, so the behaviour a test can reach is the refusal -- and
-/// `simplify-sol.md`'s G2 asks for refusal journeys as well as success ones.
-/// Before this they had no journey at all: eight advertised commands that no
-/// test had ever run, which is how a panic on an empty directory ships.
+/// broker, so the behaviour a test can reach is the refusal, and a refusal
+/// is a journey too.
 #[test]
 fn every_kafka_subcommand_refuses_outside_a_project_rather_than_panicking() {
     let root = temp_dir("kafka-outside-a-project");
@@ -983,37 +963,24 @@ fn setup_writes_the_reuse_key_into_the_home_it_is_given() {
 
 /// Which generator kinds a real compiler never sees.
 ///
-/// `simplify-sol.md`'s G3: *maintain a machine-readable map from every
-/// generator kind and capability to a build fixture. Build the exact generated
-/// tree under test -- not a neighbouring toolbox.* This is the first half: the
-/// map, **derived rather than declared**, because `CLAUDE.md`'s rule for the
-/// scenario table applies here too -- which kinds a test covers is a fact
-/// about its steps, not a fourth list to keep in step by hand.
+/// The map from kind to build fixture is derived rather than declared: which
+/// kinds a test covers is a fact about its steps, not a list to keep in step
+/// by hand.
 ///
 /// A kind counts as compiled when some test both generates it and gates on a
 /// real toolchain. The number matters because the golden suite checks *bytes*,
-/// not compilability: jails can emit Java that does not compile for any of the
-/// kinds below and every existing test stays green. That is the hole G3 is
-/// about, and it is `NOT_COMPILED.len()` wide.
+/// not compilability: jails could emit Java that does not compile for a kind
+/// in `NOT_COMPILED` and every existing test would stay green.
 ///
-/// **Ratchet, not a threshold.** The list may shrink and may not grow. Closing
-/// it means adding real builds to a suite that is already 108s of `tests/cli`,
-/// so each one is a deliberate trade rather than a sweep -- see `plan.md`
-/// P13.7 for where that time goes.
+/// Ratchet, not a threshold: the list may shrink and may not grow.
 #[test]
 fn no_new_generator_kind_escapes_the_real_toolchain() {
     /// Kinds no real compiler builds. Shrink only.
     ///
-    /// **Empty**, and it began at 13. `every_remaining_generator_kind_compiles_
-    /// in_one_spring_project` closed the rest in one project and one `mvn
-    /// test` -- twelve fixtures would have been twelve Maven invocations
-    /// against a suite already at 108s, and what needs proving is that each
-    /// kind's output compiles, not that it does so alone.
-    ///
-    /// Closing them found a real defect on the first run: `g event` emits
-    /// `org.springframework.kafka.*` and neither supplies the dependency nor
-    /// refuses without it (`bugs.md` B58), which is why that test asks for the
-    /// capability explicitly.
+    /// Empty: `every_remaining_generator_kind_compiles_in_one_spring_project`
+    /// builds the kinds with no fixture of their own in one project and one
+    /// `mvn test`, because what needs proving is that each kind's output
+    /// compiles, not that it does so alone.
     const NOT_COMPILED: [&str; 0] = [];
 
     let surface = jails_cmd(&temp_dir("kind-build-coverage"), None)
@@ -1079,22 +1046,19 @@ fn catalog_section(surface: &str, section: &str) -> Vec<String> {
 
 /// Kinds generated inside a function that gates on a real toolchain.
 ///
-/// Per file and per function, with **string literals blanked before the braces
-/// are counted**. That is `java::blanked()`'s trick, and it is not optional
-/// here: these files are full of Java fixtures, so a `{` inside a string
-/// literal is not a block. Counting them raw made one function's body span the
-/// rest of the file, which reported every kind as compiled -- the same shape
-/// of wrong answer as reporting none.
+/// Per file and per function, with string literals blanked before the braces
+/// are counted: these files are full of Java fixtures, so a `{` inside a
+/// string literal is not a block, and counting it makes one function's body
+/// span the rest of the file and report every kind as compiled.
 ///
 /// The blanked copy is the same length as the original, so offsets found in
 /// one index the other: braces are matched in the blank, content is read from
 /// the source.
 fn kinds_reaching_a_real_toolchain(kinds: &[String]) -> std::collections::BTreeSet<String> {
-    // `real_maven_cmd` is the one that actually runs Maven, and leaving it out
-    // made the toolbox *builders* invisible -- they generate a dozen kinds and
-    // then run `mvn test` over the result, so every kind in them was being
-    // reported as never compiled. A coverage gate that under-reports sends
-    // people to write tests that already exist.
+    // `real_maven_cmd` is the one that actually runs Maven; without it the
+    // toolbox *builders* -- which generate a dozen kinds and then run `mvn
+    // test` over the result -- are invisible, and a coverage gate that
+    // under-reports sends people to write tests that already exist.
     const REAL: [&str; 8] = [
         "real_mvn_available",
         "real_maven_cmd",

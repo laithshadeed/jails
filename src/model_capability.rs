@@ -9,15 +9,15 @@ use jails_support::{Failure, Result};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
-/// The `app { storage ... }` value a legacy capability label means, for the
-/// two kinds JDL v1 states as an axis rather than a capability.
+/// The `app { storage ... }` value a capability label means, for the two
+/// kinds JDL v1 states as an axis rather than a capability.
 ///
 /// **`sqlite` is deliberately not here.** v1's closed capability registry
 /// carries `cap sqlite` as well as `storage sqlite`, and the linker
 /// materializes the capability from the axis rather than the other way round —
 /// so the capability is the primary spelling and routing `add sqlite` to the
 /// axis would change what a working command writes. Only `db` and `h2` have no
-/// capability spelling at all, which is why only they were broken.
+/// capability spelling at all.
 fn storage_axis(label: &str) -> Option<&'static str> {
     match label {
         "db" => Some("postgres"),
@@ -32,11 +32,10 @@ pub(crate) fn add(
     package: Option<String>,
     invocation: Invocation,
 ) -> Result<()> {
-    // **The CLI's sugar, resolved where the legacy path resolves it.** A
-    // reader types `--name transaction`; the model holds `java_name` to a real
-    // Java type name and is right to. Capitalising here is the same fold
-    // `jails g record transaction` does, and without it the same command
-    // produced a project on one engine and a diagnostic on the other.
+    // **The CLI's sugar, resolved at the CLI.** A reader types `--name
+    // transaction`; the model holds `java_name` to a real Java type name and
+    // is right to. Capitalising here is the same fold `jails g record
+    // transaction` does.
     let name = name.map(|name| crate::model_generate_jdl::java_type_name(&name));
     validate_request(&capabilities, name.as_deref(), package.as_deref())?;
     let requested = capabilities
@@ -87,9 +86,7 @@ pub(crate) fn add(
         // **The storage kinds are an axis in v1, not a capability.** Its closed
         // registry has no `db`, `h2` or `sqlite`, because `storage postgres` is
         // what the reader declares and `cap db` is what the linker materializes
-        // from it. Appending one wrote a model that no longer parsed -- `jails
-        // add db` refused on every v1 project, and failed closed, so it simply
-        // did not work.
+        // from it. Appending one writes a model that does not parse.
         if let Some(storage) = storage_axis(label) {
             // `--name` never reaches here: `validate_request` already limits it
             // to the four packs that have a projection to override, and neither
@@ -99,9 +96,8 @@ pub(crate) fn add(
             // **The patch has to carry the axis too.** The source is what the
             // model is re-read from next time; the patch is what *this*
             // transition compiles. Without it `add db` on a project that
-            // already had entities lowered them against `dialect none` and
-            // refused -- so the capability worked only as the very first
-            // command in a project.
+            // already has entities lowers them against `dialect none` and
+            // refuses.
             let dialect = jails_model::parse_jdl(&next_source)
                 .map_err(|diagnostics| {
                     Failure::Told(diagnostics.to_string().trim_end().to_string())
@@ -198,10 +194,9 @@ pub(crate) fn remove(
             // **`remove` is the exact inverse of `add`, including here.**
             // `add h2` on a v1 project sets `storage h2` rather than
             // appending `cap h2`, because storage is an axis and the closed
-            // capability registry has no `h2` in it. Removal went looking for
-            // the declaration `add` had deliberately not written, and refused
-            // with a diagnostic about a `cap h2` that was never going to
-            // exist -- so a project could enter a storage it could not leave.
+            // capability registry has no `h2` in it, so removal must not go
+            // looking for a `cap h2` declaration `add` never wrote -- a
+            // project must be able to leave any storage it can enter.
             //
             // `none` rather than deleting the line: `storage` is a required
             // member of `app`, and an axis with no value is not a v1 model.
@@ -230,7 +225,7 @@ pub(crate) fn remove(
 }
 
 pub(crate) fn add_dependency(
-    coordinate: jails_protocol::coordinate::MavenCoordinate,
+    coordinate: jails_spec::spec::coordinate::MavenCoordinate,
     version: Option<String>,
     scope: DependencyScope,
     invocation: Invocation,
@@ -312,7 +307,7 @@ pub(crate) fn add_dependency(
 }
 
 pub(crate) fn remove_dependency(
-    coordinate: jails_protocol::coordinate::MavenCoordinate,
+    coordinate: jails_spec::spec::coordinate::MavenCoordinate,
     invocation: Invocation,
 ) -> Result<()> {
     let coordinate = coordinate.to_string();

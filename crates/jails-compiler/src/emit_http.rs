@@ -15,9 +15,9 @@ use std::collections::BTreeSet;
 /// list it is decided from.
 ///
 /// The controller renderer and the test renderer both need this answer, and
-/// `bugs.md` B48 is what happens when each works it out separately: a
-/// path-variable query got a test that POSTed a JSON body to a GET-only route,
-/// at a URI whose placeholder was never expanded.
+/// working it out separately is how a path-variable query gets a test that
+/// POSTs a JSON body to a GET-only route, at a URI whose placeholder is never
+/// expanded.
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum Binding {
     /// `@RequestBody` -- the request is JSON.
@@ -109,10 +109,10 @@ fn lower(
             OperationKind::Command(command) => {
                 let entity = entity(model, &command.on)?;
                 // **A declared `consumes form` reaches the controller.** It
-                // reached the `Input` record -- that is where `@BindParam`
-                // comes from -- and stopped there, so every form-bound command
-                // jails wrote asked Spring for a JSON body and answered 415
-                // for the form its own proof was told to post.
+                // reaches the `Input` record too -- that is where `@BindParam`
+                // comes from -- and stopping there would have every form-bound
+                // command ask Spring for a JSON body and answer 415 for the
+                // form its own proof posts.
                 let form = route.consumes == Some(jails_model::RequestFormat::Form);
                 let (parameter, binder) = if form {
                     (
@@ -264,11 +264,11 @@ fn lower(
                 // before the handler runs.
                 key_sample = crate::emit_companion_test::json_sample(model, &key.ty);
                 // **A form-bound transition reads parameters, not a body.**
-                // The route said `consumes form` and the controller asked for
-                // `@RequestBody`, so Spring matched the URL and then answered
-                // 415 for the form the caller actually sent. `@ModelAttribute`
-                // binds the query string, the form body and the URI template
-                // variables alike, which is the one annotation that can.
+                // With `@RequestBody` on a `consumes form` route Spring
+                // matches the URL and then answers 415 for the form the caller
+                // sends. `@ModelAttribute` binds the query string, the form
+                // body and the URI template variables alike, which is the one
+                // annotation that can.
                 let form = route.consumes == Some(jails_model::RequestFormat::Form);
                 let binding = if form {
                     imports.remove("org.springframework.web.bind.annotation.RequestBody");
@@ -423,8 +423,8 @@ fn lower(
     let components = crate::emit_java::input_components(model, operation, &mut BTreeSet::new())?;
 
     // The companion test is the point of the adapter existing at all. Without
-    // it the canonical `api` capability wrote a controller nothing ever
-    // dispatched a request to -- which compiles, starts, and proves nothing.
+    // it the `api` capability writes a controller nothing ever dispatches a
+    // request to -- which compiles, starts, and proves nothing.
     let (test_imports, test_body) = proof::controller_test(
         model,
         proof::ControllerProof {

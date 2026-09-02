@@ -1,15 +1,11 @@
 //! The product loop over every capability: generate, edit, generate, remove.
 //!
-//! **These were the cutover's differential canaries and are now the canonical
-//! path's own regression suite.** Each ran two subjects side by side -- the
-//! legacy route and the JDL one -- and compared *behaviour* rather than bytes,
-//! because the two implementations' merge bases had different encodings and
-//! neither was a fact about the product. The legacy subject is gone with the
-//! engine, and what it was there to protect is not: every case here still
-//! asks whether a reader's edit survives regeneration and whether `remove`
-//! takes back exactly what `add` put down, which is the one property the
-//! golden snapshots cannot see. A golden pins what one command writes; this
-//! pins what a *sequence* of them leaves behind.
+//! Every case asks whether a reader's edit survives regeneration and whether
+//! `remove` takes back exactly what `add` put down, which is the one property
+//! the golden snapshots cannot see: a golden pins what one command writes;
+//! this pins what a *sequence* of them leaves behind. Behaviour is compared
+//! rather than the bytes of private state, because the merge bases' encoding
+//! is not a fact about the product.
 
 mod common;
 
@@ -23,19 +19,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-/// The canonical subject's starting model, in **JDL v1**.
-///
-/// `audit.md` A5.3: every scenario here used to seed the *pre-v1* draft, so
-/// the G1 gate -- the thing that says the replacement behaves like the
-/// implementation it replaces -- was protecting the front end `jdl-sol.md`
-/// §22 says to delete. A differential suite that only exercises the dialect
-/// on its way out proves nothing about the one staying.
-///
-/// `storage postgres` rather than `dialect postgresql`: v1 reads storage as a
-/// capability of the app rather than a loose property, which is one of the
-/// differences that makes this a port rather than a rename.
-/// The adopted subject's model: the *reader's* base package, and the axes
-/// their build actually has.
+/// The adopted subject's model, in **JDL v1**: the *reader's* base package,
+/// and the axes their build actually has.
 ///
 /// Separate from [`empty_jdl`] because the base package is the point of these
 /// scenarios -- jails did not choose `net.acme.legacy` and must not assume it.
@@ -50,21 +35,16 @@ fn adopted_jdl(flavour: Adopted) -> String {
     )
 }
 
+/// The subject's starting model, in **JDL v1**.
 fn empty_jdl(spring: bool) -> String {
-    // **`storage none`, and the platform matching the fixture.**
-    //
-    // Pre-v1 `dialect postgresql` was a loose property nothing acted on, so
-    // the old seed effectively said *no storage until a scenario adds one* --
-    // and every scenario that wants storage does add one, with `add db` or
-    // `add h2`. Translating it to `storage postgres` would have been a
-    // literal reading of the words and a wrong reading of the meaning: v1
-    // makes storage a capability, so it would refuse on a plain project, and
-    // on a Spring one it would fight the scenario that installs h2 over the
-    // same `spring.datasource.url`.
-    //
-    // The platform, by contrast, *is* a fact about the fixture and cannot be
-    // omitted: `platform spring` on a plain-Maven project renders Spring
-    // adapters against a build that has none.
+    // **`storage none`, and the platform matching the fixture.** Every
+    // scenario that wants storage adds one, with `add db` or `add h2`; v1
+    // makes storage a capability, so `storage postgres` would refuse on a
+    // plain project, and on a Spring one it would fight the scenario that
+    // installs h2 over the same `spring.datasource.url`. The platform, by
+    // contrast, *is* a fact about the fixture and cannot be omitted:
+    // `platform spring` on a plain-Maven project renders Spring adapters
+    // against a build that has none.
     let platform = if spring { "spring" } else { "plain" };
     format!(
         "jdl 1\napp Demo @id(project_demo) {{\n  pkg com.example.demo\n  java 26\n  \
@@ -107,29 +87,6 @@ impl Subject {
     }
 }
 
-/// The frozen legacy binary to compare against, when there is one.
-///
-/// `None` on an ordinary run: `verify-rewrite` does not build a second binary,
-/// so the differential half of G1/G5 is exercised by
-/// `scripts/verify-rewrite-g1-canary.sh` and not by the gate. Absent is the
-/// honest answer there -- a "legacy" subject that is the binary under test
-/// compares it with itself and passes whatever either does.
-///
-/// The same value as `CARGO_BIN_EXE_jails` is refused rather than accepted for
-/// that reason: it is the one setting that makes this suite look like it is
-/// doing twice the work it is.
-fn legacy_binary() -> Option<OsString> {
-    let named = std::env::var_os("JAILS_LEGACY_BIN")?;
-    assert_ne!(
-        Path::new(&named).canonicalize().ok(),
-        Path::new(env!("CARGO_BIN_EXE_jails")).canonicalize().ok(),
-        "JAILS_LEGACY_BIN names the binary under test, so the differential \
-         subjects would be one binary compared with itself.\n       \
-         fix: point it at a binary built from an earlier revision, or unset it"
-    );
-    Some(named)
-}
-
 fn subjects(label: &str) -> [Subject; 1] {
     subjects_with_fixture(label, false)
 }
@@ -139,9 +96,8 @@ fn spring_subjects(label: &str) -> [Subject; 1] {
 }
 
 /// **One subject, still an array.** Every case below is written as a loop over
-/// subjects and reads `subject.name` where the two trees differed; keeping the
-/// shape means the legacy half was deleted rather than each case rewritten,
-/// and a case that stops holding still says which subject it was about.
+/// subjects and reads `subject.name` in its findings, so a case that stops
+/// holding says which subject it was about.
 fn subjects_with_fixture(label: &str, spring: bool) -> [Subject; 1] {
     let canonical_root = temp_dir(&format!("differential-{label}-canonical"));
     if spring {
@@ -160,10 +116,8 @@ fn subjects_with_fixture(label: &str, spring: bool) -> [Subject; 1] {
     }]
 }
 
-/// This is the product loop, run through both implementations. It deliberately
-/// compares behavior rather than private state bytes: the legacy object store
-/// and the canonical merge bases have different encodings and neither is a
-/// user-visible compatibility contract.
+/// The product loop. It compares behaviour rather than private state bytes:
+/// the merge bases' encoding is not a user-visible compatibility contract.
 #[test]
 fn generate_edit_generate_has_the_same_safety_contract() {
     let subjects = subjects("iterative-record");
@@ -455,8 +409,7 @@ fn controller_and_test_keep_reader_edits_across_the_product_loop() {
         }
 
         // A later generation exercises replay/reconciliation of the already
-        // edited controller without relying on either implementation's state
-        // encoding.
+        // edited controller without relying on the state encoding.
         subject.succeeds(&["g", "class", "Trigger"]);
         for (index, path) in files.iter().enumerate() {
             assert!(
@@ -1344,10 +1297,10 @@ fn redis_pack_keeps_java_and_compose_edits_in_the_generate_edit_generate_loop() 
     for subject in &subjects {
         // `--no-start`: this case is about the *files* -- the Java the pack
         // writes, the reader edits in them, and the compose block's text --
-        // and it reads every one of them off disk. Starting the service was
-        // incidental, and it leaked a Redis container and its compose network
-        // on every run, which is what eventually exhausted Docker's address
-        // pool and took unrelated container tests down with it.
+        // and it reads every one of them off disk. Starting the service is
+        // incidental, and a leaked Redis container and its compose network per
+        // run exhausts Docker's address pool and takes unrelated container
+        // tests down with it.
         let added = subject.run(&["add", "redis", "--no-start"]);
         if !added.status.success() {
             let output = format!(
@@ -2342,11 +2295,11 @@ fn executable(_path: &Path) -> bool {
     false
 }
 
-/// Two subjects over a project jails did not write.
+/// A subject over a project jails did not write.
 ///
-/// The canonical side gets a `.jails/model.jdl` naming the *reader's* base
-/// package, not `com.example.demo`: the whole point of an adopted project is
-/// that jails did not choose where anything lives.
+/// It gets a `.jails/model.jdl` naming the *reader's* base package, not
+/// `com.example.demo`: the whole point of an adopted project is that jails
+/// did not choose where anything lives.
 fn adopted_subjects(label: &str, flavour: Adopted) -> [Subject; 1] {
     let canonical_root = temp_dir(&format!("differential-{label}-canonical"));
     write_adopted_fixture(&canonical_root, flavour);
@@ -2354,8 +2307,8 @@ fn adopted_subjects(label: &str, flavour: Adopted) -> [Subject; 1] {
     // -- "adopt only before creating the model" -- and it is right to: adoption
     // is how jails learns a layout it did not choose, which has to happen
     // before there is a model that claims to know one. The test opts the
-    // canonical subject in after adopting, which is the real order a reader
-    // would follow.
+    // subject in after adopting, which is the real order a reader would
+    // follow.
 
     [Subject {
         name: "canonical",
@@ -2366,20 +2319,12 @@ fn adopted_subjects(label: &str, flavour: Adopted) -> [Subject; 1] {
     }]
 }
 
-/// Both implementations treat a foreign codebase the same way.
+/// A foreign codebase is adopted the way a reader expects.
 ///
-/// `simplify-sol.md`'s G5, differential half. `tests/cli/tooling.rs` proves the
-/// current binary handles an adopted project; this proves the *replacement*
-/// handles it the way the thing it replaces did -- which is the question a
-/// cutover actually turns on, and the one a single-binary test cannot ask.
-///
-/// Under `scripts/verify-rewrite-g1-canary.sh` the legacy side is a binary
-/// built from a frozen revision, so this keeps meaning something after the
-/// legacy crates are deleted.
-///
-/// What is compared is behaviour, not private state: the two keep their
-/// generated Java in different places by design, so the assertions are about
-/// what the *reader* can see -- their own bytes, and whether a rerun settles.
+/// `tests/cli/tooling.rs` proves the binary handles an adopted project; this
+/// proves the adoption loop settles. What is compared is behaviour, not
+/// private state: the assertions are about what the *reader* can see -- their
+/// own bytes, and whether a rerun settles.
 #[test]
 fn an_adopted_project_is_treated_the_same() {
     for flavour in [Adopted::Plain, Adopted::Spring] {
@@ -2387,7 +2332,7 @@ fn an_adopted_project_is_treated_the_same() {
     }
 }
 
-/// One flavour of [`adopted_subjects`], run through both implementations.
+/// One flavour of [`adopted_subjects`].
 ///
 /// The Spring flavour is not a copy with a bigger pom. Every version fact
 /// jails renders against -- repository wiring, the MockMvc form, the
@@ -2411,11 +2356,10 @@ fn adopted_project_is_treated_the_same(flavour: Adopted) {
             subject.name
         );
 
-        // Both implementations learn the reader's layout identically: the
-        // fixture keeps its adapters in `persistence`, and adoption records
-        // that rename rather than reporting the directory as unrecognised.
-        // What each then *does* with it is
-        // `the_compiler_writes_adapters_into_the_reader_s_own_package`.
+        // The reader's layout is learned: the fixture keeps its adapters in
+        // `persistence`, and adoption records that rename rather than
+        // reporting the directory as unrecognised. What is then *done* with
+        // it is `the_compiler_writes_adapters_into_the_reader_s_own_package`.
         assert!(
             fs::read_to_string(subject.root.join("jails.toml"))
                 .unwrap()
@@ -2482,19 +2426,14 @@ fn adopted_project_is_treated_the_same(flavour: Adopted) {
     }
 }
 
-/// A rename `adopt` recorded reaches the generated code, on both sides.
+/// A rename `adopt` recorded reaches the generated code.
 ///
-/// This was `bugs.md` B59, found by the differential fixture above and fixed
-/// in the same change: the canonical compiler named its packages with 28
-/// hardcoded `format!("{}.adapters.jdbc", base_package)` sites, none of which
-/// could apply a rename because none of them knew there was one. So `jails
-/// adopt` printed its mapping, wrote `jails.toml`, and changed nothing about
-/// where a canonical project's code went.
-///
-/// The two reach the same place by different routes, which is what makes this
-/// a differential test rather than two assertions: the legacy scaffold emits
-/// its own in-memory adapter, and the canonical one is the `fake` capability.
-/// What has to agree is the package the reader ends up importing.
+/// The compiler names its packages through the layout, so `jails adopt`
+/// writing `jails.toml` changes where a project's code goes; a hardcoded
+/// `format!("{}.adapters.jdbc", base_package)` could not apply a rename
+/// because it would not know there was one. The in-memory adapter is the
+/// `fake` capability, and what has to hold is the package the reader ends up
+/// importing.
 #[test]
 fn the_compiler_writes_adapters_into_the_reader_s_own_package() {
     let subjects = adopted_subjects("adopted-layout", Adopted::Spring);
@@ -2573,16 +2512,14 @@ fn walk_java(root: &Path) -> Vec<String> {
     found
 }
 
-/// The CI workflow is one file, produced by one template, on both sides.
+/// The CI workflow is one file, produced by one template.
 ///
-/// `plan.md` P13.8: `ci` was one of the four capabilities with no canonical
-/// backend. Proving it byte-for-byte matters more here than for a Java
-/// artifact, because the workflow pins its actions *by commit* -- a tag is
-/// mutable and a moved tag is a supply chain compromise nobody sees in a diff
-/// -- so two engines rendering "a CI file" from two copies of the bytes is
-/// exactly how one of them ends up running an action nobody re-reviewed.
+/// Byte-for-byte matters more here than for a Java artifact, because the
+/// workflow pins its actions *by commit* -- a tag is mutable and a moved tag
+/// is a supply chain compromise nobody sees in a diff -- so a second copy of
+/// the bytes is exactly how an action nobody re-reviewed comes to run.
 ///
-/// The wrapper is why this capability needed an observed workspace fact at
+/// The wrapper is why this capability needs an observed workspace fact at
 /// all, and both halves are asserted: `./mvnw` on a project without one fails
 /// at the first step, and `mvn` on a project with one silently uses whatever
 /// Maven the runner happens to have.
@@ -2619,10 +2556,8 @@ fn the_ci_workflow_is_byte_identical() {
     }
 }
 
-/// The container build is the same three files on both implementations.
-///
-/// `plan.md` P13.8's second capability. The assertions are the two properties
-/// the image is *for*: it runs as a numeric non-root user, and the workflow
+/// The container build is three files, and the assertions are the two
+/// properties the image is *for*: it runs as a numeric non-root user, and the workflow
 /// checks that rather than trusting it. A container that quietly starts
 /// running as root is the failure this capability exists to prevent, and it is
 /// invisible until something else goes wrong.
@@ -2673,17 +2608,14 @@ fn the_container_build_is_byte_identical() {
     }
 }
 
-/// The Helm chart is the same six files on both implementations.
+/// The Helm chart is six files with real preconditions: probes need the
+/// actuator, burn-rate alerts need a Prometheus registry, and a deployment
+/// needs the image it deploys. `add k8s` refuses without them.
 ///
-/// `plan.md` P13.8's third capability, and the one with real preconditions:
-/// probes need the actuator, burn-rate alerts need a Prometheus registry, and
-/// a deployment needs the image it deploys. Both engines refuse without them.
-///
-/// The canonical side asks the *model* whether each capability is declared,
-/// where the legacy side reads the pom for two of them and the filesystem for
-/// the third. That is stricter, not merely different: a project with
-/// `spring-boot-starter-actuator` spliced in by hand satisfied the old check
-/// while having no actuator capability for `sync` to reconcile.
+/// The compiler asks the *model* whether each capability is declared rather
+/// than reading the pom or the filesystem: a project with
+/// `spring-boot-starter-actuator` spliced in by hand has no actuator
+/// capability for `sync` to reconcile.
 #[test]
 fn the_helm_chart_is_byte_identical() {
     let subjects = spring_subjects("k8s-chart");
@@ -2697,7 +2629,7 @@ fn the_helm_chart_is_byte_identical() {
     ];
     let mut rendered: Vec<Vec<String>> = Vec::new();
     for subject in &subjects {
-        // Refuses before its prerequisites, on both sides and by name.
+        // Refuses before its prerequisites, by name.
         let bare = subject.run(&["add", "k8s"]);
         assert!(
             !bare.status.success(),
@@ -2751,11 +2683,10 @@ fn the_helm_chart_is_byte_identical() {
     }
 }
 
-/// Formatting installs the same plugin and the same editor settings on both.
+/// Formatting installs the plugin and the editor settings together.
 ///
-/// `plan.md` P13.8's fourth and last capability, which completes canonical
-/// coverage at 25 of 25. Spotless enforces Java; `.editorconfig` is what stops
-/// an editor fighting it in every other file, so both halves are asserted.
+/// Spotless enforces Java; `.editorconfig` is what stops an editor fighting
+/// it in every other file, so both halves are asserted.
 ///
 /// The plugin *and* the formatter under it are pinned, and that is the point
 /// of checking the version here: a formatter that drifts rewrites files nobody
@@ -2796,7 +2727,7 @@ fn formatting_installs_identically() {
 }
 
 // ---------------------------------------------------------------------------
-// The sanitized real-project corpus — `simplify-sol.md` G5.
+// The sanitized real-project corpus.
 // ---------------------------------------------------------------------------
 
 /// Where the checked-in projects live. See `tests/corpus/README.md`.
@@ -2820,10 +2751,9 @@ struct CorpusEntry {
 ///
 /// **A row carries a list, because one project can mean several of these at
 /// once.** A real tree renames two layers, holds a third directory jails
-/// cannot classify, and has two candidates for a fourth -- all in one adopt.
-/// The first version of this took one expectation per entry, so an entry could
-/// state a quarter of what it was checked in to prove and the rest lived in
-/// the prose column where nothing reads it.
+/// cannot classify, and has two candidates for a fourth -- all in one adopt,
+/// and one expectation per entry would leave the rest in the prose column
+/// where nothing reads it.
 #[derive(Debug)]
 enum Adoption {
     /// One `[layout]` row adoption must write.
@@ -2943,51 +2873,31 @@ fn the_corpus_policy_covers_every_checked_in_project() {
     );
 }
 
-/// Every corpus project, through both implementations.
-///
-/// **"Both" is one binary unless `JAILS_LEGACY_BIN` names a second**, which
-/// only `scripts/verify-rewrite-g1-canary.sh` does. This used to fall back to
-/// `CARGO_BIN_EXE_jails` for the legacy side, so an ordinary run built two
-/// subjects from the same binary and compared it with itself: every assertion
-/// passed and none of them meant anything. That is the exact vacuity the canary
-/// script refuses when `JAILS_LEGACY_REVISION` resolves to `HEAD`, arriving by
-/// the other route. The legacy subject is now absent rather than fake, and
-/// [`legacy_binary`] refuses a value that is the binary under test.
+/// Every corpus project, through the product.
 ///
 /// **The corpus is bytes rather than a Rust table, and that is the point.**
 /// `write_adopted_fixture` covers one adopted shape and cannot grow without
 /// somebody escaping a project into string literals; this grows by dropping a
-/// directory in. `simplify-sol.md` G5 asks for "sanitized adopted and
-/// reader-edited Spring/plain projects", and a corpus that only a Rust
-/// programmer can extend is not one.
+/// directory in, so sanitized adopted and reader-edited projects can be added
+/// by somebody who is not a Rust programmer.
 ///
-/// What is compared is what the *reader* can see. The two implementations keep
-/// their generated Java in different places by design, so asserting on private
-/// state would compare the thing that is meant to differ; the questions are
-/// whether adoption left the reader's own bytes alone, whether it learned the
-/// layout they actually use, and whether a second run settles.
+/// What is compared is what the *reader* can see: whether adoption left the
+/// reader's own bytes alone, whether it learned the layout they actually use,
+/// and whether a second run settles.
 #[test]
 fn every_corpus_project_is_treated_the_same() {
     for entry in corpus_policy() {
         let source = corpus_root().join(&entry.name);
-        let subjects = legacy_binary()
-            .into_iter()
-            .map(|binary| ("legacy", binary))
-            .chain(std::iter::once((
-                "canonical",
-                OsString::from(env!("CARGO_BIN_EXE_jails")),
-            )))
-            .map(|(name, binary)| {
-                let root = temp_dir(&format!("corpus-{}-{name}", entry.name));
-                copy_corpus(&source, &root);
-                Subject {
-                    name,
-                    binary,
-                    record: root.join("pom.xml"),
-                    root,
-                }
-            })
-            .collect::<Vec<_>>();
+        let subjects = {
+            let root = temp_dir(&format!("corpus-{}", entry.name));
+            copy_corpus(&source, &root);
+            vec![Subject {
+                name: "jails",
+                binary: OsString::from(env!("CARGO_BIN_EXE_jails")),
+                record: root.join("pom.xml"),
+                root,
+            }]
+        };
 
         for subject in &subjects {
             let before = reader_tree(&subject.root);
@@ -3098,9 +3008,9 @@ fn every_corpus_project_is_treated_the_same() {
 
 /// Every reader-owned file under the project, by relative path.
 ///
-/// Deliberately excludes `.jails/` and `target/`: the first is each
-/// implementation's own bookkeeping, which is *meant* to differ between them,
-/// and comparing it would be comparing the thing under test with itself.
+/// Deliberately excludes `.jails/` and `target/`: the first is jails' own
+/// bookkeeping, and comparing it would be comparing the thing under test with
+/// itself.
 fn reader_tree(root: &Path) -> BTreeMap<String, String> {
     let mut files = BTreeMap::new();
     collect_reader_files(root, root, &mut files);

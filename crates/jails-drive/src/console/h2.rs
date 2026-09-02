@@ -45,9 +45,8 @@ pub enum Client {
 /// The `=` is matched explicitly rather than by prefix, so
 /// `spring.datasource.url-shadow` is not `spring.datasource.url` -- and
 /// whitespace is allowed *around* it, because `key = value` is a properties
-/// file and a reader writes one. The first spelling of this matched
-/// `key` then `=` with nothing between, so a hand-spaced line read as absent
-/// and `jails db` fell through to PostgreSQL on an H2 project.
+/// file and a reader writes one; a hand-spaced line read as absent would send
+/// `jails db` to PostgreSQL on an H2 project.
 fn property<'a>(properties: &'a str, key: &str) -> Option<&'a str> {
     properties
         .lines()
@@ -76,7 +75,7 @@ fn application_properties(project: &crate::model::Project) -> String {
 /// where a reader would look. A URL assembled at run time from an environment
 /// variable is invisible here, which is the same limit `jails routes` states
 /// about a path built at run time.
-pub fn declared_url(project: &crate::model::Project) -> Option<String> {
+pub(crate) fn declared_url(project: &crate::model::Project) -> Option<String> {
     let properties = application_properties(project);
     let url = property(&properties, "spring.datasource.url")?;
     url.starts_with("jdbc:h2:").then(|| url.to_string())

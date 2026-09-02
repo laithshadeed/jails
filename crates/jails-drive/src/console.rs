@@ -143,7 +143,8 @@ pub enum WebMode {
     Configured,
 }
 
-/// Compatibility entry point for the former console API.
+/// `jails console` with the default profile, no web server and no
+/// confirmation prompt.
 pub fn console(no_build: bool, args: &[String], debug: bool) -> Result<()> {
     spring_console(&[], None, WebMode::None, !no_build, false, args, debug)
 }

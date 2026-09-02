@@ -1,4 +1,4 @@
-//! Creating a Groovy Gradle project, which `new` could not do until now.
+//! Creating a Groovy Gradle project.
 //!
 //! ## Why this is written rather than fetched
 //!
@@ -22,7 +22,7 @@
 //! - **`buildscript {}` + `apply plugin:`** -- the classpath form. It is the
 //!   only one that works for a Boot 2.x pin, because `plugins { id ... version
 //!   ... }` resolves through the Gradle plugin portal against a marker
-//!   artifact, and the legacy builds people still run predate that being the
+//!   artifact, and the Boot 2 builds people still run predate that being the
 //!   normal spelling.
 //! - **`plugins {}` + Gradle's native bom support** -- for Boot 3 and later.
 //!
@@ -34,14 +34,14 @@
 //! checkout under `deps/` states one.
 //!
 //! Gradle's native `platform(...SpringBootPlugin.BOM_COORDINATES)` is the other
-//! option Boot documents, and it was tried first. It is rejected for a reason
-//! that only shows up once jails has to *operate on* what it wrote: the
-//! coordinate is an expression rather than a string literal, and `gradle.rs`
-//! answers `None` -- "this file says something I do not understand" -- for
-//! exactly that construct. That is the reader working correctly, and it made
-//! every `jails add` and `jails generate` refuse on a project `jails new` had
-//! produced thirty seconds earlier. A generator that writes a build its own
-//! tool cannot read is worse than one that writes an older spelling.
+//! option Boot documents. It is rejected for a reason that only shows up once
+//! jails has to *operate on* what it wrote: the coordinate is an expression
+//! rather than a string literal, and `gradle.rs` answers `None` -- "this file
+//! says something I do not understand" -- for exactly that construct. That is
+//! the reader working correctly, and it would make every `jails add` and
+//! `jails generate` refuse on a project `jails new` had just produced. A
+//! generator that writes a build its own tool cannot read is worse than one
+//! that writes an older spelling.
 //!
 //! ## The wrapper, and the one file jails cannot write
 //!
@@ -106,10 +106,9 @@ enum Shape {
 
 /// Everything the templates need, resolved once.
 ///
-/// `root` is in here rather than beside it at four call sites: rung 1's gate
-/// counts `root: &Path` parameters precisely because a fact travelling as a
-/// primitive next to the value that should own it is how two answers to one
-/// question appear in one run.
+/// `root` is in here rather than beside it at four call sites: a fact
+/// travelling as a primitive next to the value that should own it is how two
+/// answers to one question appear in one run.
 pub(super) struct Plan<'a> {
     pub root: &'a Path,
     pub name: &'a str,
@@ -161,7 +160,7 @@ fn shape(major: u32) -> Shape {
 /// Not a preference. `SpringBootPlugin.java:128` in `deps/spring-boot` throws
 /// outright below Gradle 8.14, so a Boot 4 project pinned to 8.5 fails at
 /// configuration time with a message about Gradle rather than about the pin.
-/// 8.5 is what the Boot 2.7 project this was built against runs on today.
+/// 8.5 is the distribution a Boot 2.7 project runs on.
 pub(super) fn default_gradle_version(major: u32) -> &'static str {
     match major < 3 {
         true => "8.5",
@@ -397,8 +396,8 @@ fn skipped_wrapper(gradle: &str, why: &str) -> Result<()> {
 ///
 /// Tags are always three segments (`v8.5.0`, `v8.14.3`) while a distribution is
 /// routinely named with two (`gradle-8.5-bin.zip`). Appending `.0`
-/// unconditionally is what makes `9.7.0` fetch from `v9.7.0.0`, which does not
-/// exist -- and a 404 here is not a hard failure, so it would have degraded
+/// unconditionally would make `9.7.0` fetch from `v9.7.0.0`, which does not
+/// exist -- and a 404 here is not a hard failure, so it would degrade
 /// silently into "no wrapper written" for every three-segment pin.
 fn wrapper_tag(gradle: &str) -> String {
     match gradle.split('.').count() {
@@ -472,8 +471,8 @@ pub(super) fn create(request: &super::Request<'_>, deps: &str, boot: &str) -> Re
     // seen fail. `--boot 2.7.18` pins Gradle 8.5 (Boot 2 does not run on 9.x)
     // while `--java` still defaults to the current release, and 8.5 dies on
     // JDK 26 before it reads the build script -- so `jails new --gradle
-    // --boot 2.7.18` wrote a project that could not be built at all, and
-    // `doctor` reported `ok jdk java 26 on PATH, project targets 26` over it.
+    // --boot 2.7.18` would write a project that cannot be built at all, with
+    // `doctor` reporting `ok jdk java 26 on PATH, project targets 26` over it.
     //
     // Only a *measured* failure refuses. A pairing jails has not run is
     // `Unknown` and passes, because refusing on a guess would block a reader
@@ -557,7 +556,7 @@ pub(super) fn create(request: &super::Request<'_>, deps: &str, boot: &str) -> Re
     write_build(&plan, &tree)?;
     write_wrapper(&plan, &tree, request.offline, request.debug)?;
 
-    crate::generate::write_new_file(
+    super::write::write_new_file(
         tree,
         &source.join(format!("{class}Application.java")),
         &crate::template::render(
@@ -565,7 +564,7 @@ pub(super) fn create(request: &super::Request<'_>, deps: &str, boot: &str) -> Re
             &[("package", &package), ("class", &class)],
         ),
     )?;
-    crate::generate::write_new_file(
+    super::write::write_new_file(
         tree,
         &tests.join(format!("{class}ApplicationTests.java")),
         &crate::template::render(
@@ -574,11 +573,10 @@ pub(super) fn create(request: &super::Request<'_>, deps: &str, boot: &str) -> Re
         ),
     )?;
     super::write_fixtures_dir(&tree)?;
-    // **The same seeding the Maven path does, for the same reason.** A Gradle
-    // project that only got `write_default_properties` was not canonical at
-    // all, and its six defaults sat in `application.properties` as reader-owned
-    // bytes -- so the first `jails add db`, which declares `server.shutdown`
-    // too, refused over a key `jails new` had written seconds earlier. As `prop`
+    // **The same seeding the Maven path does, for the same reason.** Six
+    // defaults written into `application.properties` as reader-owned bytes
+    // would make the first `jails add db`, which declares `server.shutdown`
+    // too, refuse over a key `jails new` had just written. As `prop`
     // declarations the compiler owns them and writes the file itself.
     super::seed::seed_canonical_model(
         &tree,
@@ -652,7 +650,7 @@ mod tests {
         }
     }
 
-    /// The shape the project this was built against actually has.
+    /// The Boot 2 shape.
     #[test]
     fn a_boot_2_pin_gets_the_buildscript_form() {
         let rendered =

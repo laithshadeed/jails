@@ -3,16 +3,14 @@
 //!
 //! ## The bar this has to clear
 //!
-//! `build.rs`'s header used to say jails never reads, writes, parses or
-//! invokes a Gradle build file, and the *reason* it gave outlives the rule:
-//! the worst outcome available is a confident wrong answer -- a tool that
+//! The worst outcome available is a confident wrong answer -- a tool that
 //! half-understands a build and reports a dependency the build does not have.
 //!
 //! So every reader here has three answers, not two. `Some(true)`,
 //! `Some(false)`, and `None` meaning **"this file says something I do not
 //! understand, so I am not going to guess."** A caller that turns `None` into
-//! `false` has reintroduced exactly the failure the old rule prevented, which
-//! is why the readers that matter return `Option` rather than `bool`.
+//! `false` has reintroduced exactly that failure, which is why the readers
+//! that matter return `Option` rather than `bool`.
 //!
 //! ## What it understands, exactly
 //!
@@ -34,9 +32,8 @@
 //!   important line in this module.
 //! - **The Spring Boot plugin**, from either spelling: the modern
 //!   `plugins { id 'org.springframework.boot' version '3.2.0' }` and the
-//!   legacy `buildscript { dependencies { classpath '...:VERSION' } }` that
-//!   projects generated before Gradle 2.1 still carry. `minicom-public/spring`
-//!   is the legacy one, which is why both are here from the start.
+//!   older `buildscript { dependencies { classpath '...:VERSION' } }` that
+//!   projects generated before Gradle 2.1 still carry.
 //! - **The Java release**, from `sourceCompatibility`/`targetCompatibility` or
 //!   from a `java { toolchain { languageVersion = JavaLanguageVersion.of(N) } }`
 //!   block. The toolchain wins when both are present, because Gradle resolves
@@ -193,9 +190,8 @@ pub(crate) fn flavor(text: &str) -> Flavor {
 /// The Spring Boot major version, from either spelling of the plugin.
 ///
 /// `None` means no Spring Boot plugin *this module can see*. Both spellings
-/// are here from the start because the legacy `buildscript` one is what
-/// `minicom-public/spring` uses, and a reader that only knew the modern
-/// `plugins {}` block would report a Spring project as plain -- which changes
+/// are read because a reader that knows only the modern `plugins {}` block
+/// reports an older `buildscript` Spring project as plain -- which changes
 /// every template jails renders into it.
 pub(crate) fn spring_boot_major(text: &str) -> Option<u32> {
     boot_version(text)?.split('.').next()?.parse().ok()
@@ -211,15 +207,14 @@ pub(crate) fn boot_version(text: &str) -> Option<String> {
 /// disagree about which bytes are the version.
 ///
 /// Two functions locating the same thing by two routes is how a splice comes
-/// to rewrite something the reader never reported -- `pom.rs` learned that
-/// once and this module is not going to learn it again.
+/// to rewrite something the reader never reported.
 fn boot_version_span(text: &str) -> Option<std::ops::Range<usize>> {
     // Blanking finds *structure* -- which braces open which block. It is the
     // wrong tool for reading a *value*, because every value here lives inside
     // a string literal and blanking is precisely what erases those. So the
     // block is located in the blanked copy and then read out of the original,
-    // which the shared offsets make safe. Getting this backwards is what made
-    // the first version of this function report every Gradle project as plain.
+    // which the shared offsets make safe. Backwards, every Gradle project
+    // reads as plain.
     if let Some(body) = top_level_body(text, "plugins") {
         let region = &text[body.clone()];
         if let Some(at) = region.find("org.springframework.boot")
@@ -309,7 +304,7 @@ pub const WRAPPER: &str = "gradle/wrapper/gradle-wrapper.properties";
 /// requirements name "Gradle 8.x (8.14 or later) and 9.x" -- so this is the
 /// intersection of what the JDK allows and what the framework supports, read
 /// off the checkout rather than remembered.
-pub const TARGET_GRADLE: &str = "9.7.0";
+pub(crate) const TARGET_GRADLE: &str = "9.7.0";
 
 /// Whether a Gradle distribution can *launch* on a JDK release.
 ///
@@ -342,13 +337,9 @@ pub enum Launches {
     Unknown,
 }
 
-/// Each pairing below was run on this machine, and the evidence is the run.
-///
-/// - `9.7.0` on 26 -- `./gradlew --version` reports `Launcher JVM: 26.0.2`.
-/// - `8.5` on 26 -- `Unsupported class file major version 70`, which is Java
-///   26's own class-file major, before any task is selected.
-/// - `8.5` on 21 -- `minicom/old/mc-01-06-2026/spring` builds green under
-///   `JAVA_HOME` pointed at `openjdk-21.0.2`.
+/// Each pairing is measured, not recalled: `9.7.0` launches on 26; `8.5` on 26
+/// dies with `Unsupported class file major version 70`, Java 26's own
+/// class-file major, before any task is selected; `8.5` on 21 builds green.
 ///
 /// The releases between 22 and 25 are **not** measured against 8.5, so they
 /// are `Unknown` rather than assumed bad. Adding a row means running it.
@@ -403,7 +394,7 @@ fn wrapper_version_span(text: &str) -> Option<std::ops::Range<usize>> {
 /// is the reader's choice (`-all` carries the sources an IDE indexes), and
 /// silently swapping it would be an unrelated change riding along with this
 /// one.
-pub fn with_wrapper_version(text: &str, version: &str) -> Option<String> {
+pub(crate) fn with_wrapper_version(text: &str, version: &str) -> Option<String> {
     let span = wrapper_version_span(text)?;
     if text[span.clone()] == *version {
         return None;
@@ -418,7 +409,7 @@ pub fn with_wrapper_version(text: &str, version: &str) -> Option<String> {
 /// `None` when it is already that version, or when the plugin's version is not
 /// a literal this module can locate -- a version catalog reference, say. A
 /// build whose version jails cannot *read* is one it must not rewrite.
-pub fn with_boot_version(text: &str, version: &str) -> Option<String> {
+pub(crate) fn with_boot_version(text: &str, version: &str) -> Option<String> {
     let span = boot_version_span(text)?;
     if text[span.clone()] == *version {
         return None;
@@ -439,7 +430,7 @@ pub fn with_boot_version(text: &str, version: &str) -> Option<String> {
 ///
 /// A project that already has a toolchain block keeps it and only the number
 /// moves.
-pub fn with_release_level(text: &str, release: u32) -> Option<String> {
+pub(crate) fn with_release_level(text: &str, release: u32) -> Option<String> {
     if let Some(body) = top_level_body(text, "java")
         && let Some(inner) = top_level_body(&text[body.clone()], "toolchain")
     {
@@ -500,7 +491,7 @@ pub fn with_release_level(text: &str, release: u32) -> Option<String> {
 /// discover any tests to execute."* A Boot 2 project got away without it
 /// because Gradle 8's default framework found the JUnit 4 runner; a Boot 4
 /// project's tests are JUnit 5 and simply do not run.
-pub fn with_junit_platform(text: &str) -> Option<String> {
+pub(crate) fn with_junit_platform(text: &str) -> Option<String> {
     if blanked(text).contains("useJUnitPlatform") {
         return None;
     }
@@ -753,37 +744,6 @@ fn trailing_insert_point(text: &str, body: std::ops::Range<usize>) -> usize {
     }
 }
 
-/// Take one dependency back out, leaving every other byte alone.
-pub(crate) fn remove_dependency(
-    text: &str,
-    group_id: &str,
-    artifact_id: &str,
-) -> Result<Option<String>> {
-    let Some(body) = top_level_body(text, "dependencies") else {
-        return Ok(None);
-    };
-    let scan = blanked(text);
-    for (offset, line) in line_spans(&scan[body.clone()]) {
-        let start = body.start + offset;
-        let original = &text[start..start + line.len()];
-        let Some(found) = coordinate_of(original) else {
-            continue;
-        };
-        if found.group_id != group_id || found.artifact_id != artifact_id {
-            continue;
-        }
-        let end = match text[start + line.len()..].starts_with('\n') {
-            true => start + line.len() + 1,
-            false => start + line.len(),
-        };
-        let mut out = String::with_capacity(text.len());
-        out.push_str(&text[..start]);
-        out.push_str(&text[end..]);
-        return Ok(Some(out));
-    }
-    Ok(None)
-}
-
 /// The class the packaged jar starts, if the build names one.
 ///
 /// Both spellings, for the same reason both plugin spellings are read:
@@ -805,47 +765,12 @@ pub(crate) fn main_class(text: &str) -> Option<String> {
     None
 }
 
-/// Point the packaged jar at a different class.
-///
-/// `None` when the build names no entry point at all -- a Spring Boot build
-/// where the plugin finds `@SpringBootApplication` itself. Same contract as
-/// `pom::with_main_class`, so the projection does not have to know which build
-/// file it is editing.
-pub(crate) fn with_main_class(text: &str, fqcn: &str) -> Option<String> {
-    for block in ["bootJar", "springBoot", "application"] {
-        let Some(body) = top_level_body(text, block) else {
-            continue;
-        };
-        let region = &blanked(text)[body.clone()];
-        for key in ["mainClass", "mainClassName"] {
-            let Some(at) = region.find(key) else {
-                continue;
-            };
-            let absolute = body.start + at + key.len();
-            let Some(quote_at) = text[absolute..].find(['\'', '"']) else {
-                continue;
-            };
-            let open = absolute + quote_at;
-            let quote = text.as_bytes()[open];
-            let Some(close) = text[open + 1..].find(quote as char) else {
-                continue;
-            };
-            let mut out = String::with_capacity(text.len() + fqcn.len());
-            out.push_str(&text[..open + 1]);
-            out.push_str(fqcn);
-            out.push_str(&text[open + 1 + close..]);
-            return Some(out);
-        }
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// `minicom-public/spring`, which is the project this module was written
-    /// against. Every field it exercises is one a template reads.
+    /// A Boot 2 build in the older `buildscript` spelling. Every field it
+    /// exercises is one a template reads.
     const MINICOM: &str = r#"buildscript {
     repositories {
         mavenCentral()
@@ -878,14 +803,11 @@ dependencies {
 }
 "#;
 
-    /// The four edits, against the file they were discovered on.
-    ///
-    /// Every one of them is here because a real `./gradlew build` on JDK 26
-    /// failed without it, in this order: unknown property
-    /// `sourceCompatibility`, then no tests discovered. The versions are
-    /// checked rather than assumed -- reading the result back through this
-    /// module's own readers is what stops a splice that lands somewhere the
-    /// reader never looks.
+    /// The four edits, in the order `./gradlew build` on JDK 26 fails without
+    /// them: unknown property `sourceCompatibility`, then no tests
+    /// discovered. The versions are checked rather than assumed -- reading the
+    /// result back through this module's own readers is what stops a splice
+    /// that lands somewhere the reader never looks.
     #[test]
     fn the_four_edits_that_take_a_boot_2_gradle_build_to_jdk_26() {
         let out = with_boot_version(MINICOM, "4.1.0").expect("the legacy spelling is rewritable");
@@ -994,9 +916,9 @@ dependencies {
         );
     }
 
-    /// The legacy `buildscript` spelling is what minicom uses. A reader that
-    /// only knew `plugins {}` would report a Spring project as plain, which
-    /// changes every template jails renders into it.
+    /// A reader that only knew `plugins {}` would report an older
+    /// `buildscript` Spring project as plain, which changes every template
+    /// jails renders into it.
     #[test]
     fn the_boot_version_is_read_from_the_legacy_buildscript_spelling() {
         assert_eq!(boot_version(MINICOM).as_deref(), Some("2.7.18"));
@@ -1159,23 +1081,6 @@ dependencies {
         assert!(out.starts_with("buildscript {"));
     }
 
-    #[test]
-    fn remove_is_the_inverse_of_add() {
-        let with = add_dependency_ref(MINICOM, assertj_ref()).unwrap().unwrap();
-        let without = remove_dependency(&with, "org.assertj", "assertj-core")
-            .unwrap()
-            .unwrap();
-        assert_eq!(without, MINICOM);
-    }
-
-    #[test]
-    fn removing_something_absent_changes_nothing() {
-        assert_eq!(
-            remove_dependency(MINICOM, "org.assertj", "assertj-core").unwrap(),
-            None
-        );
-    }
-
     /// A brace inside a string must not open a block, and a `dependencies`
     /// inside a comment must not be found.
     #[test]
@@ -1185,346 +1090,11 @@ dependencies {
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].artifact_id, "h2");
     }
-
-    #[test]
-    fn the_entry_point_is_read_and_rewritten_in_place() {
-        let build = "bootJar {\n    mainClass = 'com.example.App'\n}\n";
-        assert_eq!(main_class(build).as_deref(), Some("com.example.App"));
-        let moved = with_main_class(build, "com.example.cli.AdminCli").unwrap();
-        assert_eq!(
-            main_class(&moved).as_deref(),
-            Some("com.example.cli.AdminCli")
-        );
-    }
-
-    /// A build naming no entry point is one where the Boot plugin finds
-    /// `@SpringBootApplication` itself. Inventing the element would be jails
-    /// deciding something nobody asked it to.
-    #[test]
-    fn a_build_with_no_entry_point_is_left_alone() {
-        assert_eq!(main_class(MINICOM), None);
-        assert_eq!(with_main_class(MINICOM, "com.example.App"), None);
-    }
 }
 
 // ---------------------------------------------------------------------------
 // Build features: what a Maven plugin *does*, said in Gradle
 // ---------------------------------------------------------------------------
 
-/// The Gradle half of a [`BuildFeature`].
-///
-/// The vocabulary lives in `jails-protocol` -- a claim is keyed by the feature
-/// (`pending.md` §3), so the enum has to be below both build tools rather than
-/// beside one of them. What stays here is what only Gradle knows: the marker,
-/// the `plugins {}` entry, and the block.
-///
-/// The four matches below are exhaustive over `BuildFeature` on purpose.
-/// Adding a variant is a compile error here until somebody writes the Gradle
-/// side, which is a better guarantee than the run-time refusal it replaced:
-/// `require_renderable_plugins` existed to catch a Maven plugin with no known
-/// Gradle equivalent, and there is no longer a coordinate to fail to
-/// recognise.
-use jails_protocol::feature::BuildFeature as Feature;
-
-/// The marker comment that owns a block jails wrote into a file it does not
-/// own. Same contract as `codemod::Marked`, spelled here because a Groovy
-/// build file is not a `# comment` format.
-fn marker(feature: Feature) -> &'static str {
-    match feature {
-        Feature::IntegrationTests => "jails:integration-tests",
-        Feature::Coverage => "jails:coverage",
-        Feature::Formatting => "jails:formatting",
-    }
-}
-
-/// The `plugins {}` entry a feature needs, when it needs one.
-///
-/// `None` for everything Gradle already bundles. The line is an exact string
-/// so removal can match it byte-for-byte: it carries no marker, because a
-/// `//` comment inside `plugins {}` is legal but reads as noise in a block
-/// people scan, and an edited line is the reader's.
-fn plugin_line(feature: Feature) -> Option<&'static str> {
-    match feature {
-        // Kept in step with the Maven plugin `add format` splices, but *not*
-        // the same number: the two plugins are versioned separately (Maven
-        // 3.10.0 against Gradle 8.10.0 on the same 2026-08-17 release). The
-        // formatter underneath them is what has to agree, and that is pinned
-        // identically in both -- a formatter that drifts version rewrites
-        // files nobody touched.
-        Feature::Formatting => Some("id 'com.diffplug.spotless' version '8.10.0'"),
-        Feature::IntegrationTests | Feature::Coverage => None,
-    }
-}
-
-/// What jails writes for a feature, as a whole marked block.
-fn body(feature: Feature) -> &'static str {
-    match feature {
-        // The exact division of labour Failsafe gives Maven: `test` runs the
-        // unit tests, a separate task runs `*IT`, and `check` depends on both
-        // so a failing integration test fails the build. Without the
-        // `excludeTestsMatching`, `*IT` classes would run *twice* -- once
-        // unqualified and once here -- which is how a flaky integration test
-        // gets blamed on the wrong run.
-        Feature::IntegrationTests => {
-            "tasks.named('test') {\n    \
-                 useJUnitPlatform()\n    \
-                 filter { excludeTestsMatching '*IT' }\n\
-             }\n\n\
-             tasks.register('integrationTest', Test) {\n    \
-                 useJUnitPlatform()\n    \
-                 testClassesDirs = sourceSets.test.output.classesDirs\n    \
-                 classpath = sourceSets.test.runtimeClasspath\n    \
-                 filter { includeTestsMatching '*IT' }\n    \
-                 shouldRunAfter tasks.named('test')\n\
-             }\n\n\
-             tasks.named('check') {\n    \
-                 dependsOn tasks.named('integrationTest')\n\
-             }\n"
-        }
-        // `jacoco` ships with Gradle, so unlike Spotless there is no version
-        // to pin and no `plugins {}` block to reach into.
-        Feature::Coverage => {
-            "apply plugin: 'jacoco'\n\n\
-             tasks.named('jacocoTestCoverageVerification') {\n    \
-                 violationRules {\n        \
-                     rule {\n            \
-                         limit {\n                \
-                             counter = 'LINE'\n                \
-                             minimum = 0.70\n            \
-                         }\n        \
-                     }\n    \
-                 }\n\
-             }\n\n\
-             tasks.named('check') {\n    \
-                 dependsOn tasks.named('jacocoTestCoverageVerification')\n\
-             }\n"
-        }
-        // No `check` wiring: the Gradle plugin adds `spotlessCheck` to `check`
-        // itself, so repeating it here would be a second authority for the
-        // same fact. `spotlessApply` is what `jails fmt` runs.
-        //
-        // palantir-java-format at the same version the Maven side pins, and
-        // `removeUnusedImports` for the same reason: `write_new_file`
-        // normalises imports at write time, so a formatter that reordered them
-        // differently would make a freshly generated project fail its own
-        // `check`.
-        Feature::Formatting => {
-            "spotless {\n    \
-                 java {\n        \
-                     palantirJavaFormat('2.97.0')\n        \
-                     removeUnusedImports()\n    \
-                 }\n\
-             }\n"
-        }
-    }
-}
-
-/// Whether this build already carries jails' block for a feature.
-pub(crate) fn has_feature(text: &str, feature: Feature) -> bool {
-    text.contains(&format!("// {}", marker(feature)))
-}
-
-/// Add a feature's block, or report that there is nothing to do.
-///
-/// Appended as a marked block rather than spliced into an existing one, for
-/// the reason `codemod.rs` gives about every other file jails does not own:
-/// the marker is what makes removal exact, and what stops a second `add` from
-/// writing the block twice.
-pub(crate) fn add_feature(text: &str, feature: Feature) -> Result<Option<String>> {
-    if has_feature(text, feature) {
-        return Ok(None);
-    }
-    // Two edits at opposite ends of the file for one feature, when the plugin
-    // is not one Gradle bundles. The `plugins {}` entry goes first so a
-    // failure there leaves the file untouched rather than half-written.
-    let text = match plugin_line(feature) {
-        Some(line) => add_plugin_line(text, line)?,
-        None => text.to_string(),
-    };
-    let name = marker(feature);
-    let separator = match text.ends_with('\n') || text.is_empty() {
-        true => "",
-        false => "\n",
-    };
-    Ok(Some(format!(
-        "{text}{separator}\n// {name}\n{}// /{name}\n",
-        body(feature)
-    )))
-}
-
-/// Splice one `id ... version ...` into the build's `plugins {}` block.
-///
-/// **Refuses when there is no such block**, rather than writing one. A
-/// `plugins {}` block is only legal as the first statement of the script
-/// (after an optional `buildscript`), so jails would have to decide where the
-/// top of somebody else's build file is -- and a `plugins {}` in the wrong
-/// place is a build that no longer evaluates at all, which is a worse outcome
-/// than a capability that says it cannot.
-fn add_plugin_line(text: &str, line: &str) -> Result<String> {
-    if text.contains(line) {
-        return Ok(text.to_string());
-    }
-    let Some(body) = top_level_body(text, "plugins") else {
-        return Err(format!(
-            "`{FILE}` has no `plugins {{ }}` block, and this capability needs `{line}` in \
-             one.\n       fix: add the block yourself -- it has to be the first statement in \
-             the script, and jails will not guess where the top of your build file is. Then \
-             re-run this command."
-        )
-        .into());
-    };
-    let spliced = format!("{}{line}\n", indent_of(text, body.clone()));
-    let at = trailing_insert_point(text, body);
-    let mut out = String::with_capacity(text.len() + spliced.len());
-    out.push_str(&text[..at]);
-    out.push_str(&spliced);
-    out.push_str(&text[at..]);
-    Ok(out)
-}
-
-/// Take a feature's block back out, leaving every other byte alone.
-///
-/// Including the `plugins {}` entry, when the feature had one -- and only when
-/// it is still byte-identical to what jails wrote. An edited line is the
-/// reader's, which is the same rule the property resource applies to the
-/// comment it writes above a key.
-pub(crate) fn remove_feature(text: &str, feature: Feature) -> Option<String> {
-    let text = match plugin_line(feature) {
-        Some(line) => remove_plugin_line(text, line),
-        None => text.to_string(),
-    };
-    let text = text.as_str();
-    let name = marker(feature);
-    let open = format!("// {name}\n");
-    let close = format!("// /{name}\n");
-    let start = text.find(&open)?;
-    let end = text[start..].find(&close)? + start + close.len();
-    let mut out = String::with_capacity(text.len());
-    out.push_str(&text[..start]);
-    out.push_str(&text[end..]);
-    // The blank line that separated the block from what came before goes with
-    // it, so add-then-remove is byte-for-byte the original.
-    Some(out.trim_end().to_string() + "\n")
-}
-
-/// The inverse of [`add_plugin_line`], and a no-op when the line is not there
-/// exactly as jails wrote it.
-fn remove_plugin_line(text: &str, line: &str) -> String {
-    let mut kept: Vec<&str> = Vec::new();
-    let mut removed = false;
-    for one in text.split_inclusive('\n') {
-        if !removed && one.trim() == line {
-            removed = true;
-            continue;
-        }
-        kept.push(one);
-    }
-    kept.concat()
-}
-
 #[cfg(test)]
-mod feature_tests {
-    use super::*;
-
-    const BARE: &str = "plugins {\n    id 'java'\n}\n";
-
-    #[test]
-    fn a_failsafe_claim_becomes_a_gradle_integration_test_task() {
-        assert_eq!(
-            Feature::of_maven_plugin("maven-failsafe-plugin"),
-            Some(Feature::IntegrationTests)
-        );
-        let out = add_feature(BARE, Feature::IntegrationTests)
-            .unwrap()
-            .unwrap();
-        // The division of labour Failsafe gives Maven, and the reason the
-        // exclude matters: without it `*IT` runs twice.
-        assert!(
-            out.contains("tasks.register('integrationTest', Test)"),
-            "{out}"
-        );
-        assert!(out.contains("excludeTestsMatching '*IT'"), "{out}");
-        assert!(out.contains("includeTestsMatching '*IT'"), "{out}");
-        assert!(
-            out.contains("dependsOn tasks.named('integrationTest')"),
-            "{out}"
-        );
-    }
-
-    #[test]
-    fn a_plugin_with_no_gradle_equivalent_renders_nothing() {
-        assert_eq!(Feature::of_maven_plugin("maven-surefire-plugin"), None);
-        assert_eq!(Feature::of_maven_plugin("maven-enforcer-plugin"), None);
-    }
-
-    /// The one feature that edits both ends of the file, and the reason it
-    /// has to: Spotless is not bundled with Gradle, so it needs an
-    /// `id ... version` inside `plugins {}` -- a block that is only legal near
-    /// the top, which is the opposite end from where a marked block goes.
-    #[test]
-    fn formatting_reaches_the_plugins_block_and_comes_back_out_of_it() {
-        assert_eq!(
-            Feature::of_maven_plugin("spotless-maven-plugin"),
-            Some(Feature::Formatting)
-        );
-        let out = add_feature(BARE, Feature::Formatting).unwrap().unwrap();
-        assert!(
-            out.contains("    id 'com.diffplug.spotless' version '8.10.0'\n"),
-            "{out}"
-        );
-        assert!(out.contains("palantirJavaFormat('2.97.0')"), "{out}");
-        // No `check` wiring: the Gradle plugin adds `spotlessCheck` to `check`
-        // itself, and a second authority for one fact is how they drift.
-        assert!(
-            !out.contains("dependsOn tasks.named('spotlessCheck')"),
-            "{out}"
-        );
-        // Byte-for-byte back, which is what makes `remove` the exact inverse.
-        assert_eq!(
-            remove_feature(&out, Feature::Formatting).as_deref(),
-            Some(BARE)
-        );
-    }
-
-    /// A build with no `plugins {}` block refuses rather than growing one.
-    ///
-    /// The block is only legal as the script's first statement, so writing one
-    /// means deciding where the top of somebody else's build file is -- and
-    /// getting that wrong is a build that no longer evaluates at all.
-    #[test]
-    fn formatting_refuses_a_build_with_no_plugins_block() {
-        let why = add_feature("apply plugin: 'java'\n", Feature::Formatting).unwrap_err();
-        assert!(why.contains("plugins {"), "{why}");
-        assert!(why.contains("fix:"), "{why}");
-    }
-
-    #[test]
-    fn adding_a_feature_twice_changes_nothing_the_second_time() {
-        let once = add_feature(BARE, Feature::Coverage).unwrap().unwrap();
-        assert_eq!(add_feature(&once, Feature::Coverage).unwrap(), None);
-    }
-
-    #[test]
-    fn remove_is_the_inverse_of_add() {
-        let with = add_feature(BARE, Feature::IntegrationTests)
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            remove_feature(&with, Feature::IntegrationTests).as_deref(),
-            Some(BARE)
-        );
-    }
-
-    #[test]
-    fn two_features_stack_and_come_out_independently() {
-        let both = add_feature(BARE, Feature::IntegrationTests)
-            .unwrap()
-            .unwrap();
-        let both = add_feature(&both, Feature::Coverage).unwrap().unwrap();
-        assert!(has_feature(&both, Feature::IntegrationTests));
-        assert!(has_feature(&both, Feature::Coverage));
-        let left = remove_feature(&both, Feature::Coverage).unwrap();
-        assert!(has_feature(&left, Feature::IntegrationTests), "{left}");
-        assert!(!has_feature(&left, Feature::Coverage), "{left}");
-    }
-}
+mod feature_tests {}

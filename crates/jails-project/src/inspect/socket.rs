@@ -11,10 +11,9 @@ use super::{Route, line_of};
 /// Every `registry.addHandler(<handler>, "<path>"[, "<path>"...])` in a
 /// `WebSocketConfigurer`.
 ///
-/// `bugs.md` B56: `jails g socket Chat` writes the registration and `jails
-/// routes` then reported "No routes found under src/main/java". A route jails
-/// emitted and cannot see is worse than a gap -- the reader has no way to tell
-/// an unlisted route from an absent one.
+/// `jails g socket Chat` writes this registration, and a route jails emitted
+/// and cannot see is worse than a gap -- the reader has no way to tell an
+/// unlisted route from an absent one.
 ///
 /// The verb is `WS`: a WebSocket endpoint answers an HTTP GET carrying an
 /// `Upgrade` header and then stops being HTTP, so reporting `GET` would put it

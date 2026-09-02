@@ -11,10 +11,8 @@
 //! annotation is rewritten member by member rather than replaced, and
 //! [`unsplice_import`] puts it back exactly as it was.
 //!
-//! It lives here, below both the recipes and the projection, because two
-//! engines now perform this edit and a second copy of it would drift. It is
-//! text in and text out: nothing here reads or writes a file, and nothing here
-//! knows what a capability is.
+//! It is text in and text out: nothing here reads or writes a file, and
+//! nothing here knows what a capability is.
 
 /// `@Import(Class.class)`, the form this module reads and writes.
 pub(crate) fn import_annotation(class: &str) -> String {
@@ -56,13 +54,13 @@ fn render_import_annotation(line: &str, members: &[String]) -> String {
 /// package). `None` when the anchor is missing.
 pub fn splice_import(source: &str, class: &str, extra: &str) -> Option<String> {
     let annotation = import_annotation(class);
-    // **Located through `blanked`, and the offset then used against `source`.**
+    // Located through `blanked`, and the offset then used against `source`.
     // A raw `source.find` matches the `@SpringBootTest` inside a Javadoc
     // example -- which `TestcontainersConfig`'s own docs contain -- and would
     // splice the `@Import` into the middle of a comment. `is_spring_boot_test`
-    // below already reads through `blanked` for exactly this reason; the two
-    // have to agree about where an annotation is, or one of them decides a
-    // file qualifies and the other decides where to edit it.
+    // reads through `blanked` too; the two have to agree about where an
+    // annotation is, or one decides a file qualifies and the other decides
+    // where to edit it.
     let anchor = crate::text::blanked(source).find("@SpringBootTest")?;
     let line_start = source[..anchor].rfind('\n').map(|i| i + 1).unwrap_or(0);
     let target = format!("{class}.class");
@@ -149,13 +147,10 @@ pub fn unsplice_import(source: &str, class: &str, extra: &str) -> Option<String>
 
 /// Whether this source declares a `@SpringBootTest`.
 ///
-/// **Read through [`crate::text::blanked`], which is the whole point.** A raw
-/// substring search finds `@SpringBootTest` inside a Javadoc example — and
-/// `TestcontainersConfig`'s own Javadoc contains exactly that, so a naive
-/// check made `add db` count its container config as a test needing the config
-/// imported into itself. `CLAUDE.md` records the same defect from the other
-/// direction: two of three walks of `src/test/java` matched a raw substring,
-/// which is how `doctor` came to name the wrong container config.
+/// Read through [`crate::text::blanked`]: a raw substring search finds
+/// `@SpringBootTest` inside a Javadoc example -- `TestcontainersConfig`'s own
+/// Javadoc contains exactly that -- and counts the container config as a test
+/// needing the config imported into itself.
 ///
 /// It answers a narrower question than `java::types_annotated_with`, which
 /// also checks that the annotation sits on the *top-level type*. Here the
@@ -205,10 +200,9 @@ class DemoApplicationTests {
         assert!(!round_trip.contains("testkit.PostgresContainerConfig"));
     }
 
-    /// A `@SpringBootTest` written in a Javadoc example is prose, and the
-    /// splice used to anchor on it -- putting `@Import(...)` inside the
-    /// comment, where it annotates nothing and the class it was meant for
-    /// still has no container.
+    /// A `@SpringBootTest` written in a Javadoc example is prose; anchoring
+    /// on it puts `@Import(...)` inside the comment, where it annotates
+    /// nothing and the class it was meant for still has no container.
     #[test]
     fn splice_import_ignores_a_spring_boot_test_named_in_a_comment() {
         let source = r#"package com.example.demo;

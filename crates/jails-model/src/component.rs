@@ -148,9 +148,9 @@ impl ComponentKind {
     /// why a component named `BillingService` is refused: the kind would add
     /// `Service` to it and the file would be `BillingServiceService`. It lives
     /// on the kind rather than in the linker because `derived::records` needs
-    /// the same answer -- §18.4 makes it one of the values `model explain`
-    /// shows, and a second copy of a suffix table is a second answer.
-    pub fn primary_type(self, name: &str) -> String {
+    /// the same answer -- JDL v1 §18.4 makes it one of the values `model
+    /// explain` shows, and a second copy of a suffix table is a second answer.
+    pub(crate) fn primary_type(self, name: &str) -> String {
         match self {
             Self::Service => format!("{name}Service"),
             Self::Controller => format!("{name}Controller"),

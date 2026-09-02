@@ -17,10 +17,9 @@
 //! `[[capability]]` is the third table and the same half as the second: a
 //! capability the caller gave a `--name` or a `--package` cannot be written as
 //! one string, because `add csv --name Order` and `add csv --name Invoice` are
-//! two capabilities and `["csv", "csv"]` says nothing about which. plan.md
-//! §R1.1 fixes the shape; [`crate::capability::Declaration`] is the value, and
-//! which of the two shapes a declaration lands in is its own decision rather
-//! than the caller's.
+//! two capabilities and `["csv", "csv"]` says nothing about which.
+//! [`crate::capability::Declaration`] is the value, and which of the two
+//! shapes a declaration lands in is its own decision rather than the caller's.
 //!
 //! Still deliberately not a general config file -- no template overrides, no
 //! plugin hooks, no per-kind paths. All three tables are **closed sets**: the
@@ -62,21 +61,18 @@ use crate::spec::layout;
 /// The file, at the project root next to `pom.xml`.
 pub const FILE: &str = "jails.toml";
 
-/// Every layer name a project may rename, and the default it replaces.
+/// Every layer, in the order a reader wants them -- domain first, adapters
+/// last -- with the heading `stats` prints for it.
 ///
 /// Kept as a list rather than derived from the `layout` module so that adding
 /// a constant there without deciding whether it is configurable is a
 /// compile-time-visible omission rather than a silent one.
-/// Every layer, in the order a reader wants them -- domain first, adapters
-/// last -- with the heading `stats` prints for it.
 ///
-/// **One list, not two.** `inspect.rs` used to keep its own copy of this and
-/// its own labels, which meant `jails stats` reported against jails' default
-/// package names: a project with `adapters = "persistence"` had its adapters
-/// counted as "Other", and the two layers this list has that the copy did not
-/// (`cli`, `messaging`) were never counted at all. A second list of the same
-/// thing is how that happens, so the validation list below is derived from
-/// this one rather than written out again.
+/// **One list, not two.** A second copy reports against jails' *default*
+/// package names: a project with `adapters = "persistence"` has its adapters
+/// counted as "Other", and a layer the copy lacks is never counted at all. The
+/// validation list below is derived from this one rather than written out
+/// again.
 pub(crate) const LAYERS_IN_ORDER: &[(&str, &str)] = &[
     (layout::DOMAIN, "Domain"),
     (layout::APP, "Ports"),
@@ -122,7 +118,7 @@ const LAYOUT_TABLE: &str = "layout";
 const PROJECT_TABLE: &str = "project";
 /// The one key in it.
 const CAPABILITIES_KEY: &str = "capabilities";
-/// The repeated table a parameterised capability uses, per plan.md §R1.1.
+/// The repeated table a parameterised capability uses.
 /// `[project] capabilities` keeps the conventional singleton and default
 /// instances; anything carrying a `--name` or a `--package` needs somewhere to
 /// put it, and a string array has nowhere.
@@ -135,8 +131,8 @@ const CAPABILITY_KEYS: [&str; 3] = ["kind", "name", "package"];
 /// A project's layout overrides: default layer name -> the name to use.
 ///
 /// An absent file is an empty map, not an error -- the overwhelming majority
-/// of projects never have one, and `Config::default()` behaving exactly like
-/// today's hardcoded layout is what keeps this change from touching them.
+/// of projects never have one, and `Config::default()` is the built-in
+/// layout.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Config {
     layout: HashMap<String, String>,
@@ -440,250 +436,6 @@ fn capability_named(label: &str, lineno: usize) -> Result<Capability> {
         })?)
 }
 
-/// The same edit as text, for a caller holding the bytes rather than a root.
-///
-/// `None` means the change was already true. This is the splice; the two
-/// root-taking functions above are the file half of it, so a projection and a
-/// write cannot disagree about what the file becomes.
-pub(crate) fn edited_capabilities(
-    text: &str,
-    change: impl FnOnce(&mut Vec<String>) -> bool,
-) -> Result<Option<String>> {
-    let mut labels = Config::parse(text)
-        .map_err(|e| format!("{FILE}: {e}"))?
-        .array;
-    if !change(&mut labels) {
-        return Ok(None);
-    }
-    let rendered = format!("{CAPABILITIES_KEY} = {}", render_string_array(&labels));
-    Ok(Some(match replace_capabilities_line(text, &rendered) {
-        Some(updated) => updated,
-        None => append_project_table(text, &rendered),
-    }))
-}
-
-/// Declare one capability in this text, or `None` when it already is.
-///
-/// Which of the file's two shapes it lands in is the declaration's to decide,
-/// not the caller's: bare goes in `[project] capabilities`, parameterised gets
-/// a `[[capability]]` table. That is why this takes a [`Declaration`] rather
-/// than a label -- a label cannot say which.
-pub(crate) fn with_capability(text: &str, declaration: &Declaration) -> Result<Option<String>> {
-    declaration.validate().map_err(|e| format!("{FILE}: {e}"))?;
-    let config = Config::parse(text).map_err(|e| format!("{FILE}: {e}"))?;
-    if config.declarations.contains(declaration) {
-        return Ok(None);
-    }
-    if declaration.is_plain() {
-        let label = declaration.kind.label();
-        return edited_capabilities(text, |labels| {
-            if labels.iter().any(|l| l == label) {
-                return false;
-            }
-            labels.push(label.to_string());
-            true
-        });
-    }
-    Ok(Some(insert_capability_table(text, declaration)?))
-}
-
-/// Take one capability declaration back out.
-///
-/// The exact inverse: a bare one leaves the array, a parameterised one takes
-/// its whole table with it. A declaration the file does not make is `None`
-/// rather than an error, because `remove` is allowed to be run twice.
-pub(crate) fn without_capability(text: &str, declaration: &Declaration) -> Result<Option<String>> {
-    let config = Config::parse(text).map_err(|e| format!("{FILE}: {e}"))?;
-    if !config.declarations.contains(declaration) {
-        return Ok(None);
-    }
-    if declaration.is_plain() {
-        let label = declaration.kind.label();
-        if config.array.iter().any(|l| l == label) {
-            return edited_capabilities(text, |labels| {
-                let before = labels.len();
-                labels.retain(|l| l != label);
-                labels.len() != before
-            });
-        }
-    }
-    remove_capability_table(text, declaration)
-}
-
-/// Every `[[capability]]` table in the text, as `(first line, one past last,
-/// what it declares)`.
-///
-/// The end excludes trailing blank lines, so removing a block does not take
-/// the separator before the next table with it.
-fn capability_blocks(text: &str) -> Result<Vec<(usize, usize, Declaration)>> {
-    let lines: Vec<&str> = text.lines().collect();
-    let mut blocks = Vec::new();
-    let mut i = 0;
-    while i < lines.len() {
-        let header = strip_comment(lines[i]).trim();
-        if header != format!("[[{CAPABILITY_TABLE}]]") {
-            i += 1;
-            continue;
-        }
-        let start = i;
-        let mut entry = PendingCapability::at(start + 1);
-        let mut end = i + 1;
-        while end < lines.len() {
-            let line = strip_comment(lines[end]).trim();
-            if line.starts_with('[') {
-                break;
-            }
-            if !line.is_empty() {
-                entry.key(line, end + 1)?;
-            }
-            end += 1;
-        }
-        i = end;
-        while end > start + 1 && strip_comment(lines[end - 1]).trim().is_empty() {
-            end -= 1;
-        }
-        let mut collected = Vec::new();
-        finish_capability(&mut Some(entry), &mut collected)?;
-        if let Some((declaration, _)) = collected.pop() {
-            blocks.push((start, end, declaration));
-        }
-    }
-    Ok(blocks)
-}
-
-/// One table, in the shape jails writes it.
-fn render_capability_table(declaration: &Declaration) -> String {
-    let mut out = format!(
-        "[[{CAPABILITY_TABLE}]]\nkind = \"{}\"\n",
-        declaration.kind.label()
-    );
-    if let Some(name) = &declaration.name {
-        out.push_str(&format!("name = \"{name}\"\n"));
-    }
-    if let Some(package) = &declaration.package {
-        out.push_str(&format!("package = \"{package}\"\n"));
-    }
-    out
-}
-
-/// Splice a new table in, ordered by canonical identity among the tables
-/// already there.
-///
-/// Ordering the *insert* rather than rewriting the file is the same rule the
-/// rest of this module follows: two projects that declared the same set end up
-/// with the same file, and a table somebody wrote by hand keeps its formatting
-/// and its place.
-fn insert_capability_table(text: &str, declaration: &Declaration) -> Result<String> {
-    let blocks = capability_blocks(text)?;
-    let rendered = render_capability_table(declaration);
-    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
-    let at = blocks
-        .iter()
-        .find(|(_, _, other)| other.sort_key() > declaration.sort_key())
-        .map(|(start, _, _)| *start)
-        .or_else(|| blocks.last().map(|(_, end, _)| *end));
-    let block: Vec<String> = rendered.lines().map(str::to_string).collect();
-    match at {
-        Some(at) => {
-            let mut spliced = block;
-            spliced.push(String::new());
-            for (offset, line) in spliced.into_iter().enumerate() {
-                lines.insert(at + offset, line);
-            }
-        }
-        None => {
-            if !lines.is_empty() {
-                lines.push(String::new());
-            }
-            lines.extend(block);
-        }
-    }
-    let mut joined = lines.join("\n");
-    joined.push('\n');
-    Ok(joined)
-}
-
-/// Take one whole table out, and the blank line that separated it.
-fn remove_capability_table(text: &str, declaration: &Declaration) -> Result<Option<String>> {
-    let blocks = capability_blocks(text)?;
-    let Some((start, end, _)) = blocks
-        .into_iter()
-        .find(|(_, _, other)| other == declaration)
-    else {
-        return Ok(None);
-    };
-    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
-    let mut end = end;
-    while end < lines.len() && lines[end].trim().is_empty() {
-        end += 1;
-    }
-    let mut start = start;
-    if end >= lines.len() {
-        while start > 0 && lines[start - 1].trim().is_empty() {
-            start -= 1;
-        }
-    }
-    lines.drain(start..end);
-    let mut joined = lines.join("\n");
-    if !joined.is_empty() {
-        joined.push('\n');
-    }
-    Ok(Some(joined))
-}
-
-/// Swap the existing `capabilities = [...]` line in place, keeping its
-/// indentation. `None` when the file has no `[project]` table yet.
-fn replace_capabilities_line(text: &str, rendered: &str) -> Option<String> {
-    let mut table = String::new();
-    let mut out: Vec<String> = Vec::new();
-    let mut replaced = false;
-    for raw in text.lines() {
-        let line = strip_comment(raw).trim();
-        if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
-            table = name.trim().to_string();
-            out.push(raw.to_string());
-            continue;
-        }
-        let is_target = table == PROJECT_TABLE
-            && line
-                .split_once('=')
-                .is_some_and(|(key, _)| key.trim() == CAPABILITIES_KEY);
-        if is_target {
-            let indent: String = raw.chars().take_while(|c| c.is_whitespace()).collect();
-            out.push(format!("{indent}{rendered}"));
-            replaced = true;
-        } else {
-            out.push(raw.to_string());
-        }
-    }
-    if !replaced {
-        return None;
-    }
-    let mut joined = out.join("\n");
-    if text.ends_with('\n') {
-        joined.push('\n');
-    }
-    Some(joined)
-}
-
-fn append_project_table(text: &str, rendered: &str) -> String {
-    let mut out = String::new();
-    if text.trim().is_empty() {
-        out.push_str(
-            "# What this project is made of. `jails sync` makes the project\n\
-             # match this file; `jails add` and `jails remove` keep it true.\n",
-        );
-    } else {
-        out.push_str(text);
-        if !text.ends_with('\n') {
-            out.push('\n');
-        }
-        out.push('\n');
-    }
-    out.push_str(&format!("[{PROJECT_TABLE}]\n{rendered}\n"));
-    out
-}
-
 /// The same layout edit as text. See `edited_capabilities` for why the
 /// splice and the write are separate -- it is `pub(crate)`, so this is a plain
 /// reference rather than a link a public item's documentation cannot resolve.
@@ -764,11 +516,6 @@ fn insert_into_layout_table(text: &str, rendered: &str) -> String {
     out
 }
 
-fn render_string_array(labels: &[String]) -> String {
-    let items: Vec<String> = labels.iter().map(|l| format!("\"{l}\"")).collect();
-    format!("[{}]", items.join(", "))
-}
-
 /// Every capability label jails knows, derived from the `Capability` enum
 /// rather than restated here -- a capability added there without a thought
 /// for the manifest is then automatically valid in it, instead of being a
@@ -838,7 +585,7 @@ mod capability_table_tests {
         Config::parse(text).unwrap().declarations().to_vec()
     }
 
-    /// The shape plan.md §R1.1 prints, read back with both parameters.
+    /// The repeated-table shape, read back with both parameters.
     #[test]
     fn a_repeated_table_declares_a_parameterised_capability() {
         let text = "[project]\ncapabilities = [\"db\"]\n\n\
@@ -860,9 +607,9 @@ mod capability_table_tests {
         assert_eq!(Config::parse(text).unwrap().capabilities(), ["db", "csv"]);
     }
 
-    /// The failure this module exists to prevent, in the new grammar: a
-    /// `[[capability]]` whose keys fell through to the ignored-table branch
-    /// would declare a capability jails then never installs.
+    /// The failure this module exists to prevent: a `[[capability]]` whose
+    /// keys fell through to the ignored-table branch would declare a
+    /// capability jails then never installs.
     #[test]
     fn a_table_is_not_read_as_an_ordinary_one_of_the_same_name() {
         let text = "[[capability]]\nkind = \"json\"\nname = \"Order\"\n";
@@ -933,129 +680,6 @@ mod capability_table_tests {
                     [[capability]]\nkind = \"csv\"\nname = \"Invoice\"\n";
         assert_eq!(declarations(text).len(), 2);
         assert_eq!(Config::parse(text).unwrap().capabilities(), ["csv"]);
-    }
-
-    #[test]
-    fn a_bare_declaration_lands_in_the_array_and_a_parameterised_one_in_a_table() {
-        let plain = with_capability("", &Declaration::plain(Capability::Db))
-            .unwrap()
-            .unwrap();
-        assert!(plain.contains("capabilities = [\"db\"]"), "{plain}");
-        assert!(!plain.contains("[[capability]]"), "{plain}");
-
-        let named = with_capability(
-            &plain,
-            &Declaration {
-                kind: Capability::Csv,
-                name: Some("Order".to_string()),
-                package: None,
-            },
-        )
-        .unwrap()
-        .unwrap();
-        assert!(
-            named.contains("[[capability]]\nkind = \"csv\"\nname = \"Order\""),
-            "{named}"
-        );
-        assert!(named.contains("capabilities = [\"db\"]"), "{named}");
-        assert_eq!(declarations(&named).len(), 2);
-    }
-
-    /// Declaring it again is a no-op, so `add` twice does not grow the file.
-    #[test]
-    fn a_declaration_already_made_changes_nothing() {
-        let declaration = Declaration {
-            kind: Capability::Csv,
-            name: Some("Order".to_string()),
-            package: None,
-        };
-        let once = with_capability("", &declaration).unwrap().unwrap();
-        assert_eq!(with_capability(&once, &declaration).unwrap(), None);
-    }
-
-    /// Ordered on insert, never by rewriting what is already there.
-    #[test]
-    fn a_new_table_is_placed_in_canonical_order() {
-        let mut text = String::new();
-        for name in ["Order", "Alpha", "Zulu"] {
-            text = with_capability(
-                &text,
-                &Declaration {
-                    kind: Capability::Csv,
-                    name: Some(name.to_string()),
-                    package: None,
-                },
-            )
-            .unwrap()
-            .unwrap();
-        }
-        let names: Vec<Option<String>> = declarations(&text).into_iter().map(|d| d.name).collect();
-        assert_eq!(
-            names,
-            vec![
-                Some("Alpha".to_string()),
-                Some("Order".to_string()),
-                Some("Zulu".to_string())
-            ]
-        );
-    }
-
-    #[test]
-    fn removing_one_table_leaves_the_others_and_the_array_alone() {
-        let order = Declaration {
-            kind: Capability::Csv,
-            name: Some("Order".to_string()),
-            package: None,
-        };
-        let invoice = Declaration {
-            kind: Capability::Csv,
-            name: Some("Invoice".to_string()),
-            package: None,
-        };
-        let text = with_capability("", &Declaration::plain(Capability::Db))
-            .unwrap()
-            .unwrap();
-        let text = with_capability(&text, &order).unwrap().unwrap();
-        let text = with_capability(&text, &invoice).unwrap().unwrap();
-
-        let without = without_capability(&text, &order).unwrap().unwrap();
-        assert_eq!(
-            declarations(&without),
-            vec![Declaration::plain(Capability::Db), invoice]
-        );
-        assert!(without.contains("capabilities = [\"db\"]"), "{without}");
-        // Removing what is not declared is not an error, and writes nothing.
-        assert_eq!(without_capability(&without, &order).unwrap(), None);
-    }
-
-    /// The inverse is exact: add then remove is where the file started.
-    #[test]
-    fn a_table_added_and_taken_back_out_leaves_the_bytes_it_found() {
-        let before = "# hand written\n[project]\ncapabilities = [\"db\"]\n\n\
-                      [layout]\nadapters = \"persistence\"\n";
-        let declaration = Declaration {
-            kind: Capability::Actuator,
-            name: None,
-            package: Some("ops".to_string()),
-        };
-        let with = with_capability(before, &declaration).unwrap().unwrap();
-        assert!(with.contains("[[capability]]"), "{with}");
-        assert_eq!(
-            without_capability(&with, &declaration).unwrap().unwrap(),
-            before
-        );
-    }
-
-    /// The array splice must not copy a table's capability into the array as a
-    /// default instance the reader never asked for.
-    #[test]
-    fn writing_the_array_leaves_table_capabilities_out_of_it() {
-        let text = "[[capability]]\nkind = \"csv\"\nname = \"Order\"\n";
-        let updated = with_capability(text, &Declaration::plain(Capability::Db))
-            .unwrap()
-            .unwrap();
-        assert!(updated.contains("capabilities = [\"db\"]"), "{updated}");
-        assert_eq!(declarations(&updated).len(), 2);
     }
 }
 
@@ -1214,113 +838,6 @@ mod tests {
     fn the_manifest_stores_labels_not_aliases() {
         assert!(capability_named("db", 1).is_ok());
         assert!(capability_named("postgres", 1).is_err());
-    }
-
-    /// The capability edit, reached the way the V2 projection reaches it.
-    ///
-    /// These tests were written against `record_capability(root, label)` and
-    /// `forget_capability(root, label)`, a pair of V1 entry points that read
-    /// the file, spliced it and wrote it back. Nothing called them once the
-    /// projection started splicing text it already holds, but `pub` kept
-    /// `dead_code` from saying so. The splice they wrapped is still the
-    /// shipped one, so the tests keep it -- through the text-in/text-out half,
-    /// which is what the projection calls.
-    fn record_capability(root: &std::path::Path, label: &str) -> Result<()> {
-        edit_manifest(root, |labels| {
-            if labels.iter().any(|l| l == label) {
-                return false;
-            }
-            labels.push(label.to_string());
-            true
-        })
-    }
-
-    fn forget_capability(root: &std::path::Path, label: &str) -> Result<()> {
-        edit_manifest(root, |labels| {
-            let before = labels.len();
-            labels.retain(|l| l != label);
-            labels.len() != before
-        })
-    }
-
-    fn edit_manifest(
-        root: &std::path::Path,
-        change: impl FnOnce(&mut Vec<String>) -> bool,
-    ) -> Result<()> {
-        let path = root.join(FILE);
-        let text = fs::read_to_string(&path).unwrap_or_default();
-        if let Some(updated) = edited_capabilities(&text, change)? {
-            fs::write(&path, updated).map_err(|e| e.to_string())?;
-        }
-        Ok(())
-    }
-
-    fn manifest_dir(label: &str) -> std::path::PathBuf {
-        jails_support::scratch::ScratchDir::in_temp(&format!("jails-manifest-{label}"))
-            .unwrap()
-            .keep()
-    }
-
-    #[test]
-    fn recording_a_capability_creates_the_file_and_is_idempotent() {
-        let dir = manifest_dir("record");
-        record_capability(&dir, "db").unwrap();
-        record_capability(&dir, "json").unwrap();
-        // Twice is not two entries.
-        record_capability(&dir, "db").unwrap();
-
-        assert_eq!(Config::load(&dir).unwrap().capabilities(), ["db", "json"]);
-        let text = fs::read_to_string(dir.join(FILE)).unwrap();
-        assert!(text.contains("capabilities = [\"db\", \"json\"]"), "{text}");
-        fs::remove_dir_all(&dir).ok();
-    }
-
-    /// This is a file people edit. Recording rewrites one line and leaves
-    /// every other byte -- comments, the `[layout]` table, key order -- alone,
-    /// for the same reason `pom.rs` splices rather than round-trips.
-    #[test]
-    fn recording_preserves_everything_else_in_the_file() {
-        let dir = manifest_dir("preserve");
-        let original = "# how this project is laid out\n\
-                        [layout]\n\
-                        adapters = \"persistence\" # not `adapters`\n\
-                        \n\
-                        [project]\n\
-                        capabilities = [\"db\"]\n";
-        fs::write(dir.join(FILE), original).unwrap();
-
-        record_capability(&dir, "kafka").unwrap();
-
-        let text = fs::read_to_string(dir.join(FILE)).unwrap();
-        assert!(text.contains("# how this project is laid out"), "{text}");
-        assert!(
-            text.contains("adapters = \"persistence\" # not `adapters`"),
-            "{text}"
-        );
-        assert!(
-            text.contains("capabilities = [\"db\", \"kafka\"]"),
-            "{text}"
-        );
-        // The layout override still parses and still applies.
-        let config = Config::load(&dir).unwrap();
-        assert_eq!(config.layer(layout::ADAPTERS), "persistence");
-        fs::remove_dir_all(&dir).ok();
-    }
-
-    /// Left listed, the next `sync` would put back what `remove` just took
-    /// out. The two have to be exact inverses.
-    #[test]
-    fn forgetting_a_capability_is_the_inverse_of_recording_it() {
-        let dir = manifest_dir("forget");
-        record_capability(&dir, "db").unwrap();
-        record_capability(&dir, "kafka").unwrap();
-        forget_capability(&dir, "db").unwrap();
-        assert_eq!(Config::load(&dir).unwrap().capabilities(), ["kafka"]);
-
-        // Forgetting one that was never there is not an error.
-        forget_capability(&dir, "redis").unwrap();
-        assert_eq!(Config::load(&dir).unwrap().capabilities(), ["kafka"]);
-        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

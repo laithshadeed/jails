@@ -1,17 +1,13 @@
 //! The bottom of the stack: **writing, running, encoding, naming.**
 //!
 //! Nothing here knows what a Java project is, let alone what jails generates
-//! into one. That is the boundary — a module belongs at this layer only when it
+//! into one. That is the boundary: a module belongs at this layer only when it
 //! would still make sense in a tool that had never heard of Maven.
 //!
-//! ## What is here, and what the bar keeps out
-//!
-//! (`pending.md` §7.5.) [`identity`] and [`identifier`] are the naming half:
-//! `ObjectId`, `Name`, `Package`, `JavaType`, `ProjectPath` and `SqlName` know
-//! nothing about a plan, so they clear the bar easily -- and the crates that
-//! outlive the cutover need them without depending on one that dies with the
-//! legacy engine. `identifier` sits here too because `SqlName` needs its
-//! `snake_case`, and a crate cannot depend upward.
+//! [`identity`] and [`identifier`] are the naming half: `ObjectId`, `Name`,
+//! `Package`, `JavaType`, `ProjectPath` and `SqlName` know nothing about a
+//! plan. `identifier` sits here because `SqlName` needs its `snake_case`, and
+//! a crate cannot depend upward.
 //!
 //! [`Result`] and [`debug_cmd`] are here because every crate above needs them,
 //! and a type alias the whole workspace shares has to sit below all of it.
@@ -23,9 +19,8 @@
 //! Two things deliberately live elsewhere. `codemod` -- the `# jails:<marker>`
 //! block splice -- is its own dependency-free crate, because two ladders that
 //! cannot see each other both need it. `CWD_LOCK` is in `jails-testkit`, taken
-//! as a `[dev-dependency]`: it is test infrastructure, and being unable to be
-//! `#[cfg(test)]` (a dependent crate's tests cannot see one) is a reason to
-//! give it a crate rather than a reason to ship it in production.
+//! as a `[dev-dependency]`: it is test infrastructure, and a `#[cfg(test)]`
+//! item is invisible to a dependent crate's tests.
 
 // `#[derive(Codec)]` writes `jails_support::codec::...` into every impl it
 // generates, and that path does not resolve inside this crate. Naming ourselves
@@ -47,23 +42,11 @@ pub mod unified;
 /// Every fallible jails operation returns a message a human can act on, or
 /// says that it has already said everything.
 ///
-/// **The message stays free text**, deliberately, and the doc comment this
-/// replaces got that trade right: the only consumer is `main`, which prints it,
+/// The message stays free text: the only consumer is `main`, which prints it,
 /// so an enum per failure mode would buy pattern-matching nobody does and cost
-/// a variant per message.
-///
-/// What it did *not* get right is that there were two outcomes, not one, and
-/// the second was encoded as **the absence of characters in the first**.
-/// `main` read `if !err.is_empty()`, and an empty string meant "the command has
-/// already printed its report; set the exit code and say nothing" -- a
-/// control-flow decision spelled as an empty message, which `doctor`, `lint`,
-/// `run`, `migrate`, `testd`, `reports` and `invoke` all depended on and
-/// nothing named. The failure mode it allows is quiet: any code path that
-/// happens to build an empty message becomes "already reported" and the process
-/// exits non-zero having printed nothing at all.
-///
-/// `pending.md` §6.5. Two variants, which is exactly the number of distinctions
-/// actually in use.
+/// a variant per message. "Already reported" is a variant rather than an empty
+/// message, because a code path that happens to build an empty message would
+/// otherwise exit non-zero having printed nothing at all.
 pub type Result<T> = std::result::Result<T, Failure>;
 
 /// Why a command stopped.
@@ -90,14 +73,12 @@ impl Failure {
 
 /// A failure reads as its message.
 ///
-/// Deliberate, and the alternative was worse: 131 assertions say
-/// `error.contains("...")`, and rewriting every one to `error.to_string()
-/// .contains(...)` would have made the migration to this type look like a
-/// change to what the tests assert. The target is `str` rather than `String`
-/// because `Reported` has no message and borrowing `""` is the honest answer
-/// -- which is also why [`Self::message`] exists: code that needs to *know*
-/// whether anything was said asks for the `Option`, and nothing else can
-/// reconstruct that distinction from the text.
+/// Assertions say `error.contains("...")`, and `Deref<Target = str>` keeps that
+/// spelling. The target is `str` rather than `String` because `Reported` has
+/// no message and borrowing `""` is the honest answer -- which is why
+/// [`Self::message`] exists: code that needs to *know* whether anything was
+/// said asks for the `Option`, and nothing else can reconstruct that
+/// distinction from the text.
 impl std::ops::Deref for Failure {
     type Target = str;
 

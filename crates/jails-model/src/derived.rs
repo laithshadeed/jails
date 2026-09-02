@@ -1,6 +1,6 @@
 //! The inspectable record of every name convention decided rather than written.
 //!
-//! **`jdl-sol.md` §18.4's rule is that convention must not mean hidden
+//! **JDL v1 §18.4's rule is that convention must not mean hidden
 //! behaviour**, and §7.2 puts these records inside `AppModel` — so they are
 //! part of the accepted-model and plan digest, not a report generated beside
 //! it. A convention that changes has to change a digest, or "the compiler must
@@ -16,7 +16,7 @@
 //! ## What is recorded here, and what is not
 //!
 //! These are the **linker's** conventions: packages, Java type names, SQL
-//! tables and columns, and HTTP routes. §18.4 also closes `file`, `test`,
+//! tables and columns, and HTTP routes. JDL v1 §18.4 also closes `file`, `test`,
 //! `migration`, `cap-prerequisite` and `build-entry`, and those are decided by
 //! the compiler, one pass later, against a workspace the model has not seen.
 //! Recording them here would mean either duplicating the compiler's answer or
@@ -33,7 +33,7 @@ use std::collections::BTreeMap;
 
 /// What kind of name a derived record is about.
 ///
-/// Closed, and a subset of §18.4's list — see the module docs for which half
+/// Closed, and a subset of JDL v1 §18.4's list — see the module docs for which half
 /// of it lives here and why.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -93,7 +93,11 @@ impl DerivedRoleKey {
         }
     }
 
-    pub fn slotted(owner: impl Into<String>, role: DerivedRole, slot: impl Into<String>) -> Self {
+    pub(crate) fn slotted(
+        owner: impl Into<String>,
+        role: DerivedRole,
+        slot: impl Into<String>,
+    ) -> Self {
         Self {
             owner: owner.into(),
             role,
@@ -162,7 +166,7 @@ pub struct DerivedValue {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inputs: Vec<String>,
     /// True only when the author wrote the value instead of the rule deriving
-    /// it — a contract pin, in §18.4's terms.
+    /// it — a contract pin, in JDL v1 §18.4's terms.
     #[serde(default, skip_serializing_if = "is_false")]
     pub pinned: bool,
     /// What the pin displaced. `Some` exactly when `pinned` is true and the
@@ -198,7 +202,7 @@ impl DerivedValue {
     /// digest.
     ///
     /// The cost is that a redundant pin reads as a derivation. Nothing
-    /// observable turns on it: §18.4's `pinned` exists so a reader can see a
+    /// observable turns on it: JDL v1 §18.4's `pinned` exists so a reader can see a
     /// value the convention did *not* produce, and a pin that agrees with the
     /// convention has displaced nothing.
     pub fn named(
@@ -227,20 +231,19 @@ impl DerivedValue {
 
 /// The package convention, as twenty-three inspectable rows.
 ///
-/// **This is where `audit.md` A3.11's divergence stops being invisible.**
-/// `jdl-sol.md` §9.7 closes eleven layers and the compiler emits into
-/// twenty-three packages, six of which sit under a head §9.7 does not name —
-/// `repository`, `application` and `ports`. A `Head::Facet` is renamed by
-/// nothing, so a project whose `jails.toml` renames a layer gets the rename
-/// for `domain` and not for these.
+/// **This is where the §9.7 divergence is visible.** JDL v1 §9.7 closes
+/// eleven layers and the compiler emits into twenty-three packages, six of
+/// which sit under a head §9.7 does not name — `repository`, `application`
+/// and `ports`. A `Head::Facet` is renamed by nothing, so a project whose
+/// `jails.toml` renames a layer gets the rename for `domain` and not for
+/// these.
 ///
 /// The `rule_id` says which it is (`convention.layer.*` against
 /// `convention.facet.*`), so the divergence is displayed by `model explain`
-/// and digested with the model rather than living only in a table in an audit
-/// document. Reconciling it moves files in every project generated so far,
-/// which is why it is recorded rather than quietly corrected — §3.1 rule 4
-/// makes conventions part of `jdl 1`.
-pub fn package_conventions(
+/// and digested with the model. Reconciling it moves files in every project
+/// generated so far, which is why it is recorded rather than quietly
+/// corrected — JDL v1 §3.1 rule 4 makes conventions part of `jdl 1`.
+pub(crate) fn package_conventions(
     project: &ProjectIntent,
     into: &mut BTreeMap<DerivedRoleKey, DerivedValue>,
 ) {
@@ -356,7 +359,7 @@ pub fn records(model: &crate::AppModel) -> BTreeMap<DerivedRoleKey, DerivedValue
                     inputs: Vec::new(),
                     // The one row where a pin *is* recoverable: the
                     // declaration keeps the author's path beside the linked
-                    // route, because §12.6 makes an external contract pin
+                    // route, because JDL v1 §12.6 makes an external contract pin
                     // something a project promises rather than a spelling.
                     pinned: declared.is_some(),
                     replaces: None,
@@ -404,7 +407,7 @@ mod tests {
                 .get(&DerivedRoleKey::from_wire(wire).expect("a well-formed key"))
                 .unwrap_or_else(|| panic!("no derived record for `{wire}`"))
         };
-        // The pluralizer, on the case §9.7 names: the last word only.
+        // The pluralizer, on the case JDL v1 §9.7 names: the last word only.
         assert_eq!(get("sql-table:ent_person").value, "support_people");
         assert_eq!(get("java-type:ent_person").value, "SupportPerson");
         assert_eq!(get("sql-column:fld_person_family").value, "family_name");
@@ -417,14 +420,13 @@ mod tests {
         );
     }
 
-    /// **`audit.md` A3.11, as data rather than as a table in a document.**
+    /// **The §9.7 divergence, as data.**
     ///
-    /// Six of the twenty-three emitted packages sit under a head `jdl-sol.md`
-    /// §9.7 does not close, and a head like that is renamed by nothing -- so a
+    /// Six of the twenty-three emitted packages sit under a head JDL v1 §9.7
+    /// does not close, and a head like that is renamed by nothing -- so a
     /// project that renames `adapters` keeps `repository` and `application`
     /// exactly as they were. The `rule_id` is where that shows, which is what
-    /// makes the divergence inspectable and digested instead of only written
-    /// down.
+    /// makes the divergence inspectable and digested.
     #[test]
     fn a_package_outside_the_nine_seven_layers_says_so_in_its_rule() {
         let model = model();
@@ -468,9 +470,8 @@ mod tests {
     ///
     /// **On a column, because JDL v1 has no way to pin an entity's table** --
     /// an entity takes `id` and `retired` and nothing else, so `sql-table` is
-    /// always the pluralizer's answer for a v1 source. `.jails/model.toml` can
-    /// state one, which is why the record still compares against the
-    /// convention rather than assuming it.
+    /// always the pluralizer's answer for a v1 source. The record still
+    /// compares against the convention rather than assuming it.
     #[test]
     fn a_written_name_replaces_the_convention_it_displaced() {
         let model = crate::parse_jdl(

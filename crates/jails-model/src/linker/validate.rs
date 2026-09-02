@@ -255,9 +255,9 @@ impl Linker {
     /// **A package member outranks `java.lang`'s implicit import.**
     ///
     /// `record String(String value)` types its own component as *itself* and
-    /// compiles, as does its generated test -- `bugs.md` B50, and the reason
-    /// no tier caught it. Refused where the name is *declared*, not where one
-    /// is referenced: a `value:String` is the ordinary case.
+    /// compiles, as does its generated test, so no tier catches it. Refused
+    /// where the name is *declared*, not where one is referenced: a
+    /// `value:String` is the ordinary case.
     fn java_lang_shadow(&mut self, value: &str, path: &str) {
         if JAVA_LANG_TYPES.contains(&value) {
             self.problem(

@@ -9,9 +9,8 @@
 //! **It is recognition, not understanding.** jails never resolves a build, and
 //! reading one artifact name out of a script is not resolving it: an
 //! unparseable file yields nothing rather than a guess, and every caller must
-//! read "not stated here" as *unknown* rather than as *absent*. That is the
-//! same bar `jails-spec::build` clears for the question of which build tool a
-//! directory uses, and the reason both refuse to grow into parsers.
+//! read "not stated here" as *unknown* rather than as *absent*. That is why
+//! it refuses to grow into a parser.
 
 use jails_contracts::BuildSystem;
 use std::collections::BTreeSet;
@@ -21,7 +20,7 @@ use std::path::Path;
 ///
 /// **Public because a second reader of the same two filenames is a second
 /// answer.** `jails model upgrade` needs the `build` axis before any plan
-/// exists, and `jdl-sol.md` §22 says an unsupported build language aborts the
+/// exists, and JDL v1 §22 says an unsupported build language aborts the
 /// upgrade rather than being guessed -- so it needs exactly this function's
 /// `Unknown`, not a fresh pair of `is_file` calls that could disagree with the
 /// snapshot the very next command captures.
@@ -71,15 +70,6 @@ pub(super) fn spring_boot_version(root: &Path, build_system: BuildSystem) -> Opt
     }
 }
 
-/// The JUnit version this project declares, read off its build.
-///
-/// **One number, and it is the project's rather than jails'.** `test --fast`
-/// runs the console launcher against the already-compiled classes, and the
-/// launcher has to be the same JUnit as the tests: JUnit 6's BOM constrains
-/// every artifact to one version, while JUnit 5 paired jupiter `5.y.z` with
-/// platform `1.y.z`. Under a Spring Boot parent the version is managed and
-/// nothing here needs to answer; on a plain build this is what makes the
-/// capability declarable instead of refused.
 /// Every `group:artifact` this project's build file declares.
 ///
 /// **Observed once, here, because the compiler may not read a build file.**
@@ -349,8 +339,8 @@ fn gradle_spring_boot_version(source: &str) -> Option<String> {
 /// compiler renders Spring adapters at all.
 ///
 /// Reading it is not guessing: the coordinate states the version exactly, and
-/// without it a Boot 2 Gradle project looked to the compiler like no Spring
-/// project at all -- so `add db` refused with "requires a captured Spring Boot
+/// without it a Boot 2 Gradle project looks to the compiler like no Spring
+/// project at all -- so `add db` refuses with "requires a captured Spring Boot
 /// project" instead of naming the module the version is missing.
 fn legacy_gradle_spring_boot_version(source: &str) -> Option<String> {
     const COORDINATE: &str = "org.springframework.boot:spring-boot-gradle-plugin:";

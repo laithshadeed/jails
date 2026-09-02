@@ -62,9 +62,9 @@ fn about_describes_a_synthetic_nested_maven_reactor() {
     let json = String::from_utf8_lossy(&output.stdout);
     assert!(json.contains("\"schema_version\": 4"));
     assert!(json.contains("\"reactor\":"));
-    // Named for the job rather than for Maven, and stating which build it is:
-    // `maven_command` holding a path to `gradlew` was a lie the JSON repeated
-    // to every consumer.
+    // Named for the job rather than for Maven, and stating which build it is,
+    // so a Gradle project's key does not hold a path to `gradlew` under a
+    // Maven name.
     assert!(json.contains("\"build\": \"Maven\""), "{json}");
     assert!(json.contains("\"build_command\":"), "{json}");
     assert!(json.contains("\"base_package\": \"dev.example\""));
@@ -86,11 +86,10 @@ fn about_errors_outside_a_maven_project() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("pom.xml"));
 }
 
-/// Regression test: `kind` used to be a plain String, so `jails generate
-/// <TAB>` had nothing to offer but filenames, and the `g`/`d` aliases were
-/// declared with `alias` (hidden from clap_complete) instead of
-/// `visible_alias`, so `jails g <TAB>` fell back to top-level subcommand
-/// names instead of the artifact-kind list.
+/// `kind` is a `clap::ValueEnum` and the `g`/`d` aliases are `visible_alias`,
+/// so `jails g <TAB>` offers the artifact-kind list: a plain `String` has
+/// nothing to complete but filenames, and a hidden `alias` is invisible to
+/// clap_complete's bash generator.
 #[test]
 fn completion_offers_artifact_kinds_for_generate_destroy_and_their_aliases() {
     let workdir = temp_dir("completion-kinds");
@@ -178,8 +177,7 @@ fn completion_script_lists_db_and_console_and_their_aliases() {
 
 /// `jails add <TAB>` only offers completions because `Capability` is a
 /// `clap::ValueEnum` and the alias is `visible_alias` -- a hidden `alias` is
-/// invisible to clap_complete's bash generator (the same bug `generate`'s `g`
-/// hit). This guards both.
+/// invisible to clap_complete's bash generator. This guards both.
 #[test]
 fn completion_script_lists_add_and_its_capabilities() {
     let root = temp_dir("completion-add");
@@ -357,11 +355,10 @@ fn doctor_reports_missing_and_changed_managed_outputs_with_repair_guidance() {
     let output = jails_cmd(&root, None).arg("doctor").output().unwrap();
     assert!(!output.status.success());
     let report = String::from_utf8_lossy(&output.stdout);
-    // **A deletion is a fault and an edit is not**, which is the canonical
-    // answer and a better one: `sync` refuses while a managed file is gone, so
-    // nothing converges until somebody restores it, while an edit is merged
-    // forward on every sync and the reader is entitled to know they are doing
-    // it rather than to be told they broke something.
+    // A deletion is a fault and an edit is not: `sync` refuses while a managed
+    // file is gone, so nothing converges until somebody restores it, while an
+    // edit is merged forward on every sync and the reader is entitled to know
+    // they are doing it rather than to be told they broke something.
     assert!(report.contains("managed output"), "{report}");
     assert!(report.contains("NoteController.java deleted"), "{report}");
     assert!(
@@ -375,12 +372,10 @@ fn doctor_reports_missing_and_changed_managed_outputs_with_repair_guidance() {
     );
 }
 
-/// The verified blind spot in `bugs.md` B5/B14: a migration written by
-/// `jails resource field` carries no renderer stamp, so it is not *managed
-/// output* and deleting it left `doctor` reporting all clear -- while deleting
-/// the neighbouring create migration, written by `g scaffold`, was caught.
-/// Published schema history is sealed with its content digest, and the seal is
-/// the authority the check was missing.
+/// A migration written by `jails resource field` carries no renderer stamp,
+/// so it is not *managed output*; published schema history is sealed with its
+/// content digest, and the seal is what `doctor` checks a deleted or edited
+/// migration against.
 #[test]
 fn doctor_reports_a_sealed_migration_that_was_deleted_or_edited() {
     let root = temp_dir("doctor-migration-seals");
@@ -407,8 +402,7 @@ fn doctor_reports_a_sealed_migration_that_was_deleted_or_edited() {
     let report = String::from_utf8_lossy(&clean.stdout).to_string();
     assert!(report.contains("ok    sealed migrations"), "{report}");
 
-    // The command's own migration, not the scaffold's -- the exact file the
-    // old check could not see.
+    // The command's own migration, not the scaffold's.
     let evolution = root.join("src/main/resources/db/migration/V002__add_priority_to_tasks.sql");
     let sealed = fs::read(&evolution).unwrap();
     fs::remove_file(&evolution).unwrap();
@@ -443,15 +437,7 @@ fn doctor_reports_a_sealed_migration_that_was_deleted_or_edited() {
     assert!(report.contains("append-only"), "{report}");
 }
 
-/// `bugs.md` B18, as the reproduction that found it: make one path unwritable
-/// mid-transaction and the write phase stops half-applied.
-///
-/// The two answers this pins are the ones that were wrong. `doctor` used to
-/// describe the five half-written files as the developer's edits and point at
-/// `resource repair --strategy roll-forward`, which adopts them as the
-/// recorded truth -- a green `doctor` over a project whose every insert names
-/// a column no migration created. There is one fact to report, and the repair
-/// verb must decline while it is true.
+/// Whether this filesystem and user honour a read-only directory at all.
 fn a_read_only_directory_refuses_a_write(under: &std::path::Path) -> bool {
     let probe = under.join("readonly-probe");
     fs::create_dir_all(&probe).unwrap();
@@ -466,17 +452,13 @@ fn a_read_only_directory_refuses_a_write(under: &std::path::Path) -> bool {
     refused
 }
 
-/// `bugs.md` B18, as the reproduction that found it: make one path unwritable
-/// and the write phase cannot finish.
+/// Make one path unwritable and the write phase cannot finish.
 ///
-/// **The canonical executor has no half-applied state to report**, which is a
-/// stronger answer than the one this test used to assert. Every write is
-/// staged under `.jails-staged-` and published under the lock, and a run that
-/// cannot finish leaves the project exactly as it was -- so `doctor` has
-/// nothing to say about a torn transaction, and the repair that used to adopt
-/// half-written files as the recorded truth has nothing to adopt. What the
-/// reader does is fix the permission and run the command again; the sweep
-/// removes its own debris and the transition converges.
+/// The executor has no half-applied state to report: every write is staged
+/// under `.jails-staged-` and published under the lock, and a run that cannot
+/// finish leaves the project exactly as it was. The reader fixes the
+/// permission and runs the command again; the sweep removes its own debris
+/// and the transition converges.
 #[test]
 fn an_unwritable_path_leaves_the_project_exactly_as_it_was() {
     let root = temp_dir("doctor-interrupted");
@@ -547,13 +529,8 @@ fn an_unwritable_path_leaves_the_project_exactly_as_it_was() {
 
 /// A generated `@Disabled` test is honest about what it does not prove and
 /// completely silent about existing, so `mvn test` reports green over it.
-///
-/// modern.md §13.8: one real project shipped five of its nine tests disabled,
-/// including both controller tests, and passed. `CLAUDE.md` already names this
-/// for skipped tier-3 tests; a generated `@Disabled` is the same failure one
-/// level down. Both surfaces answer now -- the plan says it when the file is
-/// about to be written, and `doctor` keeps saying it afterwards, because a
-/// line in one command's summary scrolls away.
+/// Both surfaces say so -- the plan when the file is about to be written, and
+/// `doctor` afterwards, because a line in one command's summary scrolls away.
 #[test]
 fn a_generated_disabled_test_is_named_when_it_is_written_and_afterwards() {
     let root = temp_dir("doctor-disabled-tests");
@@ -603,12 +580,9 @@ fn a_generated_disabled_test_is_named_when_it_is_written_and_afterwards() {
 
 /// A migration jails wrote and nobody filled in is applied, checksummed, and
 /// never mentioned again -- so the history asserts a change that did not
-/// happen.
-///
-/// modern.md §13.7: `V003__add_customer_id_index.sql` was one comment line,
-/// and `messages.customer_id` had no index. Writing the file is right; jails
-/// cannot know the SQL and the value of the command is a correctly numbered
-/// file at the right path. Leaving it silent is the defect.
+/// happen. Writing the file is right; jails cannot know the SQL and the value
+/// of the command is a correctly numbered file at the right path. Leaving it
+/// silent is the defect `doctor` reports.
 #[test]
 fn doctor_names_a_migration_that_was_written_and_never_filled_in() {
     let root = temp_dir("doctor-empty-migration");
@@ -626,12 +600,10 @@ fn doctor_names_a_migration_that_was_written_and_never_filled_in() {
     let report = String::from_utf8_lossy(&output.stdout);
     assert!(report.contains("contain no SQL"), "{report}");
     assert!(report.contains("add_customer_id_index.sql"), "{report}");
-    // **The reader's file to fill in, so a warning and not a failure** -- and
-    // the assertion is on the check rather than on the exit status, because
-    // this fixture declares a compose service and never starts it. `doctor`
-    // exits non-zero when *any* check fails, so asserting the status here
-    // asserted that a PostgreSQL happened to be listening on the machine
-    // running the suite. It was, on the laptop; it was not on the runner.
+    // The reader's file to fill in, so a warning and not a failure -- and the
+    // assertion is on the check rather than on the exit status, because this
+    // fixture declares a compose service and never starts it, and `doctor`
+    // exits non-zero when *any* check fails.
     assert!(report.contains("warn  migration bodies"), "{report}");
 
     let written = root.join("src/main/resources/db/migration");
@@ -650,43 +622,6 @@ fn doctor_names_a_migration_that_was_written_and_never_filled_in() {
     let output = jails_cmd(&root, None).arg("doctor").output().unwrap();
     let report = String::from_utf8_lossy(&output.stdout);
     assert!(!report.contains("contain no SQL"), "{report}");
-}
-
-/// `migrate lint` asked for a manifest to learn one thing -- the dialect --
-/// and so refused on every project `jails new` produces.
-///
-/// The question is answerable from the migrations and the driver the project
-/// declares, which is the authority `Project::sql_dialect` already uses.
-#[test]
-fn migrate_lint_reads_the_migrations_and_the_driver_without_a_manifest() {
-    let root = temp_dir("migrate-lint-no-manifest");
-    write_spring_fixture(&root);
-    let migrations = root.join("src/main/resources/db/migration");
-    fs::create_dir_all(&migrations).unwrap();
-    assert!(!root.join(".jails/app.toml").exists());
-
-    let clean = jails_cmd(&root, None)
-        .args(["migrate", "lint"])
-        .output()
-        .unwrap();
-    assert!(clean.status.success(), "{clean:?}");
-    assert!(
-        String::from_utf8_lossy(&clean.stdout).contains("no destructive"),
-        "{clean:?}"
-    );
-
-    fs::write(
-        migrations.join("V001__drop_orders.sql"),
-        "drop table orders;\n",
-    )
-    .unwrap();
-    let output = jails_cmd(&root, None)
-        .args(["migrate", "lint"])
-        .output()
-        .unwrap();
-    let report = String::from_utf8_lossy(&output.stdout);
-    assert!(report.contains("destructive"), "{report}");
-    assert!(report.contains("V001__drop_orders.sql"), "{report}");
 }
 
 #[test]
@@ -903,70 +838,6 @@ fn why_bean_emits_a_source_bounded_cause_graph() {
 }
 
 #[test]
-fn why_migration_and_query_report_offline_evidence_without_writes() {
-    let root = temp_dir("why-sql-subjects");
-    write_why_sql_project(&root);
-    let before = snapshot_tree(&root);
-
-    let migration = jails_cmd(&root, None)
-        .args(["why", "migration", "V001", "--json"])
-        .output()
-        .unwrap();
-    assert!(migration.status.success(), "{:?}", migration);
-    let stdout = String::from_utf8_lossy(&migration.stdout);
-    assert!(stdout.contains(r#""subject":"migration:V001""#), "{stdout}");
-    assert!(stdout.contains("normalized schema object"), "{stdout}");
-
-    let query = jails_cmd(&root, None)
-        .args(["why", "query", "FindOrder", "--json"])
-        .output()
-        .unwrap();
-    assert!(query.status.success(), "{:?}", query);
-    let stdout = String::from_utf8_lossy(&query.stdout);
-    assert!(
-        stdout.contains(r#""subject":"query:FindOrder""#),
-        "{stdout}"
-    );
-    assert!(stdout.contains("verified-offline"), "{stdout}");
-    assert_eq!(
-        snapshot_tree(&root),
-        before,
-        "why SQL subjects wrote project state"
-    );
-}
-
-fn write_why_sql_project(root: &Path) {
-    write_project_skeleton(root);
-    fs::create_dir_all(root.join(".jails")).unwrap();
-    fs::create_dir_all(root.join("src/main/resources/db/migration")).unwrap();
-    fs::create_dir_all(root.join("src/main/resources/db/queries")).unwrap();
-    fs::write(
-        root.join(".jails/app.toml"),
-        r#"schema = "jails.app.v1"
-[application]
-name = "Example"
-base_package = "com.example.demo"
-java_release = 26
-dialect = "postgresql"
-[slices.Orders]
-[slices.Orders.queries.FindOrder]
-source = "src/main/resources/db/queries/FindOrder.sql"
-"#,
-    )
-    .unwrap();
-    fs::write(
-        root.join("src/main/resources/db/migration/V001__orders.sql"),
-        "CREATE TABLE orders (id uuid PRIMARY KEY, title text NOT NULL);\n",
-    )
-    .unwrap();
-    fs::write(
-        root.join("src/main/resources/db/queries/FindOrder.sql"),
-        "-- jails:name FindOrder\n-- jails:cardinality optional\n-- jails:param id uuid\nSELECT id, title FROM orders WHERE id = :id;\n",
-    )
-    .unwrap();
-}
-
-#[test]
 fn rename_moves_the_type_its_companion_and_every_reference() {
     let root = temp_dir("rename");
     write_inspectable_project(&root);
@@ -1112,9 +983,8 @@ fn stats_counts_code_per_layer_and_the_test_ratio() {
     assert!(stdout.contains("Test code to application code"), "{stdout}");
 }
 
-/// `stats` used to keep its own layer list, so it reported against jails'
-/// *default* package names: a project that renamed a layer in `jails.toml`
-/// had those files counted as "Other". The layout has one owner now.
+/// `stats` reads the layer list through the project's layout, so a layer
+/// renamed in `jails.toml` is counted under its own name rather than "Other".
 #[test]
 fn stats_counts_a_renamed_layer_under_its_configured_name() {
     let root = temp_dir("stats-renamed-layer");
@@ -1138,10 +1008,10 @@ fn stats_counts_a_renamed_layer_under_its_configured_name() {
     );
 }
 
-/// `plan.md` §14's `jails src`. Two properties matter: it works on a project
-/// that does not compile — which is when a language server can least help —
-/// and it lists rather than picking, because a project with three
-/// `Status.java` files is ordinary.
+/// `jails src`. Two properties matter: it works on a project that does not
+/// compile — which is when a language server can least help — and it lists
+/// rather than picking, because a project with three `Status.java` files is
+/// ordinary.
 #[test]
 fn src_resolves_a_type_and_lists_every_match() {
     let root = temp_dir("src-command");

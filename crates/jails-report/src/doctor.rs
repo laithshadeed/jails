@@ -69,11 +69,6 @@ pub fn doctor(project: &Project, json: bool, mut additional: Vec<Check>) -> Resu
     Ok(())
 }
 
-/// Every check, against one resolved snapshot of the project.
-///
-/// `root` and the pom text used to travel together into almost every check,
-/// which is `Project` spelled as two parameters -- and the pair could be
-/// handed on inconsistently, since nothing tied the text to the directory.
 /// The same checks, as data.
 ///
 /// Emitted from the identical `Vec<Check>` the human report prints, so the two
@@ -108,28 +103,6 @@ fn report_json(checks: &[Check]) -> Result<()> {
     Ok(())
 }
 
-/// What jails' own bookkeeping says about itself.
-///
-/// Absent is not a finding: a project jails has never touched is the ordinary
-/// case and has nothing to repair. Only `Unreadable` is, and it is a failure
-/// rather than a warning, because nothing that writes can run until it is
-/// resolved.
-fn machine_state_check(project: &Project) -> Vec<Check> {
-    let jails_state::compat::MachineState::Unreadable(why) =
-        jails_state::compat::read(project.root())
-    else {
-        return Vec::new();
-    };
-    // `why` is the whole refusal every mutating command already prints, fix
-    // line included, so the reader meets one sentence rather than two
-    // descriptions of one file -- and this check cannot drift from the
-    // refusal it is reporting.
-    let (detail, fix) = why
-        .split_once("\n       fix: ")
-        .unwrap_or((why.as_str(), ""));
-    vec![Check::new(Status::Fail, "jails state", detail.trim()).fix(fix.trim())]
-}
-
 fn run_checks(project: &Project) -> Vec<Check> {
     let root = project.root();
     let pom_text = project.pom();
@@ -137,15 +110,12 @@ fn run_checks(project: &Project) -> Vec<Check> {
 
     checks.push(project_check(project));
     // Before anything else about the project, because it decides whether the
-    // rest of this report is about the project the reader has.
-    //
-    // `bugs.md` B47: with damaged machine state every mutating command
-    // refused by name and `doctor` reported `25 checks, all clear`. That
-    // state is what all of them plan against, so a report omitting it is
-    // green on the one condition nothing can act on -- in the command a
-    // reader runs when something is wrong. `compat` already classifies it
-    // into exactly three answers; this asks it, and says nothing of its own.
-    checks.extend(machine_state_check(project));
+    // rest of this report is about the project the reader has: with damaged
+    // machine state every mutating command refuses by name, so a report
+    // omitting it would be green on the one condition nothing can act on --
+    // in the command a reader runs when something is wrong. `compat` already
+    // classifies it into exactly three answers; this asks it, and says
+    // nothing of its own.
     // Nothing below reads a pom that is not there; the first check said why.
     if matches!(project.build(), crate::build::Build::Foreign(_)) {
         checks.extend(template_override_checks());
@@ -171,11 +141,6 @@ fn run_checks(project: &Project) -> Vec<Check> {
     checks.extend(hot_reload_checks(project));
     checks.extend(port_checks(root));
     checks.extend(capability_drift_checks(project));
-    checks.extend(crate::managed_drift::managed_output_checks(project));
-    checks.extend(crate::managed_drift::migration_seal_checks(project));
-    checks.extend(crate::managed_drift::disabled_generated_tests(project));
-    checks.extend(crate::managed_drift::empty_migration_checks(project));
-    checks.extend(crate::schema_lineage::schema_lineage_checks(project));
     checks.extend(template_override_checks());
     checks.push(beans_check(root));
     checks
@@ -183,12 +148,11 @@ fn run_checks(project: &Project) -> Vec<Check> {
 
 /// Name every template this project has overridden.
 ///
-/// `plan.md` §6.6 states the cost of tier 2 plainly: **an overridden template
-/// is not golden-tested**, so a project that overrides one has opted out of
-/// the guarantee for that file. The mitigation it names is this check -- the
-/// same honesty rule as `remove`'s `unowned_properties`. A `Warn` rather than
-/// a `Fail`: overriding is a supported thing to do, and the reader is entitled
-/// to know they are doing it without being told they are broken.
+/// **An overridden template is not golden-tested**, so a project that
+/// overrides one has opted out of the guarantee for that file, and this check
+/// says so. A `Warn` rather than a `Fail`: overriding is a supported thing to
+/// do, and the reader is entitled to know they are doing it without being
+/// told they are broken.
 fn template_override_checks() -> Vec<Check> {
     let active = crate::template::active();
     if active.is_empty() {
@@ -213,21 +177,12 @@ fn template_override_checks() -> Vec<Check> {
     ]
 }
 
-/// Capability drift is the model's business now.
+/// Capability drift is the model's business.
 ///
-/// This check existed because `add` knew what each capability installs and
-/// `doctor` did not, so it re-derived the parts it needed by reading the
-/// project back off disk -- abstract.md §4.2's Feature Envy at module scale.
-/// It was answered by re-planning each recorded capability through
-/// `add::plan_for`.
-///
-/// **There is nothing left to re-plan.** `jails add`, `add dependency` and
-/// `sync` all seed a model before they do anything, so every project jails
-/// mutates records its capabilities in the model rather than in
-/// `[project] capabilities`, and `jails sync` reconciles them by compiling.
-/// The branch that read `jails.toml` could only fire on a project this jails
-/// can no longer produce, and it was the last caller of the legacy capability
-/// planner.
+/// `jails add`, `add dependency` and `sync` all seed a model before they do
+/// anything, so every project jails mutates records its capabilities in the
+/// model, and `jails sync` reconciles them by compiling. There is nothing here
+/// to re-plan, so the check is one `Skip` naming where the answer lives.
 fn capability_drift_checks(project: &Project) -> Vec<Check> {
     let _ = project;
     vec![Check::new(
@@ -240,7 +195,7 @@ fn capability_drift_checks(project: &Project) -> Vec<Check> {
 fn project_check(project: &Project) -> Check {
     let root: &Path = project.root();
     let pom_text: &str = project.pom();
-    // Not optional (`plan.md` §12): a confident wrong report is worse than a
+    // Not optional: a confident wrong report is worse than a
     // refusal, so the first thing doctor says about a foreign project is that
     // it is one -- and what that costs, since every check below reads a pom
     // that does not exist and would otherwise report cheerful nonsense.
@@ -289,8 +244,8 @@ fn project_check(project: &Project) -> Check {
     }
     // Before anything else about the project: can Maven open this pom at
     // all? `pom::read` falls back to an empty string, so without this every
-    // check below happily reported on a project no goal can run against --
-    // fifteen greens over a build that cannot start (plan.md §8.9).
+    // check below would happily report on a project no goal can run against
+    // -- a column of greens over a build that cannot start.
     // `pom::problems` is an XML reader. Handing it Groovy would report
     // fabricated defects, so a Gradle build simply is not asked -- the honest
     // shape of "this check does not apply" is skipping it, not inventing an
@@ -546,8 +501,8 @@ mod tests {
     ///
     /// `add cors` writes "Exact browser origins; never use `*` together with
     /// credentials." above the line it explains. Reading it as a required
-    /// property made `doctor` demand a key whose name was an English
-    /// sentence, on a project where the capability was installed correctly --
+    /// property would make `doctor` demand a key whose name is an English
+    /// sentence, on a project where the capability is installed correctly --
     /// and no amount of `jails sync` could satisfy it, because nothing would
     /// ever write that key.
     #[test]
@@ -608,10 +563,9 @@ mod tests {
 
     /// A `Project` over a scratch root whose pom says exactly this.
     ///
-    /// The checks take a resolved project now, so a test states the pom by
+    /// The checks take a resolved project, so a test states the pom by
     /// *writing* it rather than by passing a second argument beside the
-    /// directory -- which is the pairing that could go inconsistent, and the
-    /// reason these two parameters became one value.
+    /// directory -- a pairing that could go inconsistent.
     fn project_with_pom(root: &Path, pom: &str) -> Project {
         std::fs::create_dir_all(root).unwrap();
         std::fs::write(root.join("pom.xml"), pom).unwrap();
@@ -671,9 +625,8 @@ mod tests {
 
     /// Every way the editor-save loop breaks is silent, so each is pinned.
     ///
-    /// `plan.md` §19.5 is answered by measurement: jdt.ls writes into the
-    /// project's own `target/classes` with no Maven run, so the loop exists
-    /// and only its switches can be wrong.
+    /// jdt.ls writes into the project's own `target/classes` with no Maven
+    /// run, so the loop exists and only its switches can be wrong.
     #[test]
     fn hot_reload_checks_catch_every_silent_way_the_save_loop_dies() {
         let base = jails_support::scratch::ScratchDir::in_temp("jails-doctor-hot")

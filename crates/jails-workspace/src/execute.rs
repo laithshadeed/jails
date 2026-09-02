@@ -4,21 +4,21 @@
 //! rechecks every captured precondition against the tree as it is *now*,
 //! applies the plan's typed operations in order, and verifies the exact
 //! after-images it published. There is no replanning here and no path where a
-//! desired byte is computed — `simplify-sol.md`'s "apply never replans" is
-//! enforced by this module having no compiler and no model to reach for.
+//! desired byte is computed -- apply never replans, and that is enforced by
+//! this module having no compiler and no model to reach for.
 //!
-//! **It converges rather than rolls back**, which is the deliberate trade the
-//! legacy kernel does not make: no journal, no preimage, no recovery command.
+//! **It converges rather than rolls back**: no journal, no preimage, no
+//! recovery command.
 //! A crashed run may leave a temporarily mixed but individually valid tree,
 //! and the next identical generation repairs it deterministically. Every
 //! `continue` in here is that property — an operation whose after-image is
 //! already on disk is skipped, so a re-run reports zero written and zero
 //! deleted rather than rewriting a tree it agrees with.
 //!
-//! `crates/jails-workspace/tests/crash.rs` proves it at nine named instants,
-//! in-process and in a child that `abort()`s. The aborting half is not
-//! ceremony: it found `sweep_staged`'s absence, where a temporary left by a
-//! crash between staging and rename wedged the project permanently.
+//! `tests/crash.rs` proves it at every point in `fault::POINTS`, in-process
+//! and in a child that `abort()`s. The aborting half is what reaches
+//! `sweep_staged`: a temporary left by a crash between staging and rename
+//! would otherwise wedge the project permanently.
 //!
 //! The precondition check has three deliberate escape hatches, and they are
 //! what makes convergence possible at all: a file already carrying its desired
@@ -137,14 +137,13 @@ pub fn execute(root: &Path, bundle: &PlanBundle) -> Result<Execution, String> {
 
 /// Refuse before the first write if any destination cannot be written.
 ///
-/// **`bugs.md` B18, closed at the only point that can close it.** The
-/// operation list is applied in order, so an unwritable *later* destination
-/// used to leave the earlier ones published: a read-only migration directory
-/// took `resource field add` from "add a column" to a managed tree whose
-/// insert names a column no migration creates, with the lock still describing
-/// the tree before it -- so `doctor` called jails' own output a reader edit
-/// and reported all clear. The transition converges when it is run again, but
-/// nobody knows to run it again.
+/// The operation list is applied in order, so an unwritable *later*
+/// destination would leave the earlier ones published: a read-only migration
+/// directory would take `resource field add` from "add a column" to a managed
+/// tree whose insert names a column no migration creates, with the lock still
+/// describing the tree before it -- so `doctor` calls jails' own output a
+/// reader edit and reports all clear. The transition converges when it is run
+/// again, but nobody knows to run it again.
 ///
 /// One probe per directory, staged and dropped, because the question is
 /// exactly the one `write_atomic` asks: not "what do the mode bits say", which
@@ -208,9 +207,9 @@ const STAGED_PREFIX: &str = ".jails-staged-";
 
 /// Delete the debris a run that died between staging and rename left behind.
 ///
-/// **Found by `tests/crash.rs`, and only by its aborting half.** An injected
-/// `Err` unwinds, so the staged `NamedTempFile`'s guard removes it; an
-/// `abort()` does not, and the file stays. `verify_preconditions` then reads
+/// An injected `Err` unwinds, so the staged `NamedTempFile`'s guard removes
+/// it; an `abort()` or a lost machine does not, and the file stays. Without
+/// this sweep `verify_preconditions` reads
 /// it as an unmanaged file that appeared inside the managed tree and refuses
 /// -- permanently, because nothing removes it and every later plan refuses
 /// the same way. A project wedged by its own temporary file is the exact

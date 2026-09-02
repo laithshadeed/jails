@@ -31,20 +31,18 @@ fn add_db_no_start_skips_docker_compose_up() {
 
 /// A side effect that failed says which flag avoids it, on its own line.
 ///
-/// `missing.md` M12. `jails add db` on a machine with no container engine
-/// writes every file, records the ledger and exits 1 -- which in
-/// `for c in db api cors json sse; do jails add $c || fail; done` reads as a
-/// failed install of the capability that succeeded. The status stays 1,
-/// because the services really are not running; what was missing is the
-/// `fix:` every other refusal in jails carries, and any mention at all of
-/// `--no-start`, which makes the same command exit 0.
+/// `jails add db` on a machine with no container engine writes every file
+/// and exits 1 -- which in `for c in db api cors json sse; do jails add $c ||
+/// fail; done` reads as a failed install of the capability that succeeded.
+/// The status stays 1, because the services really are not running; the
+/// `fix:` names `--no-start`, which makes the same command exit 0.
 #[test]
 fn an_effect_that_failed_names_the_flag_that_avoids_it() {
     let root = temp_dir("effect-failed-fix");
     write_spring_fixture(&root);
     let fake = temp_dir("effect-failed-fix-bin");
     let log = fake.join("log.txt");
-    // No `docker` on PATH at all, which is the machine this was reported from.
+    // No `docker` on PATH at all.
     write_fake_maven(&fake, &[], &log);
 
     let output = jails_cmd(&root, Some(&fake))
@@ -140,27 +138,14 @@ fn add_accepts_a_project_pinned_to_an_lts_below_the_jails_default() {
     );
 }
 
-/// bugs.md B57: re-running an installed capability bricked a project that has
-/// a compose service, terminally.
+/// Re-running an installed capability on a project that has a compose
+/// service leaves every later mutating command -- `add`, `sync`, `g record`
+/// -- working.
 ///
-/// The second `add` reported the missing object behind `.jails/transactions/`
-/// and every mutating command after it -- `add`, `sync`, `g record` -- failed
-/// with the same line, so `jails sync`, whose whole job is re-applying
-/// recorded capabilities, was the command that could not run.
-///
-/// Preparation carries the previous ledger image forward when no row changed,
-/// so that a run which did nothing still reports "already set up". The object
-/// behind that image belongs to the commit that wrote it and was promoted to
-/// the durable store, so this transaction's own object directory never held
-/// it. Normally none of that is reached, because such a change is a no-op --
-/// `is_no_op` is exactly those conditions plus an empty effect list. A compose
-/// service supplies the effect, which makes the change non-trivial while
-/// leaving the ledger untouched, and the run walks into staging an object that
-/// was never there.
-///
-/// So the test needs all three: a capability that declares a compose service,
-/// a second capability, and that second one run twice. `sqlite` was the
-/// control that never reproduced -- a database capability with no service.
+/// The shape needs all three: a capability that declares a compose service,
+/// a second capability, and that second one run twice, because the compose
+/// service is what makes the repeated run non-trivial while changing no
+/// declaration.
 #[test]
 fn reinstalling_a_capability_beside_a_compose_service_leaves_the_project_usable() {
     let root = temp_dir("add-twice-with-compose");
@@ -179,8 +164,8 @@ fn reinstalling_a_capability_beside_a_compose_service_leaves_the_project_usable(
         );
     }
 
-    // Terminal, not transient, was the whole shape of B57: what proves it
-    // fixed is the commands *after* the second install, not that install.
+    // What is asserted is the commands *after* the second install, not that
+    // install.
     for arguments in [
         &["sync", "--no-start"][..],
         &["g", "record", "Note", "title:string!"][..],
@@ -193,8 +178,7 @@ fn reinstalling_a_capability_beside_a_compose_service_leaves_the_project_usable(
         );
     }
 
-    // And `doctor` no longer reports an unfinished transaction whose fix --
-    // run the same command again -- was the reproduction.
+    // And `doctor` reports no unfinished transaction.
     let doctor = jails_cmd(&root, None).arg("doctor").output().unwrap();
     let report = String::from_utf8_lossy(&doctor.stdout);
     assert!(
@@ -203,18 +187,12 @@ fn reinstalling_a_capability_beside_a_compose_service_leaves_the_project_usable(
     );
 }
 
-/// bugs.md B58: `g event` wrote Kafka code into a project with no Kafka.
+/// `g event` never writes Kafka code into a project with no Kafka.
 ///
-/// All four generated files import `org.springframework.kafka`, so the
-/// generate reported success, listed its files, and left a project where
-/// `mvn compile` fails on code the reader never wrote.
-///
-/// It refuses rather than splicing the coordinate, unlike `g dto` and
-/// `g client`: a listener needs what `add kafka` writes around it -- the
-/// `DefaultErrorHandler`, the dead-letter routing, the
-/// `ErrorHandlingDeserializer` -- so supplying only the dependency would trade
-/// a compile error for a listener that compiles and drops poison messages
-/// silently.
+/// An event declaration is a payload record and nothing else; the listener,
+/// the error handler and the dead-letter routing belong to the `kafka`
+/// capability, so a project without it gets no line of Spring Kafka. There is
+/// no arrangement of commands that writes an import the build cannot resolve.
 #[test]
 fn generating_an_event_without_kafka_refuses_and_names_the_capability() {
     let root = temp_dir("event-without-kafka");
@@ -224,12 +202,8 @@ fn generating_an_event_without_kafka_refuses_and_names_the_capability() {
         .args(["g", "event", "Shipped"])
         .output()
         .unwrap();
-    // **The compiler closes this the other way round.** An event declaration
-    // is a payload record and nothing else; the listener, the error handler
-    // and the dead-letter routing belong to the `kafka` capability, so a
-    // project without it gets no line of Spring Kafka rather than a refusal.
-    // The property is the same one and is now structural: there is no
-    // arrangement of commands that writes an import the build cannot resolve.
+    // No refusal and no Spring Kafka: the payload record is all an event
+    // declaration is without the capability.
     assert!(written.status.success(), "{written:?}");
     let payload = common::read_generated(
         &root,
@@ -320,9 +294,9 @@ fn add_is_idempotent() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // §R4.2 keeps "nothing happened" and "everything happened and changed
-    // nothing" apart, and only the second has files to name. A second `add
-    // csv` is the first.
+    // "Nothing happened" and "everything happened and changed nothing" are
+    // kept apart, and only the second has files to name. A second `add csv`
+    // is the first.
     assert!(stdout.contains("nothing to do"), "{stdout}");
     assert_eq!(
         after_first,
@@ -434,7 +408,7 @@ fn add_sqlite_writes_a_first_migration_and_both_classes() {
         )
         .is_file()
     );
-    // **One migration naming rule across the tool**, `V<version>__<what>.sql`,
+    // One migration naming rule across the tool, `V<version>__<what>.sql`,
     // which is what lets the materializer allocate the next version from the
     // history it observed rather than from a name a capability chose. sqlite's
     // runner is jails' own `Migrations`, which sorts by filename and does not
@@ -486,13 +460,13 @@ fn add_db_installs_postgres_flyway_and_testcontainers_without_an_orm() {
     let compose = fs::read_to_string(root.join("compose.yaml")).unwrap();
     assert!(compose.contains("postgres:17-alpine"), "{compose}");
     assert!(compose.contains("# jails:db"), "{compose}");
-    // The compose document handed to `--file` is the **committed object**, not
-    // the live `compose.yaml`. The effect is attempted after the commit
-    // publishes, so between the two somebody may edit the file; running
-    // against what they wrote would start services this transition never
-    // described, and a retry would not repeat what the first attempt did.
-    // `--project-directory` is what keeps relative paths in that document
-    // resolving against the project.
+    // The compose document handed to `--file` is the frozen one the plan
+    // published, not the live `compose.yaml`. The effect is attempted after
+    // the plan publishes, so between the two somebody may edit the file;
+    // running against what they wrote would start services this transition
+    // never described, and a retry would not repeat what the first attempt
+    // did. `--project-directory` is what keeps relative paths in that
+    // document resolving against the project.
     let invocation = read_log(&log);
     assert!(
         invocation.contains("compose") && invocation.contains("up -d"),
@@ -506,11 +480,9 @@ fn add_db_installs_postgres_flyway_and_testcontainers_without_an_orm() {
         invocation.contains(&format!("--project-directory {}", root.display())),
         "expected the project directory: {invocation}"
     );
-    // The frozen document is staged *outside* the project. A canonical project
-    // has no `.jails/objects` -- that is the legacy store, and creating one
-    // here would be the cutover leaking backwards -- so what is checked is the
-    // property rather than the old location: whatever `--file` names, it is not
-    // the live `compose.yaml` this transition just published.
+    // The frozen document is staged *outside* the project, so what is checked
+    // is the property rather than a location: whatever `--file` names, it is
+    // not the live `compose.yaml` this transition just published.
     let live = format!("--file {}", root.join("compose.yaml").display());
     assert!(
         !invocation.contains(&live),
@@ -646,9 +618,9 @@ fn remove_db_refuses_while_a_scaffold_still_needs_it() {
 
     assert!(!refused.status.success(), "{refused:?}");
     let stderr = String::from_utf8_lossy(&refused.stderr);
-    // The canonical refusal names the accepted storage rather than the
-    // declaration that still wants it: retiring a table is a schema-evolution
-    // step with a forward migration, and that is the fix it points at.
+    // The refusal names the accepted storage rather than the declaration that
+    // still wants it: retiring a table is a schema-evolution step with a
+    // forward migration, and that is the fix it points at.
     assert!(stderr.contains("abandon accepted storage"), "{stderr}");
     assert!(stderr.contains("fix: "), "{stderr}");
     assert_eq!(snapshot_tree(&root), before, "refusal mutated the project");
@@ -667,11 +639,6 @@ fn remove_db_refuses_while_a_scaffold_still_needs_it() {
 /// as an importable `@TestConfiguration` and splices the `@Import` into every
 /// `@SpringBootTest` -- including one in a different package, which needs the
 /// import statement too.
-///
-/// It used to also delete a test-classpath `spring.factories` an *earlier
-/// jails* had written to register the container globally. That migration is
-/// gone with the rest of the legacy handling: jails is not released, so there
-/// is no earlier jails whose output has to be recognised.
 #[test]
 fn add_db_on_spring_wires_every_test_through_an_imported_configuration() {
     let root = temp_dir("add-db-spring-migrate");
@@ -825,9 +792,8 @@ public final class InMemoryThingRepository {}
     .unwrap();
 
     // `add db` wires every @SpringBootTest that exists when the capability is
-    // reconciled. Put this cross-package test in place first: creating it
-    // afterwards accidentally made the regression depend on a developer
-    // PostgreSQL listening on localhost:5432.
+    // reconciled, so this cross-package test goes in first; created
+    // afterwards it would depend on a PostgreSQL listening on localhost:5432.
     let api = common::generated(&root, "src/test/java/com/example/demo/api");
     fs::create_dir_all(&api).unwrap();
     fs::write(
@@ -966,10 +932,7 @@ fn remove_is_the_inverse_of_add_csv() {
     assert!(!pom.contains("commons-csv"), "{pom}");
 }
 
-/// **The prompt names the files, and `--force` is what skips it.**
-///
-/// It used to be asked with `--force` supplied, which is the one spelling that
-/// means "do not ask" -- so the `n` went nowhere and the removal went through.
+/// The prompt names the files, and `--force` is what skips it.
 #[test]
 fn remove_without_force_prompts_and_aborts_on_no() {
     let root = temp_dir("remove-prompt");
@@ -1110,15 +1073,10 @@ fn every_capability_together_produces_a_project_that_compiles_and_passes_tests()
 }
 
 /// `add cors` renders one test for Boot 2 and another for the current
-/// default, and only the Boot 2 branch had ever been compiled.
-///
-/// modern.md §11.6. `a_boot_2_project_gets_the_classic_mockmvc_for_every_generated_web_test`
-/// runs real Maven over `add cors` -- against a Boot 2 project, where the
-/// capability renders its *classic* `MockMvc` variant, and the assertion there
-/// proves the modern one was **not** chosen. The `MockMvcTester` branch, which
-/// is what every project `jails new` produces gets, was only ever snapshotted
-/// as bytes. A tier-3 test pinned to the legacy branch reports green for a
-/// branch it never touched.
+/// default, and both branches are compiled:
+/// `a_boot_2_project_gets_the_classic_mockmvc_for_every_generated_web_test`
+/// runs real Maven over the classic `MockMvc` variant, and this runs it over
+/// the `MockMvcTester` branch every project `jails new` produces gets.
 ///
 /// The origin is the other half. `.invalid` is reserved by RFC 2606 so the
 /// placeholder is unmistakably a value somebody has to replace -- and the test
@@ -1161,15 +1119,10 @@ fn add_cors_on_the_default_boot_version_compiles_and_runs_its_own_test() {
     );
 }
 
-/// `add db` had no Boot floor and produced an unresolvable build.
-///
-/// missing.md M2. `add api` refuses Boot 2 by name and precisely; `add db` did
-/// not check at all, and on the Boot 2.7 Gradle server four of the six
-/// checkouts actually ship it succeeded and then failed to resolve
-/// `org.springframework.boot:spring-boot-flyway:` -- note the trailing colon
-/// with nothing after it, because the coordinate was spliced with no version
-/// on a parent that does not manage it. Every goal fails from there, so the
-/// project is worse off than before the command ran.
+/// `add db` has a Boot floor, and never produces an unresolvable build: a
+/// coordinate spliced with no version on a parent that does not manage it
+/// (`org.springframework.boot:spring-boot-flyway:`, trailing colon) fails
+/// every goal, leaving the project worse off than before the command ran.
 ///
 /// Three boundaries, each checked in `deps/spring-boot`:
 /// `spring-boot-testcontainers` and `spring-boot-docker-compose` appear at
@@ -1224,14 +1177,12 @@ fn add_db_matches_the_modules_this_boot_version_has_or_refuses_by_name() {
         "the refusal still spliced a dependency"
     );
 
-    // A supported Boot 3: Flyway's auto-configuration is where it always was,
-    // so the split-out module must not be named. Both Flyway artifacts go in
-    // versionless here, because 3.3 is exactly the release whose BOM starts
-    // managing `flyway-database-postgresql` -- the legacy engine pinned them
-    // unconditionally to avoid giving 3.1 and 3.3 separate answers, and the
-    // compiler gives the separate answer instead. Inventing a version Boot
-    // already manages is how the pair comes to disagree with the rest of the
-    // curated set.
+    // A supported Boot 3: Flyway's auto-configuration is in
+    // `spring-boot-autoconfigure`, so the split-out module must not be named.
+    // Both Flyway artifacts go in versionless here, because 3.3 is exactly the
+    // release whose BOM starts managing `flyway-database-postgresql`.
+    // Inventing a version Boot already manages is how the pair comes to
+    // disagree with the rest of the curated set.
     let supported = build("three", "3.3.5");
     assert!(
         jails_cmd(&supported, None)
@@ -1314,10 +1265,10 @@ fn add_json_on_a_spring_project_defers_to_the_parents_version_and_compiles() {
 
 #[test]
 fn add_db_upgrades_an_out_of_date_properties_block() {
-    // `add` promises to write whatever is missing. A project generated by an
-    // older jails has a jails:db block holding only the exception-translation
-    // property; reporting that as "exists" would leave it permanently without
-    // the datasource it now needs.
+    // `add` promises to write whatever is missing. A project whose properties
+    // hold only the exception-translation property inside a marked block must
+    // gain the datasource keys; reporting that as "exists" would leave it
+    // permanently without them.
     let root = temp_dir("db-properties-upgrade");
     write_spring_fixture(&root);
     let fake = root.join("fake-bin");
@@ -1351,10 +1302,10 @@ fn add_db_upgrades_an_out_of_date_properties_block() {
         next.contains("spring.docker.compose.enabled=false"),
         "{next}"
     );
-    // **The markers dissolve.** A capability's properties are claimed one key
-    // at a time now, so the block the engine wrote around them is adopted and
-    // its comment lines go -- and the key inside it is written once, by the
-    // capability that owns it, rather than twice.
+    // The markers dissolve. A capability's properties are claimed one key at
+    // a time, so a marked block around them is adopted and its comment lines
+    // go -- and the key inside it is written once, by the capability that
+    // owns it, rather than twice.
     assert!(!next.contains("# jails:db"), "{next}");
     assert_eq!(
         next.matches("spring.persistence.exceptiontranslation.enabled=false")
@@ -1428,9 +1379,9 @@ fn add_cache_switches_caching_on_and_proves_it() {
         fs::read_to_string(root.join("src/main/resources/application.properties")).unwrap();
     // A cache with no bound is a memory leak with a friendly name.
     assert!(properties.contains("maximumSize="), "{properties}");
-    // No `# jails:cache` marker: V2 owns each property by key and retires it
-    // by key, so the block boundary a whole-file splice needed is gone. The
-    // settings are what the capability claims.
+    // No `# jails:cache` marker: each property is owned by key and retired by
+    // key, so there is no block boundary. The settings are what the
+    // capability claims.
     assert!(properties.contains("spring.cache.type="), "{properties}");
 
     let verified = verified_spring_toolbox(&path);
@@ -1859,12 +1810,9 @@ fn add_help_lists_worked_examples() {
 }
 
 /// `jails add csv security` on a plain Maven project: `security` is Spring-only
-/// and is refused. Before preflight, `csv` had already been applied by then --
-/// the command reported a failure over a pom it had just edited, and the
-/// obvious retry had to skip `csv` by hand.
-///
-/// Planning is pure and is where that refusal lives, so every requested
-/// capability is planned before any is applied.
+/// and is refused, and `csv` is not applied either. Planning is pure and is
+/// where that refusal lives, so every requested capability is planned before
+/// any is applied.
 #[test]
 fn add_preflights_every_capability_before_applying_any_of_them() {
     let root = temp_dir("add-preflight");
@@ -1893,7 +1841,7 @@ fn add_preflights_every_capability_before_applying_any_of_them() {
 }
 
 /// The order must not matter: a refusal named last still has to stop the ones
-/// named before it, which is the case that was broken.
+/// named before it.
 #[test]
 fn add_preflight_holds_when_the_refused_capability_is_named_first() {
     let root = temp_dir("add-preflight-order");
@@ -1924,9 +1872,9 @@ fn add_records_what_it_applied_and_remove_takes_it_back_out() {
             .unwrap()
             .success()
     );
-    // The model is the manifest: a canonical project declares what it is made
-    // of in the one editable source every later command reads, so there is no
-    // second list that can disagree with it.
+    // The model is the manifest: a project declares what it is made of in the
+    // one editable source every later command reads, so there is no second
+    // list that can disagree with it.
     let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(
         model.contains("cap csv @id(cap_csv)"),
@@ -2062,14 +2010,11 @@ fn sync_refuses_a_manifest_naming_a_capability_that_does_not_exist() {
 
 /// "It exists" is not ownership. `remove` deletes every generated file the
 /// plan names, and a `CsvReader` someone spent an afternoon on looks exactly
-/// like the stub jails wrote. A real project was found with ~20 hand-written
-/// properties inside jails' own markers; a hand-finished generated class is
-/// the same discovery waiting to happen and costs more.
+/// like the stub jails wrote.
 ///
 /// jails does not refuse -- `remove` is the documented inverse of `add`, and
 /// refusing would make it unusable on the projects that got the most out of
-/// it. It must not delete them *silently*, which is the line
-/// `unowned_properties` already draws for properties.
+/// it. It must not delete them *silently*.
 #[test]
 fn remove_names_generated_files_that_were_edited_before_deleting_them() {
     let root = temp_dir("remove-edited-files");
@@ -2094,9 +2039,9 @@ fn remove_names_generated_files_that_were_edited_before_deleting_them() {
         .unwrap();
     assert!(output.status.success());
     let shown = String::from_utf8_lossy(&output.stdout);
-    // Named before it goes, and its exact previous bytes are in the object
-    // store. Without `--force` this same list is what the confirmation puts to
-    // the reader, so an edit is never lost without being seen first.
+    // Named before it goes. Without `--force` this same list is what the
+    // confirmation puts to the reader, so an edit is never lost without being
+    // seen first.
     assert!(
         shown.contains("delete ") && shown.contains("CsvReader.java"),
         "an edited generated file was deleted with no mention of it:\n{shown}"
@@ -2175,9 +2120,9 @@ fn dry_run_remove_names_edited_files() {
     assert!(generated.is_file(), "--dry-run deleted the file");
 }
 
-/// `plan.md` §13.2. Every claim in `EventHub`'s Javadoc is a behavioural one,
-/// so the only place they can be checked is against a real JUnit run --
-/// especially the concurrency test, which is the reason the registry is a
+/// Every claim in `EventHub`'s Javadoc is a behavioural one, so the only
+/// place they can be checked is against a real JUnit run -- especially the
+/// concurrency test, which is the reason the registry is a
 /// `ConcurrentHashMap` of `newKeySet()` rather than the obvious `HashMap`.
 #[test]
 fn add_sse_produces_tests_that_run_and_pass() {
@@ -2199,9 +2144,9 @@ fn add_sse_produces_tests_that_run_and_pass() {
     assert_surefire_test_count(verified, "EventHubTest", 4);
 }
 
-/// `plan.md` §13.3's `add mail`. The generated IT starts a container, so only
-/// compilation is checked here — but that is the part that catches the Boot 4
-/// API changes, and the IT's shape is copied from Boot's own.
+/// `add mail`. The generated IT starts a container, so only compilation is
+/// checked here — but that is the part that catches the Boot 4 API changes,
+/// and the IT's shape is copied from Boot's own.
 #[test]
 fn add_mail_produces_a_project_that_compiles() {
     if !real_mvn_available() {
@@ -2232,12 +2177,12 @@ fn add_mail_produces_a_project_that_compiles() {
     );
 }
 
-/// missing.md §3: a project needing one artifact jails has never heard of had
-/// to hand-edit the pom, which is the file `pom.rs` exists to edit surgically.
+/// `add dependency` splices one artifact jails has never heard of into the
+/// pom surgically.
 ///
-/// Both directions in one test, because the value is not the splice -- V1
-/// could splice -- it is that the splice is *owned*, so `remove` takes exactly
-/// it back out and nothing else.
+/// Both directions in one test, because the value is not the splice, it is
+/// that the splice is *owned*, so `remove` takes exactly it back out and
+/// nothing else.
 #[test]
 fn a_declared_dependency_is_spliced_and_can_be_taken_back_out() {
     let root = temp_dir("declare-dependency");
@@ -2298,8 +2243,8 @@ fn a_coordinate_carrying_a_version_is_refused_by_naming_the_flag() {
     assert!(stderr.contains("--version"), "{stderr}");
 }
 
-/// missing.md §5 and §7: a setting nobody's capability owns, and the
-/// test-only override that keeps a suite off the application's own datasource.
+/// A setting nobody's capability owns, and the test-only override that keeps
+/// a suite off the application's own datasource.
 ///
 /// `--tests` writes `config/` deliberately. The obvious spelling --
 /// `src/test/resources/application.properties` -- shadows the main file
@@ -2356,25 +2301,18 @@ fn a_set_property_is_owned_and_the_test_overlay_is_additive() {
 }
 
 /// A `@unique` violation answers 409, in whichever order the two capabilities
-/// arrived.
-///
-/// `pending.md` §1.1. jails puts `@unique` in the schema and generates an
-/// `ApiException.Conflict` documented "Becomes a 409", and nothing connected
-/// them: a duplicate reached the client as a 500, which is what alerting pages
-/// on and what client libraries retry.
+/// arrived: jails puts `@unique` in the schema and generates an
+/// `ApiException.Conflict` documented "Becomes a 409", and the advice connects
+/// them, or a duplicate reaches the client as a 500, which is what alerting
+/// pages on and what client libraries retry.
 ///
 /// The advice can only name `DuplicateKeyException` when `spring-tx` is on the
-/// classpath, which arrives with the JDBC starter -- so this is conditional,
-/// and the interesting half used to be the *order*.
-///
-/// **This is where the legacy engine's drift story went.** There, `add api`
-/// first planned against a pom that did not yet have the starter, `doctor`
-/// reported the gap and `jails sync` re-planned every recorded capability to
-/// repair it. The compiler recompiles the whole model on every command, so
-/// there is no half-planned state to report and no order to get wrong. The
-/// precondition survives where it is real: an *operation* that answers a
-/// route through a `JdbcClient` adapter refuses when the model declares no
-/// SQL storage, because that project cannot start.
+/// classpath, which arrives with the JDBC starter -- so this is conditional.
+/// The compiler recompiles the whole model on every command, so there is no
+/// half-planned state and no order to get wrong. The precondition survives
+/// where it is real: an *operation* that answers a route through a
+/// `JdbcClient` adapter refuses when the model declares no SQL storage,
+/// because that project cannot start.
 #[test]
 fn a_duplicate_key_answers_409_whichever_order_db_and_api_arrived() {
     let handler = "src/main/java/com/example/demo/api/ApiExceptionHandler.java";
@@ -2420,9 +2358,7 @@ fn a_duplicate_key_answers_409_whichever_order_db_and_api_arrived() {
         "one command and two must render the same advice"
     );
 
-    // And so is `api` then `db`, which is the order the legacy engine could
-    // not get right: its `api` plan was a pure function of the pom it saw, so
-    // the advice it wrote was permanently missing the arm.
+    // And so is `api` then `db`.
     let backwards = temp_dir("conflict-backwards");
     write_spring_fixture(&backwards);
     for capability in ["api", "db"] {

@@ -2,8 +2,8 @@
 #
 # Make a Claude Code on the web session able to run this repository's one gate.
 #
-# `mise run verify-rewrite` is the only answer to "is this green" (CLAUDE.md),
-# and the base web image cannot run it. Three things are missing, and each one
+# `mise run verify-rewrite` is the only answer to "is this green", and the base
+# web image cannot run it. Three things are missing, and each one
 # fails in a way that looks like a product defect:
 #
 #   * the toolchain `mise.toml` pins. The image ships JDK 21; generated
@@ -39,8 +39,6 @@ export PATH="$HOME/.local/bin:$PATH"
 # mise rather than a hand-rolled download because the repository already
 # depends on it by name: `.claude/settings.json`'s Stop hook and
 # `.githooks/pre-push` both run `mise run verify-rewrite` and nothing else.
-# A session without mise has been running that hook into a "command not found"
-# it reports as a gate failure.
 if ! command -v mise >/dev/null 2>&1; then
   log "installing mise"
   curl -fsSL https://mise.run | sh >/dev/null
@@ -62,9 +60,8 @@ mise install java@21
 # `/home/user/jails`; a tier-3 test generates a project into a scratch
 # directory and runs `mvn`, `mvnd` and `java` *there*, where there is no
 # `mise.toml` and the shim falls back to the global config -- empty, in a
-# session whose hook installed everything per-project. `CLAUDE.md` records
-# what that costs, and the three failures differ enough that none of them
-# names the cause:
+# session whose hook installed everything per-project. The three failures
+# differ and none of them names the cause:
 #
 #   * `mvnd` exits with `mise ERROR No version is set for shim: mvnd`.
 #   * `mvn` *passes*, on whatever system Maven is on PATH -- 3.9.11 here
@@ -102,8 +99,8 @@ done
 # `unheld_gradle_example_manifest_builds_on_its_pinned_toolchain` spends its
 # only attempt resolving `spring-boot-gradle-plugin` and
 # `spring-boot-dependencies` from Central and fails on
-# `Received status code 429 from server: Too Many Requests`. That reads as a
-# broken build and is a rate limit.
+# `Received status code 429 from server: Too Many Requests`: a rate limit that
+# reads as a broken build.
 #
 # Resolving them here moves that fetch into the hook, whose container state is
 # cached, so the suite finds them locally and the next session does not fetch
@@ -143,10 +140,8 @@ fi
 # **The whole bundle, diffed by fingerprint -- not the two-certificate file
 # next to it.** `/root/.ccr/agent-proxy-ca.crt` carries two CAs and the
 # sandbox intercepts with six: an egress-gateway CA and a TLS-inspection CA
-# are in `ca-bundle.crt` only. Trusting the two looked right and failed under
-# load, because which CA signs a connection varies -- a cold `mvn` succeeded by
-# hand and the same artifact failed inside a parallel suite, which reads
-# exactly like flaky infrastructure and is not.
+# are in `ca-bundle.crt` only, and which CA signs a connection varies, so
+# trusting two passes a hand-run `mvn` and fails inside a parallel suite.
 #
 # So: every certificate in the bundle the JDK does not already trust. The
 # fingerprint diff is what keeps that cheap (one `keytool -list`, then openssl
@@ -208,13 +203,11 @@ fi
 # **A retagged local image does not reach it, and cannot be made to.** The
 # generated Dockerfile opens with `# syntax=docker/dockerfile:1`, and that
 # external frontend resolves every `FROM` against the registry -- so whatever
-# `maven:...` points to locally is simply not consulted. Measured on this
-# machine: the identical build reports 154 imported CA certificates in its base
-# with the directive removed and **zero** with it present, and no arrangement
-# of tags, `--pull=false`, `docker rmi`, `buildx prune` or a daemon restart
-# moves that number. So the image is published under a name of its own and the
-# gate is told to substitute it, through `JAILS_OCI_BASE_IMAGES` and
-# `--build-context`, which is the one mechanism the frontend does honour.
+# `maven:...` points to locally is not consulted, whatever the tags,
+# `--pull=false` or a daemon restart say. So the image is published under a
+# name of its own and the gate is told to substitute it, through
+# `JAILS_OCI_BASE_IMAGES` and `--build-context`, the one mechanism the
+# frontend honours.
 #
 # **Import the bundle into the image's own `cacerts`; never point the JVM at
 # `java-truststore.p12`.** The environment builds that store for the host and
@@ -223,15 +216,12 @@ fi
 # which is what actually signs the connection. Setting
 # `-Djavax.net.ssl.trustStore` at it does not merely fail to help: it
 # *replaces* the JDK's own store, so it is strictly worse than doing nothing.
-# An earlier version of this hook set it, which is how a fixable image became
-# a permanently broken one. `mvn -B -ntp validate` inside the container
-# reproduces both answers in about four seconds if this is ever in doubt.
+# `mvn -B -ntp validate` inside the container reproduces both answers.
 #
 # **The image is keyed on the bundle's content, because the CA rotates.** Its
 # common name carries a month (`... (production) 2026-08`) and `/root/.ccr` is
 # regenerated per session, while the container image store survives into the
-# next one. A guard that asked "does the trusted image exist" answered yes
-# about an image built against a CA that no longer signs anything.
+# next one; an image built against a rotated CA must not count as present.
 #
 # **Two CAs sign here, not one, which is why the whole bundle goes in.** The
 # host's own traffic is signed by the `CCR agent-proxy interception CA`; a

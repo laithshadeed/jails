@@ -1,0 +1,144 @@
+<!--
+One of six. `docs/50-simplify.md` is the brief every agent reads first; it
+carries the baseline, the ownership table and rules R1-R9. Nothing here
+repeats them.
+
+**A closed item is deleted from this file**, in the commit that closes it.
+Item numbers `S55.n` are stable and never reused.
+-->
+
+# 55 — Compiler and templates: render the shell once
+
+**Read `docs/50-simplify.md` first.** You are agent 5. Your subject is the
+pure compiler -- 14,376 production lines that assemble Java and SQL in 838
+`format!(` sites -- and the templates it renders, of which fifty-five files
+are rendered by nothing.
+
+## What you own
+
+`crates/jails-compiler/**`, `templates/**`, `tests/golden/**`, `tests/golden.rs`,
+`tests/agreement.rs`, `tests/cli/generate.rs`, `docs/20-generated-java.md`.
+`tests/common/scenarios.rs` stays append-only for everyone, you included.
+
+## What you do not touch
+
+`jails-model` is agent 4's: an emitter reading a new model field is your
+change, adding the field is theirs and lands first. `jails-workspace` is agent
+3's: the compiler may not observe the filesystem, and a fact you need is a
+capture change they make. `templates/new/**` is rendered by the binary (agent
+2); leave it.
+
+## Baseline
+
+| | |
+|---|---:|
+| `jails-compiler` production / raw | 14,376 / 21,526 |
+| `format!(` sites | 838 |
+| of which `emit_unit.rs` / `emit_sql.rs` / `emit_operation/proof.rs` | 67 / 46 / 40 |
+| `Compiler::compile` | 508 lines, one function |
+| `templates/` | 142 files, held live by `every_template_is_named_by_a_rust_source` |
+| `tests/cli/generate.rs` | 7,948 lines, 110 tests |
+
+The orphan count, re-measured from the repository root -- templates are
+named through `template!("spring/x.java")` and the like, never by
+`include_str!` directly, so the match is on the path or basename:
+
+```
+grep -rhoE 'template(_here|_at)?!\([^)]*"[^"]+"' crates/*/src src | grep -oE '"[^"]+"' | tr -d '"' | sort -u > /tmp/refs
+for f in $(find templates -type f); do rel=${f#templates/}; b=$(basename $f)
+  grep -q "$rel\|$b" /tmp/refs || grep -rq "$b" crates/*/src src || echo "$f"; done
+```
+
+## Steps
+
+**S55.2 -- One Java shell.** Every emitter writes the package line, the
+import block, the class or record header and, for a test, the JUnit
+boilerplate, in its own `format!`. Count the copies:
+
+```
+grep -rn '"package {' crates/jails-compiler/src | wc -l
+grep -rn 'import ' crates/jails-compiler/src --include=*.rs | grep -c 'format!'
+```
+
+One `JavaUnit { package, imports, body }` value with import dedup and sorted
+rendering, built by every emitter and rendered in one place, is the first
+rung of A3.14's IR and the only one this pass takes: it deletes the copies
+without inventing `JavaExpr`. The exit is the `"package {` count at one and
+`normalize_imports`-style logic in one function. `Pack` already has this
+shape for capabilities; extend it rather than writing a second.
+
+**S55.3 -- One proof renderer.** `emit_operation/proof.rs` (566 raw),
+`emit_http/proof.rs` and the companion-test halves of `emit_unit.rs` each
+construct a request for a route and assert a status. The fact they turn on --
+how the request binds, and what the `Input` record declares -- is decided
+once by the route renderer (`bugs.md` B48), so the proof renderers should
+consume that decision rather than each re-deriving it. Measure how many
+construct a sample value for a field; that function exists once in
+`emit_unit` and should be the only one.
+
+**S55.4 -- `Compiler::compile` (A6.2).** 508 lines in one function, split
+only where the split *deletes* something: the per-entity loops that each
+emitter re-walks are the candidate. A split that moves the same lines into
+five functions is not this pass; the module-size ratchet cannot tell the two
+apart and you can.
+
+**S55.5 -- Packs as data.** `emit_capability/{basic,spring,project_file}.rs`
+are 1,400 production lines over 25 capabilities. A capability that is one
+template plus a dependency set plus a property set is a row, not a function;
+count how many of the 25 are exactly that shape after S55.2 and turn those
+into the table `Pack` already implies. The ones that are not (`db`, `api`,
+`kafka`, `format`) keep their functions.
+
+**S55.6 -- The SQL answer `doctor` needs.** `schema_lineage::columns_from`
+reads the columns back out of migration text; the compiler already knows
+them. Expose one function that returns the columns the storage lowering
+emits for an entity -- the list `emit_sql.rs` feeds to the DDL, the select,
+the insert and the row mapper -- so `doctor` compares the model against the
+migrations rather than parsing SQL.
+
+**S55.7 -- `tests/cli/generate.rs`.** 7,948 lines and 110 tests, most of
+them "generate X, then read a file". After S55.2 the assertions about the
+package line and the import block are one property, not a hundred; name the
+duplicates and delete them (R6). The real-toolchain tier is the oracle here
+and none of it goes.
+
+**S55.8 -- The one byte scan.** `emit_component/cli.rs` reads captured
+`App.java` and `<mainClass>` to decide whether to retarget the jar --
+`docs/00-contracts.md` records it as the one place a requirement is still
+derived from bytes rather than the model. Either the dispatcher becomes a
+model fact (agent 4 adds it, you read it) or the paragraph in
+`docs/00-contracts.md` is rewritten as deliberate. Decide; do not leave it
+described as both.
+
+## Traps
+
+- **Templates are `.java` files with `{{name}}` substitution, never
+  `format!`.** `format!` renders `{{` as `{`, which is how an extraction of
+  the alert rules' PromQL once changed them silently. `templates/add/**` are
+  substituted with `str::replace` because GitHub and Docker use `{{` and
+  `${{` themselves; keep that split.
+- **Goldens compare bytes and never run the code.** The oracle is a
+  generated project that compiles and passes its own tests, under
+  `JAILS_TOOLCHAIN=1`. Reproduce every item from a clean `jails new` and
+  state the command.
+- **Three of the last four generators needed no emitter**; a construct that
+  only wants syntax in front of an existing backend is agent 4's, not yours.
+- **`{{` appears in generated `.http` files** as the HTTP Client's own
+  variable syntax; those are built with `format!` and escaped `{{{{`
+  deliberately. Check `.java` alone if S55.2 touches the renderer.
+- **The compiler may not read the disk.** `canonical_compiler_is_pure_after_capture`
+  holds it, and the crate depends on nothing that can.
+
+## Items you close elsewhere
+
+`docs/00-contracts.md` §1.7's *per-emitter copies of the Java shell* row,
+and its §1.8 recorded exception if S55.8 lands the model fact.
+
+## Green
+
+```
+cargo test -p jails-compiler
+UPDATE_GOLDEN=1 cargo test --test golden   # then read the diff
+JAILS_TOOLCHAIN=1 cargo test --test cli generate::
+mise run verify-rewrite
+```

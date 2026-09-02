@@ -1,5 +1,5 @@
-//! The two POM edits `jails modernize` makes, kept out of `pom.rs` because
-//! that file is already at the size the ladder's largest-module gate allows.
+//! The two POM edits `jails modernize` makes, kept out of `pom.rs` so that
+//! file stays under the largest-module ceiling.
 //!
 //! They belong to the same subject as the rest of `pom.rs` -- surgical edits
 //! to a file the reader owns -- and are here rather than in `modernize.rs`
@@ -13,7 +13,7 @@ use super::inside_comment;
 /// a project inheriting Boot through `spring-boot-dependencies` in
 /// `<dependencyManagement>` says its version somewhere this does not look, and
 /// rewriting the wrong `<version>` in a POM is the worst edit available.
-pub fn with_parent_version(pom: &str, version: &str) -> Option<String> {
+pub(crate) fn with_parent_version(pom: &str, version: &str) -> Option<String> {
     let at = pom.find("spring-boot-starter-parent")?;
     let start = at + pom[at..].find("<version>")? + "<version>".len();
     let end = start + pom[start..].find("</version>")?;
@@ -32,7 +32,7 @@ pub fn with_parent_version(pom: &str, version: &str) -> Option<String> {
 /// would be jails deciding something the project deliberately left to the
 /// parent -- and `MIN_RELEASE` exists because an adopted project's release is
 /// its own business.
-pub fn with_release_level(pom: &str, release: u32) -> Option<String> {
+pub(crate) fn with_release_level(pom: &str, release: u32) -> Option<String> {
     for tag in [
         "maven.compiler.release",
         "java.version",

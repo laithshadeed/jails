@@ -32,12 +32,9 @@ use std::path::{Path, PathBuf};
 
 const MODEL_PATH: &str = crate::model_command::JDL_PATH;
 
-/// Every generator kind, and there is deliberately no `_` arm.
-///
-/// The match became exhaustive when the last four kinds got an answer, and
-/// keeping it that way is worth more than the arm it replaces: a kind added
-/// without deciding what a canonical project does with it is now a compile
-/// error rather than a silent fall-through to the compatibility refusal.
+/// Every generator kind, and there is deliberately no `_` arm: a kind added
+/// without deciding what a canonical project does with it is a compile error
+/// rather than a silent fall-through.
 pub(crate) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
     match args.kind {
         ArtifactKind::Field => crate::model_resource::add_generated_field(args, invocation),
@@ -236,7 +233,7 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
     // **Normalized, so both spellings mean one place.** A reader types the
     // package they see in their editor -- `com.example.demo.billing` -- and
     // the model states it relative to the base, so an absolute one has the
-    // base stripped rather than appended: without this the entity landed in
+    // base stripped rather than appended: appended, the entity lands in
     // `com/example/demo/com/example/demo/billing`.
     let package = args
         .package
@@ -267,9 +264,10 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
             // **A strict superset is an addition, not a disagreement.** A
             // declarative manifest states the shape it wants and is replayed
             // whenever it changes, so a row that gained a field has to mean
-            // "add that field" -- refusing made `app apply` the one command
-            // that could not converge on the file it exists to read. Typing
-            // the same scaffold with one more field means the same thing.
+            // "add that field" -- refusing would make `app apply` the one
+            // command that cannot converge on the file it exists to read.
+            // Typing the same scaffold with one more field means the same
+            // thing.
             //
             // Only additions. A field that exists with a *different* shape is
             // an evolution with a policy attached -- a type change, a
@@ -411,8 +409,9 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
     // **The entity's projections ride with it.** `AddEntity` carries
     // `entity.facets`, which records *that* an entity is served over HTTP and
     // not *where*; the arguments live on the `Projection`. Sending the entity
-    // alone made the patch a lossy description of the source that produced it,
-    // so the first compile disagreed with every later `sync`.
+    // alone would make the patch a lossy description of the source that
+    // produced it, so the first compile would disagree with every later
+    // `sync`.
     let projections: Vec<_> = next_model
         .projections
         .values()
@@ -451,9 +450,7 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
     // stable entity child with its own identity and its own forward
     // migration, which is `resource index add`'s whole contract -- so the
     // frontend that owns it is the one that applies it, rather than the entity
-    // renderer growing a copy. Refusing instead was what stopped a proof
-    // application's `g scaffold --index "user_id, time_stamp desc"` from
-    // reaching the canonical path at all.
+    // renderer growing a copy.
     //
     // After the entity, necessarily: the columns are resolved against model
     // field identity, and the fields do not exist until the patch above lands.
@@ -496,14 +493,14 @@ fn same_entity_contribution(
         && existing.label == requested.label
         && existing.names == requested.names
         && existing.active == requested.active
-        // **A subset, like the fields and indexes below.** This asked for
-        // equality, so re-declaring an entity that had since gained a facet
-        // refused -- "already declared with a different shape" -- even though
-        // everything the request asks for is present. The minicom manifest
-        // declares `User` as a scaffold and again as a seed, so replaying it
-        // a second time hit exactly that, and the function's own name is
-        // `contribution`: what this request contributes must be there, not
-        // everything that is there must have come from this request.
+        // **A subset, like the fields and indexes below.** Equality would
+        // refuse re-declaring an entity that has since gained a facet --
+        // "already declared with a different shape" -- even though everything
+        // the request asks for is present, and a manifest declaring `User` as
+        // a scaffold and again as a seed replays into exactly that. The
+        // function's own name is `contribution`: what this request
+        // contributes must be there, not everything that is there must have
+        // come from this request.
         && requested.facets.is_subset(&existing.facets)
         && existing.enum_constants == requested.enum_constants
         && requested
@@ -529,17 +526,6 @@ fn append_declaration(source: String, declaration: &str) -> Result<String> {
     jails_model::append_jdl_declaration(&source, declaration).map_err(jdl_edit_failure)
 }
 
-/// The same declaration, with the collection route the reader pinned.
-///
-/// **`--path` is a projection argument, not a new mechanism.** `use
-/// scaffold(path: "/admin_api/operators")` is already in the v1 grammar and
-/// `emit_resource_http::resource_path` already prefers it over the table name;
-/// what refused was the frontend, so the flag reached a project that could
-/// represent it and was told the profile could not. The pre-v1 draft has no
-/// projection arguments, so pinning there is refused rather than silently
-/// dropped -- a route the reader asked for and did not get is the failure this
-/// closes, and writing it into a dialect on the deletion list would only move
-/// it.
 /// A stored resource needs exactly one primary key, and it has to be declared.
 ///
 /// **Refused here rather than by the linker.** The projection prerequisite
@@ -566,8 +552,8 @@ fn refuse_unstorable_identity(fields: &[ParsedField], java_name: &str) -> Result
 
 /// A component whose type is another record has no column to live in.
 ///
-/// The engine flattened it silently -- the record compiled, the DDL had no
-/// column for it, and the adapter's insert named one that did not exist. The
+/// Flattening it silently would compile the record, give the DDL no column
+/// for it, and have the adapter's insert name one that does not exist. The
 /// two things a reader actually wants are both named here: the foreign key
 /// column, and the declaration that makes it an invariant.
 fn refuse_unstorable_components(

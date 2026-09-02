@@ -131,7 +131,7 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
             resolved
         });
         let java_type = entity.java_name.unwrap_or_else(|| upper_camel_case(&label));
-        // Pluralized, per §9.7. `@table` still wins: a contract pin is the
+        // Pluralized, per JDL v1 §9.7. `@table` still wins: a contract pin is the
         // reader saying what the database already calls it.
         let sql_table = entity
             .table
@@ -336,16 +336,12 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
                         sql_table,
                     },
                     active: entity.active,
-                    // **`http` implies `service`**, and the compatibility
-                    // input is why this is here rather than only in
-                    // `validate_prerequisites`. JDL v1 states the requirement
-                    // and refuses a model that breaks it; the pre-v1 draft
-                    // lists facets directly and reaches no such check, so a
-                    // `.jails/model.toml` could declare `http` without
-                    // `service` -- and the controller that serves the resource
-                    // delegates to the service, so the project compiled
-                    // against a package that did not exist. Two dialects for
-                    // one model must mean the same application.
+                    // **`http` implies `service`**, here as well as in
+                    // `validate_prerequisites`: a `Document` can list facets
+                    // directly, and the controller that serves the resource
+                    // delegates to the service, so a model declaring `http`
+                    // without `service` would compile against a package that
+                    // does not exist.
                     facets: {
                         let mut facets = entity.facets;
                         if facets.contains(&crate::model::Facet::Http) {
@@ -412,9 +408,7 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
     };
     let mut model = AppModel {
         schema: document.schema,
-        // Both default here: JDL v1 is convention registry 1, and a linked
-        // model is language 1 whichever dialect the source was in, because the
-        // pre-v1 draft reaches this function through the same `Document`.
+        // Both default here: JDL v1 is convention registry 1 and language 1.
         language_version: 1,
         convention_version: 1,
         project: ProjectIntent {
@@ -453,75 +447,52 @@ mod tests {
     use super::*;
     use crate::OperationKind;
 
-    const VALID: &str = r#"
-schema = "jails.model.v1"
+    const VALID: &str = r#"jdl 1
 
-[project]
-id = "project_notes"
-name = "Notes"
-base_package = "com.example.notes"
-java_release = 26
-dialect = "postgresql"
+app Notes @id(project_notes) {
+  pkg com.example.notes
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
 
-[capabilities.database]
-id = "cap_database"
-kind = "db"
+entity Note @id(ent_note) {
+  use repo, service, http
 
-[entities.note]
-id = "ent_note"
-facets = ["record", "repository", "http"]
+  id: uuid @id(fld_note_id) @pk
+  title: string @id(fld_note_title) @notBlank
 
-[entities.note.fields.id]
-id = "fld_note_id"
-type = "uuid"
-primary_key = true
+  command CreateNote(title) @id(op_create_note) {
+    route POST "/notes"
+  }
 
-[entities.note.fields.title]
-id = "fld_note_title"
-type = "string"
-non_blank = true
+  query OpenNotes(title) @id(op_open_notes) {
+    order by [id]
+    limit 50
+    route GET "/notes"
+  }
 
-[operations.note_created]
-kind = "event"
-id = "op_note_created"
-on = "note"
-fields = ["id", "title"]
+  transition RenameNote(id, title) @id(op_rename_note) {
+    update [title]
+    emit NoteCreated
+    route PATCH "/notes/{id}"
+  }
 
-[operations.create_note]
-kind = "command"
-id = "op_create_note"
-on = "note"
-fields = ["title"]
-route = "POST /notes"
-
-[operations.open_notes]
-kind = "query"
-id = "op_open_notes"
-on = "note"
-filters = ["title"]
-order_by = ["id"]
-limit = 50
-route = "GET /notes"
-
-[operations.rename_note]
-kind = "transition"
-id = "op_rename_note"
-on = "note"
-fields = ["title"]
-sets = ["title"]
-yields = "note_created"
-route = "PATCH /notes/{id}"
+  event NoteCreated(id, title) @id(op_note_created)
+}
 "#;
 
     #[test]
     fn links_every_label_to_a_stable_identity() {
-        let model = crate::parse_toml(VALID).unwrap();
+        let model = crate::parse_jdl(VALID).unwrap();
         let entity = model.entity(&EntityId::parse("ent_note").unwrap()).unwrap();
         assert_eq!(entity.names.java_type, "Note");
-        // Pluralized per §9.7: the table is `notes`, and importing a legacy
-        // project must not rename it.
+        // Pluralized per JDL v1 §9.7: the table is `notes`.
         assert_eq!(entity.names.sql_table, "notes");
-        assert_eq!(model.node_count(), 9);
+        // The project, the `cap db` that `storage postgres` materializes, the
+        // entity, its two fields, four operations and three projections.
+        assert_eq!(model.node_count(), 12);
         assert_eq!(
             model.canonical_json().unwrap(),
             model.canonical_json().unwrap()
@@ -542,10 +513,10 @@ route = "PATCH /notes/{id}"
     #[test]
     fn reports_independent_semantic_problems_together() {
         let invalid = VALID
-            .replace("id = \"cap_database\"", "id = \"ent_note\"")
-            .replace("route = \"GET /notes\"", "route = \"POST /notes\"")
-            .replace("filters = [\"title\"]", "filters = [\"missing\"]");
-        let diagnostics = crate::parse_toml(&invalid).unwrap_err();
+            .replace("@id(project_notes)", "@id(ent_note)")
+            .replace("route GET \"/notes\"", "route POST \"/notes\"")
+            .replace("query OpenNotes(title)", "query OpenNotes(missing)");
+        let diagnostics = crate::parse_jdl(&invalid).unwrap_err();
         let codes = diagnostics
             .diagnostics
             .iter()
@@ -558,12 +529,9 @@ route = "PATCH /notes/{id}"
 
     #[test]
     fn a_label_rename_preserves_explicit_identity() {
-        let renamed = VALID
-            .replace("[entities.note]", "[entities.memo]")
-            .replace("[entities.note.fields", "[entities.memo.fields")
-            .replace("on = \"note\"", "on = \"memo\"");
-        let before = crate::parse_toml(VALID).unwrap();
-        let after = crate::parse_toml(&renamed).unwrap();
+        let renamed = VALID.replace("entity Note @id(ent_note)", "entity Memo @id(ent_note)");
+        let before = crate::parse_jdl(VALID).unwrap();
+        let after = crate::parse_jdl(&renamed).unwrap();
         let id = EntityId::parse("ent_note").unwrap();
         assert_eq!(
             before.entity(&id).unwrap().id,
@@ -574,7 +542,7 @@ route = "PATCH /notes/{id}"
 
     #[test]
     fn semantic_removal_refuses_dangling_operation_edges() {
-        let mut model = crate::parse_toml(VALID).unwrap();
+        let mut model = crate::parse_jdl(VALID).unwrap();
         let event = OperationId::parse("op_note_created").unwrap();
         let error = model
             .apply(crate::ModelPatch::RemoveOperation(event))
@@ -588,8 +556,7 @@ route = "PATCH /notes/{id}"
             .unwrap_err();
         // `refuse_dependents` names each dependent the way a reader wrote it in
         // the model -- `operation CreateNote` -- rather than by its stable-id
-        // label. Asserting the label spelling pinned a rendering the refusal no
-        // longer uses.
+        // label.
         assert!(error.contains("operation CreateNote"), "{error}");
         assert!(error.contains("operation OpenNotes"), "{error}");
     }
@@ -597,12 +564,12 @@ route = "PATCH /notes/{id}"
     /// **A projection is the entity's child, not a dependent of it.**
     ///
     /// `dependents` deliberately does not count one -- `use repo` says
-    /// something about `note` and has no meaning without it -- so removal
-    /// used to leave the patched model carrying projections pointing at an
-    /// entity that was gone. Nothing read them, so the emitted tree was right
-    /// and the *accepted* model was not, and `model check --frozen` then
-    /// reported the project as diverged from its own source, permanently:
-    /// re-linking the source yields no projections and the lock had three.
+    /// something about `note` and has no meaning without it -- so a removal
+    /// that forgets them leaves the patched model carrying projections
+    /// pointing at nothing. Nothing reads them, so the emitted tree is right
+    /// and the *accepted* model is not, and `model check --frozen` reports
+    /// the project as diverged from its own source, permanently: re-linking
+    /// the source yields no projections and the lock still has them.
     #[test]
     fn removing_an_entity_removes_the_projections_that_are_its_children() {
         const SOURCE: &str = r#"jdl 1
@@ -625,8 +592,8 @@ entity Note @id(ent_note) {
 "#;
         for patch in [
             crate::ModelPatch::RemoveEntity(EntityId::parse("ent_note").unwrap()),
-            // The other removal, and the one that had the bug for longer: a
-            // confirmed storage drop takes the entity out too.
+            // The other removal: a confirmed storage drop takes the entity out
+            // too.
             crate::ModelPatch::RetireEntity {
                 entity: EntityId::parse("ent_note").unwrap(),
                 policy: crate::StorageRetirementPolicy::Drop {
@@ -648,11 +615,12 @@ entity Note @id(ent_note) {
 
     #[test]
     fn ejection_is_a_semantic_ownership_edge() {
-        let source = format!(
-            "{VALID}\n[ejections.database]\nid = \"eject_database\"\ntarget = \"art_cap_database_ent_note_repository\"\n"
-        );
-        let mut model = crate::parse_toml(&source).unwrap();
-        let capability = CapabilityId::parse("cap_database").unwrap();
+        // The `id(...)` escape: the boundary path (`Note.repo.postgres`) is
+        // the specification's one recorded gap and does not link yet.
+        let source =
+            format!("{VALID}\neject id(art_cap_db_ent_note_repository) @id(eject_database)\n");
+        let mut model = crate::parse_jdl(&source).unwrap();
+        let capability = CapabilityId::parse("cap_db").unwrap();
         let error = model
             .apply(crate::ModelPatch::RemoveCapability(capability))
             .unwrap_err();
@@ -666,14 +634,5 @@ entity Note @id(ent_note) {
             }))
             .unwrap_err();
         assert!(error.contains("does not exist"), "{error}");
-    }
-
-    #[test]
-    fn unknown_source_keys_fail_closed() {
-        let diagnostics = crate::parse_toml(
-            &VALID.replace("java_release = 26", "java_release = 26\njava_relese = 26"),
-        )
-        .unwrap_err();
-        assert_eq!(diagnostics.diagnostics[0].code, "model-syntax");
     }
 }

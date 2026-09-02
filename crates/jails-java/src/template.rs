@@ -1,26 +1,19 @@
 //! Java templates, as Java files.
 //!
-//! Every generated Java body used to live in a Rust `format!` string. That
-//! cost more than the line count suggests, because `format!` reads `{` and
-//! `}` as its own syntax and Java is made of braces: **every** brace in a
-//! template had to be doubled, including in Javadoc, so a class body read
-//! `class {name}Controller {{` and a doc comment read `{{@code public}}`.
-//! 1,172 lines across three files carried that escaping. The result was text
-//! that is not Java: no syntax highlighting, no editor that can check it, and
-//! a diff on a template change that is hard to read.
-//!
-//! A template is now a real `.java` file under `templates/`, pulled in with
-//! `include_str!` so it is still a compile-time constant with no runtime file
-//! access and no new dependency.
+//! A template is a real `.java` file under `templates/`, never a Rust
+//! `format!` string: `format!` reads `{` and `}` as its own syntax and Java is
+//! made of braces, so a `format!` template doubles every one of them,
+//! including in Javadoc, and the result is text no editor can check. The files
+//! are pulled in with `include_str!`, so each is still a compile-time constant
+//! with no runtime file access and no new dependency.
 //!
 //! ## The placeholder syntax, and why this one
 //!
-//! `{{name}}`. Chosen by checking rather than by taste: the golden snapshots
-//! of all 159 generated files contain no `{{` anywhere, so the sequence
-//! cannot collide with Java jails emits. The obvious alternatives both can:
+//! `{{name}}`. No `{{` appears in any `.java` jails emits, so the sequence
+//! cannot collide with generated Java. The obvious alternatives both can:
 //! `{name}` collides with Javadoc's `{@code ...}` shape closely enough to be
 //! risky and cannot be validated (Java is full of `{`), and `${name}`
-//! collides outright -- `spring.rs` generates `@Value("${...}")`.
+//! collides outright -- generated Java carries `@Value("${...}")`.
 //!
 //! Because `{{` cannot appear legitimately, a leftover placeholder is
 //! detectable, so an unknown or misspelled key is an **error** rather than
@@ -32,29 +25,29 @@
 //! Substitution only: no conditionals, no loops, no expressions. Anything
 //! that varies structurally -- a Spring project's `@Component` versus a plain
 //! one's absence of it, a body repeated per field -- stays in Rust and is
-//! passed in as a rendered value. `refactor.md` names a general template
-//! language as a non-goal, and the reason holds: a conditional in a template
-//! is logic that no test can reach directly and no compiler can check.
+//! passed in as a rendered value. A general template language is a non-goal:
+//! a conditional in a template is logic that no test can reach directly and
+//! no compiler can check.
 //!
 //! ## Overrides, and the guarantee they cost
 //!
-//! `plan.md` §6.6 tier 2: "change what the generated code *looks like*" is the
-//! flexibility people actually reach for -- not a new generator, just *this*
-//! class shaped differently. A file at `.jails/templates/<name>` (project) or
+//! "Change what the generated code *looks like*" is the flexibility people
+//! actually reach for -- not a new generator, just *this* class shaped
+//! differently. A file at `.jails/templates/<name>` (project) or
 //! `~/.config/jails/templates/<name>` (machine) replaces the built-in of the
 //! same name, in that order. The precedent is `openapi-generator`'s
 //! `-t/--template-dir`.
 //!
 //! **An overridden template is not golden-tested.** That is the honest cost,
-//! and it is why `doctor` reports every active override by name -- the same
-//! rule as `remove`'s `unowned_properties`: jails names what it did not write
-//! before the reader has to find out from a failing build.
+//! and it is why `doctor` reports every active override by name: jails names
+//! what it did not write before the reader has to find out from a failing
+//! build.
 //!
 //! Overrides are held to the same contract as the built-ins: the placeholder
 //! set must match exactly. A template missing a key the generator supplies, or
 //! using one it does not, is an **error naming the file** -- not a panic, since
-//! this is now a user-authored file and a panic would report jails' bug for
-//! the reader's typo.
+//! this is a user-authored file and a panic would report jails' bug for the
+//! reader's typo.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -67,8 +60,8 @@ static OVERRIDES: OnceLock<BTreeMap<String, Override>> = OnceLock::new();
 pub(crate) struct Override {
     pub path: PathBuf,
     /// Deliberately not `contents`: `tests/architecture/` counts that field
-    /// name as a file-about-to-be-written, and rung 2's gate is that there is
-    /// exactly one such struct. This is a file already *read*.
+    /// name as a file-about-to-be-written and holds the number of such structs
+    /// at one. This is a file already *read*.
     text: String,
 }
 
@@ -81,9 +74,9 @@ pub(crate) struct Override {
 ///
 /// `$dir` is the caller's template root and is not optional, because
 /// `CARGO_MANIFEST_DIR` expands at the *call site*: a macro that baked it in
-/// resolved to whichever crate invoked it, which is the workspace's one real
-/// trap here. Each crate declares its own one-line `template!` wrapper naming
-/// its root, so a wrong path is a compile error rather than a silent miss.
+/// would resolve to whichever crate invoked it. Each crate declares its own
+/// one-line `template!` wrapper naming its root, so a wrong path is a compile
+/// error rather than a silent miss.
 #[macro_export]
 macro_rules! template_at {
     ($dir:expr, $name:literal) => {
@@ -166,7 +159,7 @@ fn agrees(candidate: &str, default: &str) -> std::result::Result<(), String> {
 
 /// The two tiers, taken as arguments so a test can exercise the precedence
 /// without setting a process-global environment variable -- every unit test in
-/// this crate shares one process (`CLAUDE.md`), so a test that sets `HOME` or
+/// this crate shares one process, so a test that sets `HOME` or
 /// `XDG_CONFIG_HOME` races every other test that reads it.
 fn discover(user: Option<PathBuf>, root: Option<&Path>) -> BTreeMap<String, Override> {
     let mut found = BTreeMap::new();
@@ -232,10 +225,10 @@ pub fn render(template: impl AsRef<str>, values: &[(&str, &str)]) -> String {
 /// `render` panics because its templates are jails' own and a missing key is
 /// a programming error the golden target catches. A template that came off
 /// disk — a project or user override — is the reader's file, and reporting
-/// jails' bug for their typo would be the wrong error entirely. plan.md §R3.2
-/// puts template materialisation inside preparation, where a refusal has to
-/// be a value rather than an abort.
-pub fn try_render(
+/// jails' bug for their typo would be the wrong error entirely. Template
+/// materialisation happens inside planning, where a refusal has to be a value
+/// rather than an abort.
+pub(crate) fn try_render(
     template: impl AsRef<str>,
     values: &[(&str, &str)],
 ) -> std::result::Result<String, String> {

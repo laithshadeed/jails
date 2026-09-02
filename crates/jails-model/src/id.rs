@@ -1,8 +1,7 @@
 //! Stable identities, and one rule for every one of them.
 //!
-//! **Identity is the ID; every name is a projection.** That is the first of
-//! `simplify-sol.md`'s five contracts, and this module is where it is made
-//! true: an `EntityId`, `FieldId`, `OperationId` and the rest are opaque
+//! **Identity is the ID; every name is a projection.** That is the model's
+//! first contract, and this module is where it is made true: an `EntityId`, `FieldId`, `OperationId` and the rest are opaque
 //! strings the model carries forever, while the Java type, the SQL table, the
 //! column and the route are derived from labels and may change. Renaming is
 //! therefore a projection change rather than a delete and a create, which is

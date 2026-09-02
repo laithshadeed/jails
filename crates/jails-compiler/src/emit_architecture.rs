@@ -8,11 +8,11 @@
 //! points at `.jails/architecture-baseline` and refuses to *create* it, so
 //! recording today's violations stays a decision the reader makes.
 //!
-//! It is emitted whenever the model serves a resource, rather than once on the
-//! first scaffold the way the engine this replaces did. The compiler is pure
-//! and idempotent, so "once" has nowhere to live; deriving it from the model
-//! is also the stronger property, because a project that loses its last
-//! scaffold loses a suite that would have been checking nothing.
+//! It is emitted whenever the model serves a resource, never "once on the
+//! first scaffold". The compiler is pure and idempotent, so "once" has
+//! nowhere to live; deriving it from the model is also the stronger property,
+//! because a project that loses its last scaffold loses a suite that would
+//! have been checking nothing.
 
 use crate::CompileError;
 use jails_contracts::{
@@ -52,8 +52,7 @@ pub(crate) fn dependency() -> BuildDependency {
 ///
 /// `Facet::Http` rather than "any entity": the suite's rules are about the
 /// controller/service/repository/adapter split, and a project of plain records
-/// has no boundary for them to be about. That is the same condition the engine
-/// this replaces used, which spelled it "the first scaffold".
+/// has no boundary for them to be about.
 pub(crate) fn applies(model: &AppModel) -> bool {
     model
         .entities
@@ -74,10 +73,10 @@ pub(crate) fn lower(
         ("pkg", base.clone()),
         ("domain", model.project.package_for(Package::Domain)),
         // **`repository`, not `app`.** The rule text names the package the
-        // ports are actually in, and the canonical layout puts them under
-        // `repository` where the engine this replaces used `app`. A suite
-        // naming a package the project does not have passes by checking
-        // nothing, which is the failure mode `allowEmptyShould(true)` hides.
+        // ports are actually in, and the layout puts them under `repository`.
+        // A suite naming a package the project does not have passes by
+        // checking nothing, which is the failure mode `allowEmptyShould(true)`
+        // hides.
         ("app", model.project.package_for(Package::Repository)),
         ("service", model.project.package_for(Package::Service)),
         ("web", model.project.package_for(Package::Web)),

@@ -1,14 +1,14 @@
 //! The closed vocabularies the CLI is built from.
 //!
-//! [`Capability`] lives here rather than beside `add::plan_for` because
-//! `config.rs` validates a manifest's `capabilities` list against it, and
-//! `config` is below the capability layer. Deriving the valid names from the
-//! enum instead of restating them is the point -- a capability added without a
-//! thought for the manifest is then automatically valid in it -- and doing that
-//! across a layer boundary is what made `config` and `add` mutually dependent.
+//! [`Capability`] lives here rather than beside the capability planners
+//! because `config.rs` validates a manifest's `capabilities` list against it,
+//! and `config` is below the capability layer. Deriving the valid names from
+//! the enum instead of restating them is the point -- a capability added
+//! without a thought for the manifest is then automatically valid in it --
+//! and doing that across a layer boundary is a cycle.
 //!
-//! Only the *names* are here. What a capability installs is
-//! `add::plan_for`'s, and stays there.
+//! Only the *names* are here. What a capability installs is the compiler's,
+//! and stays there.
 
 use clap::ValueEnum;
 use jails_support::Result;
@@ -114,14 +114,14 @@ impl Capability {
 
 /// Which SQL the generated DDL is written in.
 ///
-/// Two, and the list is closed for the reason `README.md`'s scope bar is: a
-/// dialect jails cannot check is a string it passes through. Each entry here
+/// Two, and the list is closed: a dialect jails cannot check is a string it
+/// passes through. Each entry here
 /// exists because a *specific* type name differs and the difference was
 /// verified against that database's own source -- not because a database is
 /// popular.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Default)]
 pub enum Dialect {
-    /// The default, and what `README.md` documents.
+    /// The default.
     #[default]
     Postgres,
     /// `add h2`. In-process, and the only difference that reaches the DDL is
@@ -150,22 +150,18 @@ impl Dialect {
     }
 }
 
-/// How a generated endpoint reads the request it is sent.
-///
-/// **Two, because a browser form and a JSON API are the two things that
-/// actually arrive**, and Spring binds them through different machinery:
 /// Whether a transition insists on the caller's version, or only checks one
 /// when the caller sends it.
 ///
 /// `If-Match` is a *conditional request* header: RFC 9110 defines it as a
 /// precondition the origin server evaluates when it is present, and a server
-/// MAY require it. jails required it, which is a policy rather than a reading
-/// of HTTP -- and a policy that makes every generated transition unreachable
-/// from an ordinary browser page, because `$.ajax({type: 'PATCH'})` sends no
-/// header and Spring answers 400 for a missing required one before any of the
-/// code jails wrote runs.
+/// MAY require it. Requiring it is a policy rather than a reading of HTTP --
+/// and a policy that makes every generated transition unreachable from an
+/// ordinary browser page, because `$.ajax({type: 'PATCH'})` sends no header
+/// and Spring answers 400 for a missing required one before any of the code
+/// jails wrote runs.
 ///
-/// `required` is that policy, and stays the default: the compare-and-swap is
+/// `required` is that policy, and is the default: the compare-and-swap is
 /// what a transition *is*, and a caller that never sends a precondition can
 /// silently lose an update. `optional` says the guarantee is available and not
 /// insisted on -- the update is unconditional when no precondition arrives,
@@ -200,22 +196,16 @@ impl Precondition {
             .into()),
         }
     }
-
-    /// True when a caller may omit the header, so the version arrives boxed
-    /// and `null` means "no precondition was given".
-    pub fn is_optional(self) -> bool {
-        matches!(self, Self::Optional)
-    }
 }
 
+/// How a generated endpoint reads the request it is sent.
+///
+/// **Two, because a browser form and a JSON API are the two things that
+/// actually arrive**, and Spring binds them through different machinery:
 /// `@RequestBody` runs Jackson over the body, `@ModelAttribute` runs the data
 /// binder over request parameters. A method parameter cannot be both, so a
 /// controller that guesses wrong answers 415 to every real request and says
 /// only "Content-Type 'application/x-www-form-urlencoded' is not supported".
-///
-/// `missing.md` M15 is that failure, counted: `$.post(url, {email})` is what
-/// every jQuery page in the wild sends, and every endpoint jails generated was
-/// `@RequestBody`.
 ///
 /// `json` is a JSON body bound by Jackson -- the default, and what an API
 /// client sends. `form` is `application/x-www-form-urlencoded`, bound by
@@ -257,14 +247,6 @@ impl WireFormat {
         match self {
             Self::Json => "RequestBody",
             Self::Form => "ModelAttribute",
-        }
-    }
-
-    /// The `org.springframework.web.bind.annotation` type that annotation is.
-    pub fn binding_import(self) -> &'static str {
-        match self {
-            Self::Json => "import org.springframework.web.bind.annotation.RequestBody;\n",
-            Self::Form => "import org.springframework.web.bind.annotation.ModelAttribute;\n",
         }
     }
 }
@@ -337,35 +319,17 @@ impl HttpMethod {
             Self::Delete => "DeleteExchange",
         }
     }
-
-    /// The method name a stub handler takes.
-    pub fn handler_name(self) -> &'static str {
-        self.label()
-    }
-
-    /// Whether a request of this method conventionally carries a body, and so
-    /// whether `--on <Type>` becomes a `@RequestBody` parameter.
-    ///
-    /// GET and DELETE are excluded because a body on either is not forbidden
-    /// by HTTP but is ignored by most of the stack between the caller and the
-    /// handler -- a parameter that silently never binds is worse than none.
-    pub fn takes_a_body(self) -> bool {
-        matches!(self, Self::Post | Self::Put | Self::Patch)
-    }
 }
 
 /// Every artifact `jails generate` can write.
 ///
 /// A `clap::ValueEnum`, and that must stay true: it is the only way
-/// `clap_complete` can emit a static completion list for `jails g <TAB>`
-/// (CLAUDE.md). It lives here beside [`Capability`] rather than with the
-/// generators for the same reason that one does -- these are the closed
-/// vocabularies the CLI is built from, and the layers below the generators
-/// validate against them.
+/// `clap_complete` can emit a static completion list for `jails g <TAB>`. It
+/// lives here beside [`Capability`] rather than with the generators for the
+/// same reason that one does -- these are the closed vocabularies the CLI is
+/// built from, and the layers below the generators validate against them.
 ///
-/// What each kind *writes* is `jails-generate`'s, and stays there. R1 renames
-/// this to `Recipe` at the internal boundary while the clap spelling stays at
-/// the CLI edge.
+/// What each kind *writes* is the compiler's, and stays there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, ValueEnum)]
 #[value(rename_all = "lowercase")]
 pub enum ArtifactKind {
@@ -438,10 +402,9 @@ pub enum ArtifactKind {
     /// `--on` names the use case and `--yields` its typed event. Delivery uses
     /// the event id as an idempotency key and inherits the outbox's leases,
     /// bounded retries, and terminal diagnostics.
-    // `webhook` was an alias here until the inbound kind existed. It is not
-    // wrong -- this *sends* one -- but it is ambiguous now, and "webhook"
+    // The alias is `outbound`, not `webhook`: this *sends* one, but "webhook"
     // means the endpoint that receives Stripe's far more often than the client
-    // that posts yours. `outbound` says which half without the ambiguity.
+    // that posts yours, and that kind exists too. `outbound` says which half.
     #[value(name = "http-sink", alias = "outbound")]
     HttpSink,
     /// At-most-once execution with a *retained result*: a scoped receipt keyed
@@ -511,7 +474,7 @@ mod tests {
     use super::*;
 
     /// A hand-written label is a second copy of clap's canonical name, and a
-    /// second copy drifts. `pending.md` §6.4.
+    /// second copy drifts.
     ///
     /// The label is what `jails.toml` stores and what a refusal prints, so a
     /// capability spelled one way by clap and another by `label()` would be

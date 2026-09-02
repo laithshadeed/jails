@@ -7,8 +7,8 @@
 //! the JSpecify dependency, the devtools defaults, the properties file, the
 //! release level when Initializr would not serve the one that was asked for.
 //!
-//! `pending.md` §8.1's split. This is the half that knows what Spring is;
-//! [`super::plain`] is the half that does not.
+//! This is the half that knows what Spring is; [`super::plain`] is the half
+//! that does not.
 
 use super::plain::ensure_enforcer;
 use super::seed::GITIGNORE;
@@ -243,7 +243,7 @@ fn new_offline(request: &Request<'_>, deps: &str) -> Result<()> {
         ),
         "pom.xml",
     )?;
-    crate::generate::write_new_file(
+    super::write::write_new_file(
         tree,
         &source.join(format!("{class}Application.java")),
         &crate::template::render(
@@ -251,7 +251,7 @@ fn new_offline(request: &Request<'_>, deps: &str) -> Result<()> {
             &[("package", &package), ("class", &class)],
         ),
     )?;
-    crate::generate::write_new_file(
+    super::write::write_new_file(
         tree,
         &tests.join(format!("{class}ApplicationTests.java")),
         &crate::template::render(
@@ -339,10 +339,9 @@ fn finish_spring_project(
     // six defaults move with it. They are `prop` declarations in the model
     // rather than text this function writes, because a key written as
     // reader-owned bytes *and* declared in the model is the collision
-    // `reconcile_properties` refuses -- which is exactly how `server.shutdown`,
-    // declared by both `new` and `add db`, made `jails set
-    // server.shutdown=graceful` refuse on a project jails created seconds
-    // earlier. The compiler writes `application.properties` from the model.
+    // `reconcile_properties` refuses -- and `server.shutdown` is declared by
+    // both `new` and `add db`. The compiler writes `application.properties`
+    // from the model.
     super::seed::seed_canonical_model(
         tree,
         seed.app,
@@ -407,8 +406,7 @@ pub(super) fn seed_model(
 ///
 /// Through `apply::remove` rather than `fs::remove_file`, because the write
 /// layer is the only thing that mutates a project and a deletion is a
-/// mutation. The first version of this reached for `std::fs` and reopened a
-/// gate `tests/architecture/` holds closed at zero.
+/// mutation.
 ///
 /// Best-effort: a project without one is the ordinary case for `--offline`,
 /// and failing to delete a file nobody asked for is not a reason to fail
@@ -522,12 +520,11 @@ pub(super) fn add_jspecify(tree: &publish::Tree<'_>) -> Result<()> {
 
 /// The six default settings, as one table.
 ///
-/// **One owner, because they are now written two ways.** `new` still writes
-/// them into `application.properties` for a legacy project, and seeds them as
-/// `prop` declarations in `.jails/model.jdl` for a canonical one, where the
-/// compiler owns the key and `add db` can declare `server.shutdown` without
-/// colliding with a line `new` wrote. Two lists would drift on exactly the
-/// entries the Boot-major gate makes conditional.
+/// **One owner.** They are seeded as `prop` declarations in
+/// `.jails/model.jdl`, where the compiler owns the key and `add db` can
+/// declare `server.shutdown` without colliding with a line `new` wrote. A
+/// second list would drift on exactly the entries the Boot-major gate makes
+/// conditional.
 pub(super) fn default_properties(boot_major: u32) -> [(&'static str, &'static str, bool); 6] {
     let modern = boot_major >= 3;
     [

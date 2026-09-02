@@ -1,55 +1,22 @@
-# The one gate. `simplify-sol.md` G0: *pre-push and CI invoke only that
-# command.*
+# The one gate: `mise run verify-rewrite` and nothing else, so CI and the
+# pre-push hook cannot disagree about what "green" means.
 #
-# There is deliberately nothing here but `mise run verify-rewrite`. A workflow
-# that spells out its own `cargo test` line is a second answer to "is this
-# green", and the second answer is the one that drifts -- which is exactly what
-# happened locally: the pre-push hook ran `cargo build && cargo test` with no
-# `--workspace`, so it tested the root package alone and said nothing about the
-# other twelve crates, and no `JAILS_TOOLCHAIN`, so every test that
-# could not find its toolchain skipped itself and was counted as passing.
-#
-# The tool list below is not decoration. `JAILS_TOOLCHAIN=1` switches the
-# real-toolchain tier on, and switching it on is what makes a missing tool a
-# failure rather than a skip -- so every one of these has to be present or the
-# run is red: a JDK that accepts `--release 26`, `jshell`, Maven, mvnd, Gradle 8.5 on
-# JDK 21 for the pinned example, git, and a container runtime for the
-# Testcontainers suites.
+# The tool list is load-bearing. `JAILS_TOOLCHAIN=1` turns a missing tool into
+# a failure rather than a skip, so every one of these must be present: a JDK
+# that accepts `--release 26`, `jshell`, Maven, mvnd, Gradle 8.5 on JDK 21 for
+# the pinned example, git, and a container runtime for the Testcontainers
+# suites.
 name: verify-rewrite
 
 on:
-  # **One event per commit, so there is never a second run to throw away.**
-  # A branch with an open pull request fires both `push` and `pull_request`,
-  # which is how this job came to run twice against one SHA -- 9m22s and 9m52s
-  # on `85597f9`, same commit, same result.
-  #
-  # Keying `concurrency` on the branch made the later run cancel the earlier
-  # one. That stopped the double *billing* and left the double *start*: a run
-  # queued, a runner allocated and torn down seconds later, and a cancelled
-  # check sitting in the pull request's status list looking to any reader like
-  # something failed. Racing a duplicate is not the same as not creating one.
-  #
-  # Restricting `push` to the default branch removes it at the source. Every
-  # branch worked on in this repository has a pull request open --
-  # `new-world-compiler-jdl-v1` is PR #1 -- so `pull_request` gates the
-  # branches, `push` gates what lands on `main`, and no commit is covered
-  # twice. The `pull_request` run is also the better of the two: it builds the
-  # branch merged into its base rather than the branch head.
-  #
-  # What this gives up is CI on a branch with no pull request open, and that is
-  # deliberate rather than overlooked. `.githooks/pre-push` runs this exact
-  # gate before the push; opening the pull request, draft included, turns the
-  # remote one on; `workflow_dispatch` covers a one-off.
+  # One event per commit. `pull_request` gates branches and `push` gates what
+  # lands on `main`, so no SHA is built twice. A branch with no pull request
+  # open is covered by `.githooks/pre-push`, which runs the same gate.
   push:
     branches: [main]
   pull_request:
-  # **A one-off, on demand, with the suite's own subprocess profiler on.**
-  # Every timing in `CLAUDE.md` was taken on a developer machine, and the one
-  # thing a developer machine cannot tell you is why the runner disagrees with
-  # it -- `tests/cli` is 147s here and 296s there on the same four cores, and
-  # no amount of local measurement explains the gap. `JAILS_TEST_PROFILE`
-  # makes every subprocess print its queue and run time, so a dispatch with
-  # `profile: true` answers it directly instead of by inference.
+  # On demand, with the suite's subprocess profiler on: `JAILS_TEST_PROFILE`
+  # makes every subprocess print its queue and run time.
   workflow_dispatch:
     inputs:
       profile:
@@ -57,45 +24,29 @@ on:
         type: boolean
         default: false
 
-# Supersede an **older commit's** run when a branch is pushed again while one
-# is still going. That run is genuinely obsolete, which is what cancellation is
-# for -- as opposed to cancelling a run of the same commit, which is what the
-# trigger above now prevents rather than races.
-#
-# `head_ref || ref_name` rather than `github.ref`: those are different strings
-# for the two events (`refs/heads/<branch>` against `refs/pull/<n>/merge`), so
-# a group keyed on `github.ref` cannot collapse a branch's runs into one queue.
+# Supersede an older commit's run when a branch is pushed again while one is
+# still going. `head_ref || ref_name` because the two events spell the ref
+# differently and a group keyed on `github.ref` cannot collapse them.
 concurrency:
   group: verify-rewrite-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
   verify:
-    # Docker is preinstalled on the GitHub-hosted Ubuntu image, which is what
-    # the container-gated tests need. They skip locally on a machine without
-    # one; here a skip is a failure.
+    # Docker is preinstalled on the GitHub-hosted Ubuntu image, which the
+    # container-gated tests need; here a skip is a failure.
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          # `verify-rewrite-g1-canary` builds a frozen legacy revision with
-          # `git archive`, so a shallow clone would have nothing to freeze.
-          fetch-depth: 0
 
-      # **Pull the container images while the Rust build is still running.**
-      # The runner is four cores and the test phase is subprocess-bound, so its
-      # wall clock is total work over four -- and a registry pull is work that
-      # need not be on that clock at all. Measured on run `33506161538`:
-      # `docker` cost 111.6s of the 1102.7s, against 35.6s locally where the
-      # images are already in the store. These pulls are started detached and
-      # nothing waits for them; a test that reaches a container first simply
-      # pulls it itself, which is what happens today.
-      #
-      # The list is derived from the tree rather than written here, because a
-      # second copy of a pinned tag drifts silently -- warming the wrong tag
-      # looks exactly like warming the right one.
+      # Pull the container images while the Rust build is still running. The
+      # test phase is subprocess-bound, and a registry pull is work that need
+      # not be on its clock. The pulls are detached and nothing waits for
+      # them; a test that reaches a container first pulls it itself. The list
+      # is derived from the tree, because a second copy of a pinned tag
+      # drifts silently.
       - name: Warm the container images the suite starts
         run: |
           ./scripts/container-images.sh | while read -r image; do
@@ -103,15 +54,9 @@ jobs:
           done
           disown -a 2>/dev/null || true
 
-      # Reads `rust-toolchain.toml`, so the compiler CI runs is the compiler
-      # the pre-push hook runs and neither can drift from the other. This was
-      # `dtolnay/rust-toolchain@stable`, which pins nothing: a clippy release
-      # could turn the one gate red over code nobody had touched, and did.
-      # `rustup toolchain install` re-downloads five components of 1.94.1 on
-      # every run -- the pin in `rust-toolchain.toml` names one exact compiler,
-      # so what it fetches is byte-identical each time. Keyed on that file, the
-      # entry is written once and read for nothing after; when the pin moves,
-      # the key moves with it and the next run pays for one download.
+      # Reads `rust-toolchain.toml`, so CI runs the compiler the pre-push hook
+      # runs. The pin names one exact compiler, so the cached download is
+      # byte-identical until the pin moves.
       - name: Cache the pinned Rust toolchain
         uses: actions/cache@v4
         with:
@@ -127,72 +72,18 @@ jobs:
           echo "version=$(rustc -V | tr ' /()' '-')" >> "$GITHUB_OUTPUT"
           rustc -V
 
-      # **The compiler has to be in this key, and `rust-toolchain.toml` is why
-      # it now is.** A cargo artifact is only valid for the rustc that built
-      # it, so the moment the pin named a different compiler from the one that
-      # had filled this cache, every restored artifact became garbage that
-      # cargo discards on sight. The failure is silent and it is the worst
-      # shape available: the key still *hit*, so the step reported success and
-      # restored 381 MB, the whole dependency tree recompiled anyway, and
-      # `actions/cache` then skipped its save -- because a primary-key hit is
-      # exactly when it does -- so nothing could ever repair it. Measured on
-      # run `33267456288`: 74 third-party crates compiled where the run before
-      # the pin compiled none, clippy 14.7s -> 31.3s and test-harness
-      # compilation 179.4s -> 240.5s.
+      # The key carries the compiler, the lockfile and a hash of the sources.
+      # A cargo artifact is valid only for the rustc that built it, so a
+      # compiler change must miss. A commit that changes code misses, rebuilds
+      # and saves; a commit that changes only documentation hits its own key
+      # and skips the save. The restore-keys walk back to the newest entry for
+      # this compiler and lockfile, so a run starts from its predecessor's
+      # artifacts and rebuilds only what the commit changed.
       #
-      # With `rustc -V` in the key a compiler change misses honestly, pays for
-      # one cold build, and saves artifacts the next run can actually use.
-      #
-      # **The key carries a hash of the sources, not the commit.** Keyed on
-      # `Cargo.lock` alone the entry was written once and then frozen --
-      # `actions/cache` skips the save on an exact primary-key hit -- so
-      # `github.sha` was added to guarantee every run had something to save.
-      # That fixed the freeze and overshot: with the commit in the key *no*
-      # run can hit exactly, so every run re-uploads the whole entry even when
-      # it compiled nothing. Measured on run `33322968191`, a
-      # documentation-only commit against a warm cache: **21s spent saving a
-      # `target/` byte-identical to the one it had just restored**, in a 314s
-      # job.
-      #
-      # Hashing what actually determines the artifacts -- the Rust sources,
-      # the templates they `include_str!`, the manifests and the lockfile --
-      # gives both properties at once. A commit that changes code misses,
-      # rebuilds and saves exactly as before; a commit that changes only
-      # documentation or this workflow hits its own key and skips the save,
-      # because there is genuinely nothing new to upload.
-      # Third-party crates were fine -- they only move when the lock does --
-      # but all twenty workspace crates recompiled every run against sources
-      # that had moved on, which is 194s of the job. The restore-keys walk
-      # back to the newest cache for this compiler and lockfile, so a run
-      # starts from its predecessor's artifacts and rebuilds only what the
-      # commit actually changed.
-      #
-      # The upload this costs is small enough to be worth it, which was worth
-      # checking rather than assuming: the whole entry -- registry, git and
-      # `target/` together -- is 381 MB compressed, so a save is seconds, not
-      # the minute a 5.9 GB `target/debug/deps` suggests.
-      #
-      # **And it has to save when the gate fails, which is why this is split
-      # into restore and save rather than the one `actions/cache` step it was.**
-      # That step's automatic post-save is skipped when the job's status is
-      # failure, so a red gate writes nothing -- and a gate can stay red across
-      # a day of commits. Every one of those runs then restored the last
-      # *green* run's entry, so all twenty workspace crates rebuilt against an
-      # ever-staler baseline: measured over five consecutive red runs,
-      # test-harness compilation sat at 216-231s where a fresh entry costs ~60s,
-      # and the trim below never reached a saved entry either, so it stayed at
-      # its pre-trim 1889 MB. Red gate -> no save -> staler cache -> slower
-      # gate, worse with every commit.
-      #
-      # A run that compiled everything and then failed a *test* has artifacts
-      # as good as a green run's, so the save is guarded on `!cancelled()`
-      # rather than `success()`. That is deliberately the opposite of the
-      # Maven/Gradle guard below, and the difference is the key: this key
-      # carries the source hash and its restore-keys walk back, so a poor entry is
-      # superseded by the next run, while `jvm-deps` has a static key where one
-      # bad write is permanent. `!cancelled()` rather than `always()` keeps the
-      # original protection -- a run killed two minutes in must not become the
-      # newest entry the restore-keys find.
+      # Restore and save are split so a run that compiled everything and then
+      # failed a test still saves: its artifacts are as good as a green run's.
+      # The save is guarded on `!cancelled()` rather than `always()` so a run
+      # killed two minutes in cannot become the newest entry.
       - name: Restore cargo
         id: cargo
         uses: actions/cache/restore@v4
@@ -206,36 +97,13 @@ jobs:
             cargo-${{ runner.os }}-${{ steps.rust.outputs.version }}-${{ hashFiles('Cargo.lock') }}-
             cargo-${{ runner.os }}-${{ steps.rust.outputs.version }}-
 
-      # **Nothing cached the JVM dependency repositories, and a full run fills
-      # 296 MB of them.** The cargo cache above covers Rust and `mise-action`
-      # covers the tool binaries; neither covers `~/.m2`, which is not on the
-      # runner image at all. So every run re-resolved the whole Spring Boot,
-      # Testcontainers, Flyway, ArchUnit, JaCoCo and spotless tree from Central
-      # before the first generated project could be built. Measured on the
-      # suite's own Spring fixture: a cold local repository costs 21.8s for the
-      # 44 MB *that one pom* pulls, and it is the smallest of the ~39 Maven
-      # invocations this job makes.
-      #
-      # **The key is static on purpose, and the save is split out so that only
-      # a green run can write it.** A static key is written once and read for
-      # nothing ever after -- no few-hundred-megabyte upload on the critical
-      # path of every run, and no churn evicting the cargo cache beside it.
-      # What that costs is a dependency introduced after the cache was written:
-      # Maven fetches the delta each run, which is the cheap half and is
-      # self-limiting. Bump the version when the delta is worth paying once to
-      # remove -- **`v1` -> `v2` because it had become worth it**: the same 36
-      # Maven runs cost 563.1s on the runner against 427.7s locally, and the
-      # gap is 3.8s a run, which is a resolution the local repository already
-      # has and the cached one does not. Thirty-six of those is 136s of
-      # subprocess work, and on four cores that is 34s of wall against one
-      # save.
-      #
-      # `actions/cache` would save in its post step whatever the run left
-      # behind, pass or fail -- and with a key that never changes, a run that
-      # died in clippy would freeze an almost-empty repository in place
-      # permanently, turning a cache into a permanent cache miss that looks
-      # like a hit. `restore` plus a guarded `save` is what makes the frozen
-      # copy a complete one.
+      # The Maven and Gradle repositories are on neither the runner image nor
+      # the cargo cache. The key is static on purpose: written once by a green
+      # run and read for nothing after, with no upload on the critical path.
+      # Maven fetches the delta for dependencies added since; bump the version
+      # when that delta is worth paying once to remove. The save is split out
+      # and guarded on success, because a static key written by a run that
+      # died early would freeze an almost-empty repository in place forever.
       - name: Restore the Maven and Gradle repositories
         id: jvm-deps
         uses: actions/cache/restore@v4
@@ -245,17 +113,14 @@ jobs:
             ~/.gradle/caches/modules-2
           key: jvm-deps-${{ runner.os }}-v2
 
-      # Reads `mise.toml`, so the Java, Maven, mvnd and Gradle versions CI runs
-      # are the ones the repository pins -- not whatever the image ships.
+      # Reads `mise.toml`, so CI runs the versions the repository pins.
       - name: Install the pinned toolchain
         uses: jdx/mise-action@v2
         with:
           cache: true
 
       # `unheld_gradle_example_manifest_builds_on_its_pinned_toolchain` needs
-      # Gradle 8.5 on JDK 21 specifically; the default JDK is 26 because that
-      # is the release generated projects declare. The task runs that one test
-      # under `mise x java@21`, which needs 21 present.
+      # Gradle 8.5 on JDK 21, which it locates through `mise which java@21`.
       - name: Install JDK 21 for the pinned Gradle example
         run: mise install java@21
 
@@ -273,57 +138,19 @@ jobs:
         env:
           JAILS_TEST_PROFILE: ${{ inputs.profile && '1' || '' }}
 
-      # `target/` is cached, and the suite writes things under it that are not
-      # build output: `jails-e2e-cache` alone is 36 MB of generated projects
-      # kept between runs, and the logs, cost ledger and permit slots have no
-      # meaning on another machine. Dropping them before the post step keeps
-      # the cache to artifacts, which is the only part worth carrying.
+      # `target/` is cached, and the suite writes scratch under it that has no
+      # meaning on another machine; drop it so the entry carries artifacts only.
       #
-      # **`target/debug/incremental` is the largest thing in the entry, and
-      # most of it is dead.** Cargo names a unit's incremental directory after
-      # its fingerprint and writes a fresh `s-*` session inside it on every
-      # build; it never removes a directory whose fingerprint has moved on, so
-      # a cache carried from run to run accumulates one orphan per crate per
-      # dependency or feature change, for ever. Measured on this workspace
-      # after a day of builds: **5.6 GB, against 688 MB once every superseded
-      # session was dropped**, with two live `jails_generate-*` and two live
-      # `jails_drive-*` directories differing only in their hash.
+      # Cargo never garbage-collects `target/debug/deps` or
+      # `target/debug/incremental`: each run adds its own artifacts and
+      # sessions and removes none, so a cache carried run to run only grows.
+      # Keep the newest artifact per unit and the newest session per crate.
+      # Deleting incremental state outright costs a minute of recompilation a
+      # run; keeping the newest session costs nothing. Cargo rebuilds whatever
+      # this removes, so the heuristic bounds the damage at recompilation.
+      # `cargo-sweep` is the exact version, if the recompilation ever shows.
       #
-      # Keeping the newest session in each directory is what makes this free
-      # rather than a saving paid for in compilation, and the difference is
-      # stark enough to be worth the measurement: with its incremental state a
-      # one-line edit to `jails-generate` rebuilds the workspace's test
-      # binaries in **4.1s**, and with `target/debug/incremental` deleted
-      # outright in **65.0s**. After this trim it is 3.3s. That is also why
-      # `CARGO_INCREMENTAL=0` -- which would shrink the entry far more -- was
-      # tried here and reverted: it cost the gate 90-120s to save 30s of
-      # transfer.
-      #
-      # **`target/debug/deps` is the other thing that only grows.** Cargo
-      # never garbage-collects it: each run restores the previous run's
-      # artifacts and adds its own, so a workspace crate accumulates one
-      # `.rlib` per historical build hash while only the newest is ever
-      # linked. Measured here: **9.68 GB across 2610 files, 87% of it
-      # superseded.**
-      #
-      # This was priced once and refused, and the price has moved. Three keep
-      # rules were measured -- newest per `(stem, extension)` by mtime costs
-      # 24s of recompilation, the exact `filenames` cargo reports costs 150s
-      # (it names a fresh dependency's `.rlib` and not the `.rmeta` beside it
-      # that pipelined compilation reads, so cargo goes off rebuilding
-      # `tempfile` and `serde_json`), and matching by stem costs 126s. At the
-      # time the entry cost 63s a run to move, so 24s of rebuild was not worth
-      # it. On run `33508505521` it cost **93s to restore and 138s to save**,
-      # and it grows every run. Twenty-four seconds against two hundred and
-      # thirty-one is no longer a close call.
-      #
-      # Cargo rebuilds whatever this removes, so the rule being a heuristic
-      # bounds the damage at recompilation rather than a wrong answer. Doing
-      # it exactly means `cargo-sweep`, which reads `.fingerprint` -- worth
-      # revisiting if the 24s ever shows up as a regression.
-      #
-      # This runs unconditionally: a failed run's artifacts are still valid
-      # for the next one, and cargo revalidates everything it restores anyway.
+      # Runs unconditionally: a failed run's artifacts are still valid.
       - name: Trim the cargo cache to build artifacts
         if: always()
         run: |

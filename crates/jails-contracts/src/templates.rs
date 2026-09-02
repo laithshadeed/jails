@@ -1,12 +1,11 @@
 //! Reader-authored replacements for jails' own Java templates.
 //!
-//! **A captured external fact, not a filesystem read.** `plan.md` §6.6 tier 2
-//! is "change what the generated code *looks like*" -- not a new generator,
-//! just this class shaped differently -- and the answer is a file at
-//! `.jails/templates/<name>` (project) or `~/.config/jails/templates/<name>`
-//! (machine), replacing the built-in of the same name in that order. The
-//! compiler may not observe the filesystem, so capture reads them once and
-//! hands them over here.
+//! **A captured external fact, not a filesystem read.** A reader who wants
+//! the generated code to *look* different -- not a new generator, just this
+//! class shaped differently -- puts a file at `.jails/templates/<name>`
+//! (project) or `~/.config/jails/templates/<name>` (machine), and it replaces
+//! the built-in of the same name in that order. The compiler may not observe
+//! the filesystem, so capture reads them once and hands them over here.
 //!
 //! **An overridden template is not golden-tested.** That is the honest cost,
 //! and it is why `doctor` reports every active override by name: jails names

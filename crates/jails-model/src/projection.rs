@@ -200,7 +200,7 @@ fn select(
 /// whole resource, served", so the boundary belongs in it rather than in
 /// something an author has to remember to add beside it. A bare `use http`
 /// still binds the row, which is the shape somebody asking for one controller
-/// and nothing else chose; `plan.md` tracks closing that half.
+/// and nothing else chose.
 fn expand(projection: source::Projection) -> Vec<source::Projection> {
     fn plain(kind: &str) -> source::Projection {
         source::Projection {
@@ -220,9 +220,7 @@ fn expand(projection: source::Projection) -> Vec<source::Projection> {
         // this function rather than a judgement about fixtures: a profile
         // expands before the app block is read, and `seed` needs `storage
         // postgres`, so putting it in would refuse every scaffold on a
-        // project with no database. `plan.md` tracks giving a profile the
-        // project's own capabilities so it can offer what the project
-        // supports and no more.
+        // project with no database.
         source::Projection {
             kind: "http".to_string(),
             fields: Vec::new(),

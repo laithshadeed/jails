@@ -253,12 +253,12 @@ pub(crate) fn reject_unsupported_operation_options(
             "`{flag}` applies to {applies_to}, and `{kind}` is not one.\n       fix: drop `{flag}`, or generate the kind it belongs to"
         )));
     }
-    // **An event may stand on its own, and the grammar has always said so.**
+    // **An event may stand on its own, and the grammar says so.**
     // `parse_operation(None)` accepts a top-level `event`, the linker gives it
     // `on: None`, and the compiler emits its payload record from the declared
     // parameters -- so a domain event that is nobody's row (`PageDiscovered`,
-    // carrying its own id and the moment it happened) was refused only by this
-    // frontend. Every other operation writes or reads a row and needs one.
+    // carrying its own id and the moment it happened) needs no `--on`. Every
+    // other operation writes or reads a row and needs one.
     if args.strategy_on.is_none() && profile != OperationProfile::Event {
         return Err(Failure::Told(format!(
             "canonical `{}` needs the entity it operates on.\n       fix: pass `--on <Entity>`",

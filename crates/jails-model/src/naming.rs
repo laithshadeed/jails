@@ -52,12 +52,11 @@ enum Case {
 
 /// Every reserved word a Java source file may not use as an identifier.
 ///
-/// **Lifted out of `valid_java_identifier` because a package segment has to
-/// ask the same question.** `TypeRef::parse` used to answer it with a private
-/// shape-only copy in `model.rs`, so `status:enum.PENDING.PAID` linked and the
-/// record it rendered opened with `import enum.PENDING.PAID;` -- a file that
-/// cannot compile, emitted with no diagnostic. Two answers to "is this a Java
-/// identifier" in one crate, and the weaker one decided what jails wrote.
+/// **Shared with the package-segment check because a package segment asks
+/// the same question.** A shape-only copy lets `status:enum.PENDING.PAID`
+/// link and render `import enum.PENDING.PAID;` -- a file that cannot compile,
+/// emitted with no diagnostic. Two answers to "is this a Java identifier" in
+/// one crate lets the weaker one decide what jails writes.
 const KEYWORDS: &[&str] = &[
     "abstract",
     "assert",
@@ -185,7 +184,7 @@ pub(crate) fn valid_route(route: &str) -> bool {
 /// `..` is rejected outright: Spring resolves it, so `/api/../secret` mounts
 /// somewhere other than where it reads as mounting, and a route that is not
 /// the route it looks like is worse than one that is refused.
-pub fn route_problem(route: &str) -> Option<String> {
+pub(crate) fn route_problem(route: &str) -> Option<String> {
     let Some((method, path)) = route.split_once(' ') else {
         return Some(format!(
             "`{route}` has no method: a route is `METHOD /path`"
@@ -216,16 +215,13 @@ pub fn route_problem(route: &str) -> Option<String> {
     None
 }
 
-/// The conventional table for an entity label, pluralized per `jdl-sol.md`
-/// §9.7.
+/// The conventional table for an entity label, pluralized per JDL v1 §9.7.
 ///
-/// **The rule is the spec's, in full, because a partial one renames tables.**
-/// Canonical emitted `create table task` where the legacy generator emits
-/// `tasks`, so `jails model import` silently pointed an imported project at a
-/// table its database does not have -- and every statement the compiler then
-/// wrote was against that name (`audit.md` A2.6). The spec is explicit about
-/// which irregulars and which invariants, so guessing is neither necessary nor
-/// permitted: "there is no project-level override map".
+/// **The rule is the spec's, in full, because a partial one renames tables**:
+/// a name the pluralizer gets wrong is the name every statement the compiler
+/// writes is against, on a table the database does not have. The spec is
+/// explicit about which irregulars and which invariants, so guessing is
+/// neither necessary nor permitted: "there is no project-level override map".
 ///
 /// **Pluralization applies to the final snake-case word.** `SupportPerson` is
 /// `support_people`, not `support_persons` — the last word is what carries
@@ -274,7 +270,7 @@ pub fn plural_snake_case(label: &str) -> String {
     }
 }
 
-/// §9.7's irregular map and invariant list, exactly.
+/// JDL v1 §9.7's irregular map and invariant list, exactly.
 ///
 /// Eight irregulars and ten invariants, and no more: an irregular jails
 /// guesses at is a table name a reader has to discover from a migration.
@@ -306,14 +302,7 @@ fn irregular_plural(word: &str) -> Option<&'static str> {
 mod tests {
     use super::plural_snake_case;
 
-    /// `jdl-sol.md` §9.7's rules, each spelled out.
-    ///
-    /// **Table-driven against the spec rather than against the other
-    /// implementation**, because the other one is in `jails-protocol` -- a
-    /// legacy crate this ladder cannot depend on. Until the cutover deletes
-    /// it, two implementations of one rule is the situation, and the spec is
-    /// what makes them one rule rather than two behaviours. The cross-check
-    /// that they actually agree lives in `tests/`, which can see both.
+    /// JDL v1 §9.7's rules, each spelled out, table-driven against the spec.
     #[test]
     fn pluralization_follows_the_specified_rules() {
         for (label, expected) in [
@@ -341,7 +330,7 @@ mod tests {
         }
     }
 
-    /// The eight irregulars and ten invariants §9.7 names, and no others.
+    /// The eight irregulars and ten invariants JDL v1 §9.7 names, and no others.
     ///
     /// The last word decides, so a compound whose head is irregular is the
     /// ordinary case rather than an edge one -- `support_persons` is the kind

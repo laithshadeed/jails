@@ -50,9 +50,10 @@ pub(crate) fn derive(
     if previous_database && !next_database {
         // **Only when there is storage to abandon.** A project that declared
         // `db` and never scaffolded anything has no table, no accepted
-        // migration and nothing to retire -- refusing there made `add db` a
-        // one-way door on a project where the reader had simply changed their
-        // mind, and the fix line named a policy for tables that do not exist.
+        // migration and nothing to retire -- refusing there would make `add db`
+        // a one-way door on a project where the reader has simply changed
+        // their mind, with a fix line naming a policy for tables that do not
+        // exist.
         let stored = accepted
             .iter()
             .flat_map(|model| model.entities.values())
@@ -538,8 +539,8 @@ fn sql_type(model: &AppModel, field: &Field) -> Result<&'static str, CompileErro
     match &field.ty {
         TypeRef::Builtin(builtin) => Ok(builtin.semantics().sql_postgres),
         // **A declared enum stores as its constant's name**, which is what the
-        // legacy generator has always emitted and what the Spring converter
-        // reads back. It is derivable in a way an arbitrary project type is
+        // Spring converter reads back. It is derivable in a way an arbitrary
+        // project type is
         // not: the model holds the constants, so the column's domain is known
         // rather than guessed, and no codec has to be declared for a fact the
         // model already states.

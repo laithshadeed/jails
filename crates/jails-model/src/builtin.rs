@@ -1,28 +1,15 @@
 //! One row per builtin type, and every projection of it read from that row.
 //!
-//! ## Why this exists
-//!
-//! `simplify-sol.md`'s fitness rule is *every builtin type has one semantics
-//! row*, and its deletion map names the disease: *repeated `Layer`, route and
-//! name tables → small typed registries with derived projections*, deleting
-//! "synchronized enum/label/package tables".
-//!
-//! Sixteen builtins were being described by six separate matches — the token a
-//! declaration writes, the token it normalises to, the Java type, the import
-//! that type needs, the sample a factory emits, the Postgres column. Each was
-//! correct on its own and none of them said so about the others, so the
-//! failure mode was never a compile error: add a builtin and the model accepts
-//! it, the emitter writes a field of it, and the DDL has no column for it.
-//! `parse` and `canonical_name` were the sharpest case, being literal inverses
-//! written out separately — the pair that has to agree and is checked by
-//! nothing.
-//!
-//! ## What is normative
+//! Sixteen builtins each have several projections -- the token a declaration
+//! writes, the aliases it normalises from, the Java type, the import that
+//! type needs, the sample a factory emits, the Postgres column -- and separate
+//! matches for each would be exhaustive over the enum and silent about the
+//! others, so a builtin missing from one is never a compile error: the model
+//! accepts it, the emitter writes a field of it, and the DDL has no column
+//! for it.
 //!
 //! - **[`BuiltinType::semantics`] is an exhaustive match**, so a variant added
-//!   to the enum does not compile until its row exists. That is the guarantee
-//!   the six matches could not offer between them: each was exhaustive over
-//!   the enum and silent about the other five.
+//!   to the enum does not compile until its row exists.
 //! - **A projection is a field read, never a second match.** Anything that
 //!   needs to know something about a builtin asks the row.
 //! - **The token is the canonical spelling**, and [`BuiltinSemantics::aliases`]
@@ -31,12 +18,10 @@
 
 /// How a literal default for this builtin is written.
 ///
-/// The linker used to decide this with its own match over [`BuiltinType`],
-/// phrased as a *negation* -- a string default was allowed for anything that
-/// was not one of six named numeric types. That fails open: a builtin added
-/// to the enum is not in the exclusion list, so it silently accepts a string
-/// default it has no way to parse. Stated positively on the row, a new builtin
-/// has to say which kind it is before it compiles.
+/// Stated positively on the row rather than as an exclusion list of numeric
+/// types, because an exclusion list fails open: a builtin added to the enum
+/// is not in it, so it silently accepts a string default it has no way to
+/// parse. Here a new builtin has to say which kind it is before it compiles.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LiteralKind {
     /// Written as a quoted string and parsed by the Java type.
@@ -417,15 +402,11 @@ static ZONE_ID: BuiltinSemantics = BuiltinSemantics {
 /// none while every neighbour lists its Java spelling.
 ///
 /// The rule is the field syntax's: lowercase is jails' table, capitalised is a
-/// type the project owns, and `builtin_by_java_name` is the authority on the
-/// exceptions. `Currency` is not one of them, because an enum of the
-/// currencies a project deals in is an ordinary thing to generate -- and the
-/// alias made `currency:Currency` resolve to `java.util.Currency` in a project
-/// whose own `enum Currency` sits right beside it. That compiles the record
-/// against the wrong type and fails at the first use, which is how it
-/// surfaced: `incompatible types: com.example.demo.domain.Currency cannot be
-/// converted to java.util.Currency`, in a proof application that had declared
-/// both.
+/// type the project owns. An enum of the currencies a project deals in is an
+/// ordinary thing to generate, and an alias would resolve `currency:Currency`
+/// to `java.util.Currency` in a project whose own `enum Currency` sits right
+/// beside it -- a record compiled against the wrong type, failing at its
+/// first use.
 static CURRENCY: BuiltinSemantics = BuiltinSemantics {
     token: "currency",
     aliases: &[],
@@ -496,10 +477,7 @@ impl BuiltinType {
     /// This builtin's one row.
     ///
     /// Exhaustive on purpose: a variant added to [`BuiltinType`] fails to
-    /// compile here until somebody writes what it means. That is the whole
-    /// point of the row — six separate matches were each exhaustive over this
-    /// enum, so the compiler forced six edits and checked that none of them
-    /// agreed with the others.
+    /// compile here until somebody writes what it means.
     pub fn semantics(self) -> &'static BuiltinSemantics {
         match self {
             Self::String => &STRING,
@@ -522,7 +500,7 @@ impl BuiltinType {
     }
 
     /// The builtin a canonical token names, if it names one.
-    pub fn from_token(token: &str) -> Option<Self> {
+    pub(crate) fn from_token(token: &str) -> Option<Self> {
         ALL.iter()
             .find(|(_, row)| row.token == token)
             .map(|(builtin, _)| *builtin)
@@ -535,7 +513,7 @@ impl BuiltinType {
     /// about whether a spelling was one of ours. A caller deciding what to do
     /// about `String` needs the difference between "this is `string` written
     /// the Java way" and "this is a type the project owns".
-    pub fn from_alias(token: &str) -> Option<Self> {
+    pub(crate) fn from_alias(token: &str) -> Option<Self> {
         ALL.iter()
             .find(|(_, row)| row.aliases.contains(&token))
             .map(|(builtin, _)| *builtin)
@@ -600,7 +578,7 @@ mod tests {
         }
     }
 
-    /// The pair that used to be written out separately, checked as a pair.
+    /// `from_token` and `semantics().token` are inverses, checked as a pair.
     #[test]
     fn a_token_round_trips_through_its_builtin() {
         for (builtin, row) in ALL {

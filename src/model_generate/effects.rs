@@ -15,20 +15,6 @@
 use crate::{Invocation, Output};
 use jails_support::{Failure, Result};
 
-/// Do what the reviewed plan said was left once the files were written.
-///
-/// **The effect is in the plan, not in this function's judgement.** A compose
-/// service jails declares is not running because it was declared, and the
-/// command that declared it is the one place a reader is looking -- so the
-/// same command starts it, `--no-start` says not to, and the failure names
-/// that flag. Reading the intent off the bundle rather than re-deciding here
-/// is what makes `--pretend` and the exported bundle able to show it.
-///
-/// The files are already durable when this runs, so a failed effect is
-/// reported as a failed *effect*: the status is 1 because the services really
-/// are not up, and the message says the project itself is complete. Exiting 0
-/// would be worse -- `for c in db api; do jails add $c || fail; done` is how
-/// people write this, and a silent half-install is what it would hide.
 /// The compiled shadow of every source this transition deleted.
 ///
 /// **A `.class` outlives its source, and the build does not notice.** `mvn
@@ -130,6 +116,20 @@ fn stage_compose_document(
     Some(staged)
 }
 
+/// Do what the reviewed plan said was left once the files were written.
+///
+/// **The effect is in the plan, not in this function's judgement.** A compose
+/// service jails declares is not running because it was declared, and the
+/// command that declared it is the one place a reader is looking -- so the
+/// same command starts it, `--no-start` says not to, and the failure names
+/// that flag. Reading the intent off the bundle rather than re-deciding here
+/// is what makes `--pretend` and the exported bundle able to show it.
+///
+/// The files are already durable when this runs, so a failed effect is
+/// reported as a failed *effect*: the status is 1 because the services really
+/// are not up, and the message says the project itself is complete. Exiting 0
+/// would be worse -- `for c in db api; do jails add $c || fail; done` is how
+/// people write this, and a silent half-install is what it would hide.
 pub(crate) fn run_follow_up_effects(
     root: &std::path::Path,
     bundle: &jails_contracts::PlanBundle,

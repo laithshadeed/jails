@@ -1,20 +1,13 @@
 //! `jails resource status` for a canonical project.
 //!
-//! The legacy report answers from `.jails/ledger.toml`, and a canonical
-//! project does not have one. Before this module it therefore answered
-//! `state: ambiguous` / `finding: this project has no recorded resource
-//! state` about an entity the model describes completely -- which is not a
-//! missing answer but a wrong one, since every authority it names is present
-//! and readable.
+//! Four authorities, each read where it lives:
 //!
-//! The four authorities are the same four; only where they are read changes:
-//!
-//! | authority | legacy | canonical |
-//! |---|---|---|
-//! | declaration | ledger intent row | the entity in `.jails/model.jdl` |
-//! | generated | ledger file rows | the accepted projection in the lock |
-//! | migration-history | lifecycle seals | `WorkspaceSnapshot::migration_history` |
-//! | live | a datasource | a datasource, unchanged |
+//! | authority | read from |
+//! |---|---|
+//! | declaration | the entity in `.jails/model.jdl` |
+//! | generated | the accepted projection in the lock |
+//! | migration-history | `WorkspaceSnapshot::migration_history` |
+//! | live | a datasource |
 //!
 //! **A file belongs to an entity because the compiler said so**, not because
 //! its name starts with the entity's. `Provenance::semantic_ids` carries the
@@ -188,8 +181,6 @@ fn retired(snapshot: &jails_contracts::WorkspaceSnapshot, selector: &str) -> Rep
     }
 }
 
-/// Answer from the captured workspace. Pure once capture has happened, which
-/// is what lets the table below drive the tests rather than a live project.
 /// What the database itself holds, when a `--datasource` was named.
 ///
 /// **Two facts, because a table can be there for the wrong reason.** The
@@ -202,6 +193,8 @@ pub(crate) struct Live {
     pub applied: std::collections::BTreeSet<String>,
 }
 
+/// Answer from the captured workspace. Pure once capture has happened, which
+/// is what lets a table drive the tests rather than a live project.
 fn inspect(
     snapshot: &jails_contracts::WorkspaceSnapshot,
     selector: &str,
@@ -270,7 +263,7 @@ fn inspect(
         // resource that has three is worse than reporting none, because it
         // reads as a resource whose creation was never recorded. The rename
         // statement names both sides, so walking backwards over it recovers
-        // the names this entity used to have without a second ledger.
+        // the names this entity used to have without a second record of them.
         let mut names = vec![entity.names.sql_table.clone()];
         let mut walked = 0;
         while walked < names.len() {

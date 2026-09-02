@@ -1,13 +1,9 @@
 //! The test that ships beside every generated domain type.
 //!
-//! **A generated type without a generated test silently drops coverage**, and
-//! `CLAUDE.md` says so where it explains the legacy behaviour: emitting a
-//! guess would produce a test that does not compile, and emitting nothing
-//! would leave the suite green over a type nobody asserted anything about.
-//! The canonical emitter did the second one -- `g record`, `g value` and
-//! `g enum` wrote a class and no test at all -- and no gate saw it, because a
-//! differential suite compares the files it names and an artifact only one
-//! side writes is not a difference.
+//! **A generated type without a generated test silently drops coverage**:
+//! emitting a guess would produce a test that does not compile, and emitting
+//! nothing would leave the suite green over a type nobody asserted anything
+//! about.
 //!
 //! Three shapes, and which one applies is a fact about the record:
 //!
@@ -132,18 +128,16 @@ fn enum_body(entity: &Entity, imports: &mut BTreeSet<String>) -> String {
     )
 }
 
-/// The component a null is worth throwing at, if the record has one.
-/// The first component whose compact constructor rejects null.
+/// The first component whose compact constructor rejects null, if the record
+/// has one.
 ///
 /// **The predicate is the emitter's own**, `!primitive(ty, required)`, rather
-/// than a guess that happened to agree with it for one type. It was "a
-/// required `string`", which is a subset: `record Transaction(UUID id, long
-/// amount)` gets `Objects.requireNonNull(id, "id")` like every other
-/// non-primitive component, and the companion test shipped `@Disabled` --
-/// "state what Transaction guarantees, then assert it" -- over a project that
-/// had just been told what it guarantees. Three of them in one proof
-/// application, which is how it surfaced: the toolbox's own bar is that every
-/// Surefire test runs, and three did not.
+/// than a guess that agrees with it for one type. "A required `string`" is a
+/// subset: `record Transaction(UUID id, long amount)` gets
+/// `Objects.requireNonNull(id, "id")` like every other non-primitive
+/// component, and a narrower predicate ships the companion test `@Disabled`
+/// -- "state what Transaction guarantees, then assert it" -- over a record
+/// that has just been told what it guarantees.
 fn null_checked(entity: &Entity) -> Option<&Field> {
     entity
         .fields

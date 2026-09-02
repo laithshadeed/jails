@@ -1,15 +1,12 @@
 # Sanitized real-project corpus
 
-Projects **jails did not create**, checked in as bytes, run through both
-implementations by `tests/differential.rs`.
+Projects **jails did not create**, checked in as bytes, and run through
+`jails adopt`, `routes` and `beans` by `tests/product_loop.rs`.
 
-`simplify-sol.md`'s G5 asks for "sanitized adopted and reader-edited
-Spring/plain projects", each running legacy and new plan/apply plus semantic
-comparison and rerun. `tests/common/mod.rs::write_adopted_fixture` already
-covers one adopted shape as a Rust table. This directory is for the ones that
-are easier to check in than to escape into a string literal, and — the point —
-**it grows without touching Rust**: drop a directory in, add its row to
-`policy.tsv`, and the differential test picks it up.
+`tests/common/mod.rs::write_adopted_fixture` covers one adopted shape as a Rust
+table. This directory is for the ones that are easier to check in than to
+escape into a string literal, and **it grows without touching Rust**: drop a
+directory in, add its row to `policy.tsv`, and the corpus test picks it up.
 
 ## What a good entry is
 
@@ -24,7 +21,6 @@ more well-formed project.
 - **Declaring nothing jails is supposed to declare.** `spring-nested-adapters`
   deliberately omits `spring-boot-starter-webmvc-test`: a fixture that supplies
   what the tool must supply hides exactly the defect these exist to find.
-  `CLAUDE.md` records the months that one cost.
 - **`{TARGET_RELEASE}`** in a pom is substituted at copy time, so an entry does
   not go stale when the default release moves.
 
@@ -41,16 +37,14 @@ shape being tested. The point is the *shape*, never the content.
 2. Add a row to `policy.tsv` saying what it exercises. A directory with no row,
    or a row with no directory, fails
    `the_corpus_policy_covers_every_checked_in_project`.
-3. Run `cargo test --test differential corpus`.
+3. Run `cargo test --test product_loop corpus`.
 
 `flavour` is `spring` or `plain` and decides nothing except whether `beans` is
 run — jails reads the build file itself.
 
 The `adopt` column is `;`-separated, because one real tree means several things
 at once: it renames two layers, holds a third directory jails cannot classify,
-and has two candidates for a fourth. An earlier version took one expectation
-per entry, so an entry could state a quarter of what it was checked in to prove
-and the rest sat in the prose column where nothing reads it.
+and has two candidates for a fourth.
 
 - `records:<key>=<value>` — a `[layout]` row adoption must write.
 - `reports:<dir>` — adoption must name `<dir>` **and must not record it**.

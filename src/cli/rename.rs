@@ -9,14 +9,10 @@
 //! migration — so the caller says which, and jails never guesses which of two
 //! irreversible readings was meant.
 //!
-//! **`rename storage --complete <campaign>` is gone**, and `Rolling` stays.
-//! The subcommand completed the physical stage of a rolling rename against a
-//! durable campaign the legacy engine kept beside the model; the compiler
-//! plans one reviewed transition, so there is no campaign to complete and the
-//! command could only ever refuse. The *strategy* survives because refusing it
-//! by name is useful — a reader who asks for a rolling rename is told it is a
-//! sequence of ordinary plans and which two strategies exist — where dropping
-//! the variant would leave clap saying "invalid value" instead.
+//! `Rolling` is a variant so it can be refused by name: the compiler plans one
+//! reviewed transition, so a rolling rename is a sequence of ordinary plans,
+//! and a reader asking for one is told that and which two strategies exist,
+//! rather than clap's "invalid value".
 
 use clap::Subcommand;
 
@@ -33,7 +29,7 @@ pub(crate) enum RenameStrategy {
     Rolling,
 }
 
-impl From<RenameStrategy> for jails_protocol::request::RenameStrategy {
+impl From<RenameStrategy> for jails_spec::spec::policy::RenameStrategy {
     fn from(value: RenameStrategy) -> Self {
         match value {
             RenameStrategy::PreserveTable => Self::PreserveTable,
@@ -50,7 +46,7 @@ pub(crate) enum ExternalRenamePolicy {
     Rename,
 }
 
-impl From<ExternalRenamePolicy> for jails_protocol::request::ExternalRenamePolicy {
+impl From<ExternalRenamePolicy> for jails_spec::spec::policy::ExternalRenamePolicy {
     fn from(value: ExternalRenamePolicy) -> Self {
         match value {
             ExternalRenamePolicy::Preserve => Self::Preserve,

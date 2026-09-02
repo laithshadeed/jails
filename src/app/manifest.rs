@@ -1,7 +1,7 @@
 //! Reading `.jails/app.toml`, and refusing what it does not recognise.
 //!
-//! A **closed** schema, the same rule as `jails.toml` and `ledger.toml` and for
-//! the same reason: `apply` acts on this file, so a key it silently ignored
+//! A **closed** schema, the same rule as `jails.toml` and for the same
+//! reason: `apply` acts on this file, so a key it silently ignored
 //! would be an intent somebody believed they had declared. `strategy_on` and
 //! `strategy_yields` still parse as deprecated aliases of `on` and `yields`,
 //! because they shipped in a user-facing file format -- and naming one
@@ -11,7 +11,7 @@
 //! way.
 
 use super::*;
-use jails_protocol::compatibility::APP_MANIFEST_SCHEMA;
+use jails_spec::spec::manifest::APP_MANIFEST_SCHEMA;
 
 pub(super) fn manifest_path(root: &Path, requested: Option<&Path>) -> Result<PathBuf> {
     let path = match requested {
@@ -35,14 +35,10 @@ pub(super) fn manifest_path(root: &Path, requested: Option<&Path>) -> Result<Pat
 /// them.
 ///
 /// Written down because the refusal *is* the documentation: a reader who
-/// mistypes a key learns the schema from this line and nowhere else. It had
-/// silently stopped naming `method` and `consumes`, so two shipped keys were
-/// unreachable to anyone who had not read the source -- the same
-/// oracles-disagreeing shape
-/// `every_command_a_message_tells_the_reader_to_run_is_one_that_exists`
-/// exists to catch on the CLI side.
-///
-/// `every_known_generate_key_is_one_the_parser_accepts` keeps it honest.
+/// mistypes a key learns the schema from this line and nowhere else, so a key
+/// the parser accepts that this list omits is unreachable to anyone who has
+/// not read the source. `every_known_generate_key_is_one_the_parser_accepts`
+/// keeps it honest.
 const KNOWN_GENERATE_KEYS: &[&str] = &[
     "kind",
     "name",
@@ -153,15 +149,6 @@ pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<GenerateArgs>)
                 // `strategy_yields` are kept as deprecated aliases because
                 // they shipped in a user-facing file format, and a manifest
                 // people already wrote must keep working.
-                //
-                // The old spelling is a naming failure worth not repeating:
-                // the flag was invented for `g strategy` and then reused by
-                // `usecase`, `query`, `transition`, `durable-job` and
-                // `command`, so a manifest ends up saying `strategy_on` on an
-                // intent that is not a strategy. abstract.md §4.4 is the
-                // diagnosis -- an implementation detail of the first case
-                // became schema, and the word in the file stopped naming the
-                // thing.
                 "on" | "strategy_on" => {
                     if intent.strategy_on.is_some() {
                         return Err(format!(
@@ -253,9 +240,9 @@ pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<GenerateArgs>)
         .into());
     }
     // On identity, not on identity-plus-content. Keyed on both, a manifest
-    // declaring one entity twice with *different* fields was accepted and both
-    // entries applied -- the second silently overwriting the first's row.
-    // R1.2's gate: duplicate identity refuses before any write.
+    // declaring one entity twice with *different* fields would be accepted
+    // and both entries applied -- the second silently overwriting the first's
+    // row. Duplicate identity refuses before any write.
     let mut seen = HashSet::new();
     for intent in &resolved {
         let recipe = recipe_of(intent);
@@ -423,9 +410,6 @@ mod tests {
 
     /// The refusal *is* the schema documentation, so a key it names has to be
     /// one the parser takes -- and a key the parser takes has to be named.
-    ///
-    /// It had stopped naming `method` and `consumes`: two shipped keys that
-    /// worked and that nobody who had not read the source could discover.
     #[test]
     fn every_known_generate_key_is_one_the_parser_accepts() {
         for key in KNOWN_GENERATE_KEYS {

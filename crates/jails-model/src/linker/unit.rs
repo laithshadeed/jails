@@ -148,9 +148,8 @@ pub(super) fn link(
         // The derived layer, kept as the layer rather than as its default
         // spelling. The linker has no `[layout]` -- it is a captured fact that
         // reaches the model one pass later -- so a string decided here is a
-        // string that cannot be renamed, which is what put a sealed type in
-        // `domain` on a project whose records were already in `core`.
-        // `audit.md` A3.11b.
+        // string that cannot be renamed, which would put a sealed type in
+        // `domain` on a project whose records live in `core`.
         let derived = match unit.kind {
             UnitKind::Service => Some(crate::Package::Service),
             UnitKind::Sealed | UnitKind::Strategy => Some(crate::Package::Domain),

@@ -38,10 +38,10 @@ pub const MESSAGING: &str = "messaging";
 
 /// The eleven layers, as a value.
 ///
-/// plan.md §R2.1 wants a `Layer` rather than a `&str` wherever a layer is
-/// meant: a layout edit that carried a string could name a layer that does not
-/// exist, and `jails.toml`'s closed key set exists precisely so that cannot
-/// happen. The package names are the constants above, so this enum and the
+/// A `Layer` rather than a `&str` wherever a layer is meant: a layout edit
+/// that carried a string could name a layer that does not exist, and
+/// `jails.toml`'s closed key set exists precisely so that cannot happen. The
+/// package names are the constants above, so this enum and the
 /// layout defaults cannot drift; `config::LAYERS_IN_ORDER` adds each layer's
 /// report heading and is checked against this list by a test there.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]

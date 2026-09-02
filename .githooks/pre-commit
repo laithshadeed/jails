@@ -3,10 +3,8 @@
 # runs in pre-push, since a multi-minute pre-commit is one people learn to skip
 # with --no-verify, which makes it worse than no hook.
 #
-# It runs `mise run lint`, which is the same task `verify-rewrite` depends on,
-# so this hook and the gate cannot disagree about what "lint-clean" means. They
-# did: this ran clippy without `-D warnings`, so an unused import passed here
-# and failed at pre-push and in CI.
+# It runs `mise run lint`, the same task `verify-rewrite` depends on, so this
+# hook and the gate cannot disagree about what "lint-clean" means.
 #
 # Installed via `git config core.hooksPath .githooks` (see README).
 # Bypass a single commit with: git commit --no-verify

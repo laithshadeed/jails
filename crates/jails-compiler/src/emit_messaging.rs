@@ -1,7 +1,6 @@
 //! The Kafka slice a declared event gets, when the project declares a broker.
 //!
-//! **The line is the one `CLAUDE.md` draws and this side of it is the payload
-//! half.** `cap kafka` owns everything topic-agnostic -- the
+//! **This is the payload half.** `cap kafka` owns everything topic-agnostic -- the
 //! `DefaultErrorHandler`, the dead-letter routing, the
 //! `ErrorHandlingDeserializer` -- because a capability cannot know a topic
 //! name and must not guess one. An `event` declaration is where the name and
@@ -378,13 +377,11 @@ mod tests {
 
     /// The Kafka slice for one event, with no `id` component anywhere in it.
     ///
-    /// **The missing `id` is the point.** `docs/20-generated-java.md` P6.6 §8
-    /// is about the listener discarding the event, and fixing that surfaced a
-    /// second defect underneath: the listener logged `event.id()`
-    /// unconditionally, so an event declared without that component generated
-    /// a class that did not compile. The proof `MessagingIT` is gated on `id`
-    /// -- it matches the record it waits for by one -- so no test in the tree
-    /// had ever compiled this shape.
+    /// **The missing `id` is the point.** A listener that logs `event.id()`
+    /// unconditionally generates a class that does not compile for an event
+    /// declared without that component, and the proof `MessagingIT` is gated
+    /// on `id` -- it matches the record it waits for by one -- so no other
+    /// test in the tree compiles this shape.
     fn slice(source: &str) -> std::collections::BTreeMap<String, String> {
         let model = jails_model::parse_jdl(source).unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
@@ -414,9 +411,7 @@ mod tests {
     /// The sample is `UUID.fromString(..)`, `URI.create(..)`,
     /// `Instant.parse(..)` -- so a test handed only the event record's own
     /// import compiles exactly as long as every component happens to be a
-    /// `String`, and the first payload with a real type does not. The broker
-    /// proof already assembled this list; the unit proof was written without
-    /// it and passed every check but a compiler.
+    /// `String`, and the first payload with a real type does not.
     #[test]
     fn every_proof_imports_what_constructing_the_payload_names() {
         let slice = slice(RICH);
@@ -432,9 +427,8 @@ mod tests {
                 "the unit proof is missing `{import}`:\n{test}"
             );
         }
-        // Whatever the sample names, the two proofs name the same things: the
-        // broker proof is the one that had the list, and a second answer here
-        // is how they drift.
+        // Whatever the sample names, the two proofs name the same things: a
+        // second answer here is how they drift.
         let broker = &slice["art_op_discovered_messaging_it"];
         for import in ["import java.net.URI;", "import java.time.Instant;"] {
             assert!(broker.contains(import), "{broker}");
@@ -456,9 +450,9 @@ mod tests {
         // from a working consumer.
         assert!(listener.contains("handlers.isEmpty()"), "{listener}");
         assert!(listener.contains("log.warn("), "{listener}");
-        // The old body. A regression to it compiles and passes the broker
-        // proof, because that proof has its own probe listener and never
-        // observes this class at all.
+        // A log-and-drop body compiles and passes the broker proof, because
+        // that proof has its own probe listener and never observes this class
+        // at all.
         assert!(!listener.contains("TODO: hand this to"), "{listener}");
     }
 

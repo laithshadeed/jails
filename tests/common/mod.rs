@@ -26,23 +26,15 @@ pub fn bin() -> &'static str {
 /// real-toolchain test fails, the generated project is the evidence, and a
 /// `Drop` guard would delete it before anyone could look. The cost is that
 /// they accumulate -- a full sweep leaves a Maven project per cell -- and
-/// `examples/DOGFOOD.md` records the day 15,288 of them filled `/tmp` and
-/// Maven failed with `Disk quota exceeded` mid-gate. It happened again on
-/// 2026-08-22, which is why the sweep below exists: **keep the evidence from
-/// this run, take out the ones nobody is looking at any more.**
-/// A scratch tree no other test can be handed.
+/// enough of them fill `/tmp`, at which point Maven fails mid-gate with
+/// `Disk quota exceeded`. The sweep below is the answer: **keep the evidence
+/// from this run, take out the ones nobody is looking at any more.**
 ///
-/// The name used to be a pid plus a nanosecond timestamp, created with
-/// `create_dir_all` -- which is not exclusive in either half. Two threads in
-/// one test binary read the same nanosecond, `create_dir_all` succeeded for
-/// both, and the second `jails g cli Admin` failed with "already exists" over
-/// the first one's files. It reproduced roughly once in five full-workspace
-/// runs, and the workspace split made it more likely by running seven test
-/// binaries where there had been one.
-///
-/// `tempfile` creates the directory atomically with OS randomness in the name,
-/// so exclusivity is the filesystem's guarantee rather than a hope about clock
-/// resolution. The guard is leaked on purpose: these fixtures outlive the test
+/// A scratch tree no other test can be handed: `tempfile` creates the
+/// directory atomically with OS randomness in the name, so exclusivity is the
+/// filesystem's guarantee rather than a hope about clock resolution -- a pid
+/// plus a nanosecond timestamp created with `create_dir_all` is exclusive in
+/// neither half. The guard is leaked on purpose: these fixtures outlive the test
 /// so a failure can be inspected, and `sweep_stale_fixtures` is what collects
 /// them an hour later.
 pub fn temp_dir(label: &str) -> PathBuf {
@@ -58,11 +50,10 @@ pub fn temp_dir(label: &str) -> PathBuf {
 
 /// What to say when a fixture directory cannot be created.
 ///
-/// **A full disk used to report itself as a jails defect.** `.expect("failed
-/// to create a scratch directory")` is a sentence about jails, and the run it
-/// appeared in had 580 of them -- every one in a test that was working
-/// perfectly, on a machine whose `/tmp` was full. A harness that names the
-/// wrong subject costs an afternoon before anyone runs `df`.
+/// `.expect("failed to create a scratch directory")` is a sentence about
+/// jails, and a full `/tmp` produces hundreds of them in tests that are
+/// working perfectly; a harness that names the wrong subject costs an
+/// afternoon before anyone runs `df`.
 ///
 /// So the disk is named when the disk is the cause, and only then: a
 /// permission error or a missing `TMPDIR` is a different failure and claiming
@@ -106,7 +97,7 @@ fn scratch_failure(label: &str, error: &io::Error) -> String {
 /// **Empty means off**, which is not pedantry: CI passes this through an
 /// expression that yields `''` when the dispatch input is false, and a bare
 /// `is_some()` reads a set-but-empty variable as "on" -- so every ordinary run
-/// would have printed a few thousand profile lines nobody asked for.
+/// would print thousands of profile lines nobody asked for.
 pub fn profiling() -> bool {
     std::env::var_os("JAILS_TEST_PROFILE").is_some_and(|value| !value.is_empty())
 }
@@ -136,11 +127,10 @@ static FIXTURE_CLAIMS: Mutex<Vec<File>> = Mutex::new(Vec::new());
 ///
 /// The shared fixture is the point -- it is what lets Maven reuse javac
 /// output across `cargo test` invocations -- so it is what a run asks for
-/// first. What it must not do is *share* it: two gate runs at once used to
-/// read the same stamp, and whichever decided to rebuild called
-/// `remove_dir_all` on a tree the other was running Maven inside. The
-/// failures that produced were `capabilities::` assertions, which read
-/// exactly like capability regressions and are a harness defect.
+/// first. What it must not do is *share* it: two gate runs reading the same
+/// stamp, with whichever decides to rebuild calling `remove_dir_all` on a
+/// tree the other is running Maven inside, fail as `capabilities::`
+/// assertions that read exactly like capability regressions.
 ///
 /// A second run gets a private copy instead of waiting. Waiting would be
 /// correct too, but the wait is the whole `cli` binary -- minutes -- and a
@@ -267,17 +257,14 @@ const FIXTURE_LIFETIME: std::time::Duration = std::time::Duration::from_secs(60 
 /// How many fixtures may sit in the temporary directory before the oldest are
 /// collected regardless of age.
 ///
-/// **Age alone is the wrong bound, and a full disk is how that showed up.**
-/// One suite run leaves roughly 1.4 GB across ~1,900 directories -- every
-/// fixture is `keep()`d so a failure can be inspected -- so six back-to-back
-/// runs inside `FIXTURE_LIFETIME` filled a 16 GB `/tmp` and the seventh
-/// collapsed: 580 `No space left on device` panics, every one of them in a
-/// test that was working. Nothing was stale by the age rule, because nothing
-/// was an hour old yet.
+/// **Age alone is the wrong bound.** Every fixture is `keep()`d so a failure
+/// can be inspected, so several back-to-back runs inside `FIXTURE_LIFETIME`
+/// fill `/tmp` with nothing stale by the age rule, and the next run collapses
+/// with `No space left on device` in tests that are working.
 ///
 /// A count rather than a byte budget: the sweep already stats each entry, and
 /// a recursive size walk of ten thousand trees on every test binary's start
-/// would cost more than the space it reclaims. At the measured ~0.7 MB per
+/// would cost more than the space it reclaims. At the measured size per
 /// fixture this budget is about 2 GB, which leaves the last run whole on a
 /// 16 GB `/tmp` with room for the next two.
 const FIXTURE_BUDGET: usize = 3000;
@@ -347,8 +334,6 @@ fn sweep_stale_fixtures() {
             // fixtures: each module's unit tests have their own `scratch()`
             // label, so the leftovers are `jails-e2e-*`, `jails-run-test-*`,
             // `jails-new-test-*`, `jails-project-*` and half a dozen more.
-            // Sweeping only the two prefixes I first thought of left 3,166
-            // directories behind and 13 GB still gone.
             if !name.starts_with("jails-") {
                 continue;
             }
@@ -370,7 +355,7 @@ fn sweep_stale_fixtures() {
 mod scratch_failure_tests {
     use super::*;
 
-    /// P13.9: the run that produced 580 of these said nothing about a disk.
+    /// A full disk names the disk rather than jails.
     #[test]
     fn a_full_disk_names_the_disk_and_says_what_to_do() {
         let message = scratch_failure("new-cli", &io::Error::from(io::ErrorKind::StorageFull));
@@ -405,8 +390,8 @@ mod scratch_failure_tests {
 mod fixture_claim_tests {
     use super::*;
 
-    /// P13.10's property: the second run must not be handed the tree the
-    /// first one is building in.
+    /// The second run must not be handed the tree the first one is building
+    /// in.
     ///
     /// `flock` treats two opens of one file independently even inside a
     /// single process, so one process can play both runs here -- which is
@@ -485,8 +470,8 @@ mod sweep_tests {
         assert!(fixtures_to_collect(&entries, 3).is_empty());
     }
 
-    /// The case a full `/tmp` proved the age rule alone could not answer: six
-    /// suite runs inside `FIXTURE_LIFETIME` left nothing stale and no space.
+    /// The case the age rule alone cannot answer: several suite runs inside
+    /// `FIXTURE_LIFETIME` leave nothing stale and no space.
     #[test]
     fn over_budget_collects_the_oldest_first_and_only_the_excess() {
         let entries = aged(&[MIDDLE + 3, MIDDLE + 1, MIDDLE + 4, MIDDLE + 2]);
@@ -675,13 +660,8 @@ pub fn real_docker_available() -> bool {
             .unwrap_or(false)
 }
 
-/// The real constant, not a copy of it.
-///
-/// This was a hand-maintained duplicate guarded by a test that read
-/// `src/pom.rs` as text, because integration tests linked against a binary and
-/// a binary exports nothing. `pom` is a library crate now, so the duplicate and
-/// its guard are both gone -- which is the workspace split paying for itself in
-/// the place CLAUDE.md warns about most: one fact kept in two places.
+/// The real constant, not a copy of it: `pom` is a library crate, so
+/// integration tests read it rather than keeping one fact in two places.
 pub use jails_project::pom::TARGET_RELEASE;
 
 fn real_path_dirs() -> impl Iterator<Item = PathBuf> {
@@ -692,7 +672,7 @@ fn real_path_dirs() -> impl Iterator<Item = PathBuf> {
 
 /// The real PATH with mvnd removed for generated-project builds.
 ///
-/// mvnd currently fails intermittently when this suite drives many projects
+/// mvnd fails intermittently when this suite drives many projects
 /// concurrently. These checks are about the projects Maven receives, so keep
 /// them on the stable Maven executable and test mvnd command selection with
 /// the isolated fake-toolchain tests below.
@@ -727,20 +707,13 @@ const REAL_MAVEN_ARGS: &str = "-ntp -DforkCount=0 -Dspring.main.banner-mode=off 
     -Dspring.datasource.hikari.maximum-pool-size=2 \
     -Dspring.datasource.hikari.minimum-idle=0";
 
-// **JUnit class-level parallelism was measured here and refused.**
-//
-// Adding `junit.jupiter.execution.parallel.*` with classes concurrent at a
-// parallelism of four -- the same shape the app-suite fixture uses safely for
-// its own two -- took the gate from **144.5s and green to 535.4s with eleven
-// failures**, and the `jails` bucket from 313s over 133 subprocesses to 695s
-// over 284. Generated tests share a database, ports and fixture files, so
-// running their classes concurrently does not overlap work, it manufactures
-// contention and retries.
-//
-// The app suite gets away with it because it declares the mode explicitly per
-// service and holds parallelism at two. Do not lift that setting to the
-// general case again without re-measuring; this is the second time an
-// idea that reads as free concurrency has cost more than it saved.
+// **JUnit class-level parallelism is refused here, measured.** Generated
+// tests share a database, ports and fixture files, so running their classes
+// concurrently does not overlap work, it manufactures contention and retries,
+// and the gate goes from green to slower with failures. The app suite gets
+// away with it because it declares the mode explicitly per service and holds
+// parallelism at two. Do not lift that setting to the general case without
+// re-measuring.
 
 /// Startup policy for the deliberately short-lived JVMs in this test suite.
 ///
@@ -797,8 +770,7 @@ fn dependency_classpath(root: &Path, path: &str) -> Option<String> {
     // **Unique per call, not per process.** Keyed on the pid alone, two
     // threads of one test binary resolving the same pom write the same
     // staging path: one truncates the file the other is about to read, and
-    // the loser hands `javac` an empty classpath. It passed alone and failed
-    // at eight threads, which is the signature of exactly this.
+    // the loser hands `javac` an empty classpath.
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let unique = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let scratch = directory.join(format!("{key}.{}.{unique}.tmp", std::process::id()));
@@ -845,13 +817,9 @@ fn main_sources(root: &Path) -> Vec<PathBuf> {
 
 /// Prove the generated main sources compile, **without paying for Maven**.
 ///
-/// `mvn -DskipTests compile` was doing this, and the profile says what that
-/// costs: Maven's own startup is **1.41s** before any work, against a **0.02s**
-/// JVM start, and a warm compile of a generated project is 2.26s of which the
-/// javac is a fraction. Six tests were each paying that whole stack to answer
-/// one question -- *does this compile* -- that `javac` answers directly.
-///
-/// The dependency resolution those runs also paid for is hoisted into
+/// Maven's own startup is over a second before any work, against a JVM start
+/// of a few milliseconds, and the question here -- *does this compile* -- is
+/// one `javac` answers directly. The dependency resolution is hoisted into
 /// [`dependency_classpath`], where it happens once per distinct pom and is
 /// then a file read. What is left is the compiler.
 ///
@@ -889,8 +857,8 @@ pub fn assert_main_sources_compile(root: &Path, path: &str, what: &str) {
 /// The JVM startup policy, overridable for measurement.
 ///
 /// `JAILS_JAVA_TOOL_OPTIONS` replaces it wholesale. The right flags depend on
-/// how long these JVMs actually live, and that changed when Surefire stopped
-/// forking -- so the choice has to stay measurable rather than remembered.
+/// how long these JVMs actually live, so the choice has to stay measurable
+/// rather than remembered.
 fn real_java_tool_options() -> String {
     std::env::var("JAILS_JAVA_TOOL_OPTIONS").unwrap_or_else(|_| REAL_JAVA_TOOL_OPTIONS.to_string())
 }
@@ -910,10 +878,9 @@ pub fn real_docker_cmd(cwd: &Path) -> ToolchainCommand {
 /// shape that reaches BuildKit.** A generated Dockerfile opens with `# syntax=
 /// docker/dockerfile:1`, and that external frontend resolves every `FROM`
 /// against the *registry* -- so a locally retagged image is invisible to it,
-/// however the tag is arranged. Measured directly: the same build reports 154
-/// imported CA certificates in its base with the directive removed and zero
-/// with it present. `--build-context <name>=docker-image://<image>` is what
-/// the frontend does honour.
+/// however the tag is arranged, measured rather than assumed.
+/// `--build-context <name>=docker-image://<image>` is what the frontend does
+/// honour.
 ///
 /// Empty for everybody else, so the gate builds exactly what jails wrote. The
 /// substitution is deliberately not derived from anything jails knows: an
@@ -1136,11 +1103,9 @@ impl Drop for AppSuiteServices {
 /// [`ContainerGuard`]'s `Drop` is the ordinary path and it is reliable for
 /// every ordinary ending, panics included. It cannot run when the process is
 /// killed outright -- `SIGKILL` from the OOM killer, a `docker kill` of the
-/// runner, a hard `^C` -- and that is not hypothetical: a suite run that
-/// exhausted this machine's memory left a PostgreSQL and a Kafka behind
-/// exactly that way. Left to accumulate they exhaust Docker's address pool
-/// and unrelated container tests begin failing, with nothing pointing at the
-/// run that actually caused it.
+/// runner, a hard `^C`. Left to accumulate the containers exhaust Docker's
+/// address pool and unrelated container tests begin failing, with nothing
+/// pointing at the run that actually caused it.
 ///
 /// So ownership is recoverable rather than merely promised: every suite
 /// container carries its creator's pid in its name, and a pid that is gone is
@@ -1152,9 +1117,8 @@ impl Drop for AppSuiteServices {
 /// the suite do not reap each other.
 fn sweep_orphaned_suite_containers() {
     // `ps --format '{{.Names}}'` rather than `-q` plus an `inspect` each: it is
-    // one subprocess instead of one per container, and CLAUDE.md records that
-    // this exact spelling behaves identically on docker and on podman's shim,
-    // which is what this machine actually runs.
+    // one subprocess instead of one per container, and this exact spelling
+    // behaves identically on docker and on podman's shim.
     let listed = Command::new("docker")
         .args([
             "ps",
@@ -1289,22 +1253,18 @@ impl Drop for ContainerGuard {
 /// A loopback port with something listening on it, held open by the returned
 /// listener.
 ///
-/// **What this replaces is thirty seconds of real waiting per test.** A
-/// command that starts compose services then waits for PostgreSQL to accept
-/// connections -- `jails run --services start` -- polls for 120 quarter
-/// seconds before giving up. Against a fake `docker` that starts no container
-/// the poll can only ever time out, so a test asking the narrow question *did
-/// compose go up before Spring* paid the entire budget for an answer it was
-/// not asking about. It was the single most expensive test in the suite and
-/// set the floor for the whole `cli` binary.
-///
-/// Shortening the production budget would be the wrong fix: how long to wait
-/// for a database is a real decision and thirty seconds is a defensible one.
-/// So the fixture stops lying instead. A fake `docker` that reports success
-/// is claiming a server is up, and this makes that claim true enough for the
-/// probe that checks it -- which is a *better* model of the case under test,
-/// not a weaker one, and leaves the readiness wait itself covered by the
-/// tests that are about it.
+/// A command that starts compose services then waits for PostgreSQL to accept
+/// connections -- `jails run --services start` -- polls for thirty seconds
+/// before giving up. Against a fake `docker` that starts no container the
+/// poll can only ever time out, so a test asking the narrow question *did
+/// compose go up before Spring* would pay the entire budget for an answer it
+/// was not asking about. Shortening the production budget would be the wrong
+/// fix: how long to wait for a database is a real decision. So the fixture
+/// stops lying instead. A fake `docker` that reports success is claiming a
+/// server is up, and this makes that claim true enough for the probe that
+/// checks it -- a *better* model of the case under test, not a weaker one --
+/// and leaves the readiness wait itself covered by the tests that are about
+/// it.
 ///
 /// A listening socket completes the handshake from its backlog with no
 /// `accept()` call, so nothing here has to serve anything. Hold the listener
@@ -1321,9 +1281,9 @@ pub fn listening_loopback_port() -> (TcpListener, u16) {
 /// whole reason this takes a count instead of being called in a loop. Asking
 /// the kernel for an ephemeral port means binding port 0, reading what you
 /// got, and closing -- so a second call made *after* the first has closed can
-/// be handed the very same port back. `AppSuiteServices` did exactly that,
-/// reserving PostgreSQL's port and then Kafka's, and the failure it buys is
-/// the confusing kind: two containers are told to publish on one port, the
+/// be handed the very same port back. Reserving PostgreSQL's port and then
+/// Kafka's that way buys the confusing kind of failure: two containers are
+/// told to publish on one port, the
 /// second `docker run` fails to bind, and the suite reports it as a broker
 /// that would not start.
 ///
@@ -1388,12 +1348,11 @@ fn wait_for_log(container: &str, marker: &str, timeout: Duration) {
 ///
 /// Libtest defaults to one worker per CPU. A generated-project test then
 /// starts Maven, which starts javac and another JVM, and some of those JVMs
-/// start containers. Letting sixteen such trees run at once made each
-/// otherwise seven-second build take 40--75 seconds and eventually made a
-/// Kafka container exit during startup. Six process trees let the three-app
-/// gate and consolidated focused suites overlap without returning to the
-/// original sixteen-way fan-out. Pure Rust tests and fake-toolchain commands
-/// do not use this wrapper and remain fully parallel.
+/// start containers. One such tree per core multiplies every build's time
+/// several-fold and can make a Kafka container exit during startup, so the
+/// number of process trees is bounded separately and derived from the
+/// machine. Pure Rust tests and fake-toolchain commands do not use this
+/// wrapper and remain fully parallel.
 pub struct ToolchainCommand {
     inner: Command,
 }
@@ -1502,11 +1461,8 @@ fn report_profiled_command(
 /// slow* and cost a few thousand lines of output, so they stay opt-in. This
 /// answers a different question -- *where does the wall clock go* -- in four
 /// numbers, and it has to be on by default or it is not there on the run that
-/// raises the question. The run that raised this one cannot be repeated:
-/// `tests/cli` is 147s on a developer machine and 296s on the four-core CI
-/// runner with a warm `~/.m2` and a container engine on both, and no
-/// measurement taken locally explains the gap. A measurement that needs a
-/// specially dispatched run is a measurement nobody takes.
+/// raises the question. A measurement that needs a specially dispatched run
+/// is a measurement nobody takes.
 ///
 /// Bucketed by the program's own file stem rather than by a table of tools:
 /// a stem jails has never heard of is still a subprocess whose seconds are on
@@ -1581,24 +1537,16 @@ fn test_profile_epoch() -> &'static Instant {
 
 /// How many Maven/JDK processes may run at once, when nothing says otherwise.
 ///
-/// Six was a constant, and a constant is wrong in both directions: it throttles
-/// a 16-core machine and oversubscribes a 4-core one. Derived from the machine
-/// now, with six kept as the floor because that is the number the suite was
-/// tuned against, and twelve as the ceiling because these are JVMs -- Surefire
-/// forks again underneath each one, so the limit is memory and disk rather than
-/// cores. Measured on 16 cores: `tests/cli` 113.2s at six, 106.3s at twelve.
+/// Derived from the machine rather than a constant, which is wrong in both
+/// directions: it throttles a 16-core machine and oversubscribes a 4-core one.
+/// Six is the floor because that is the number the suite is tuned against,
+/// and twelve the ceiling because these are JVMs -- Surefire forks again
+/// underneath each one, so the limit is memory and disk rather than cores.
+/// Three quarters of the cores reaches the ceiling on a 16-core machine, where
+/// the permit queue measures zero, and leaves a four-core runner on the floor;
+/// past twelve there is no queue left to drain, measured.
 ///
-/// **Half the cores was too few, and the gate's own profile said so.** At the
-/// old `cores / 2` -- eight, here -- the full gate spent **159.7s queued for a
-/// permit** and ran in 150s; at twelve the queue is **0s** and it runs in 142s.
-/// Three quarters reaches the ceiling on this machine and leaves a four-core
-/// runner exactly where it was, on the floor of six.
-///
-/// Sixteen was measured too and is identical to twelve (142s), which is the
-/// evidence for keeping the ceiling: past twelve there is no queue left to
-/// drain, and these are JVMs.
-///
-/// `JAILS_TEST_MAX_TOOLCHAIN_PROCESSES` still overrides it.
+/// `JAILS_TEST_MAX_TOOLCHAIN_PROCESSES` overrides it.
 fn default_max_toolchain_processes() -> usize {
     std::thread::available_parallelism()
         .map(|cores| (cores.get() * 3 / 4).clamp(6, 12))
@@ -1621,20 +1569,10 @@ fn max_toolchain_processes() -> usize {
 
 /// A budget of concurrent toolchain processes, shared across **processes**.
 ///
-/// It was a `Mutex` and a `Condvar`, which is exactly right for one test
-/// binary and worth nothing for several. An in-process budget is the whole
-/// machine's budget only while one binary runs at a time: a runner that starts
-/// several at once gives each one its own `Mutex`, and each then believes it
-/// can have all six permits to itself. Five of these binaries shell out to
-/// Maven, so a four-core machine was being asked for thirty concurrent JVMs.
-///
-/// **The concurrent runner that forced this is gone** -- it was OOM-killed
-/// running 16 binaries at once and `cargo test`, which runs them one after
-/// another, proved both faster and bounded. The `flock` stays anyway, and not
-/// out of sentiment: it is what makes the budget true for *any* way of
-/// launching the suite, including the ordinary case of a second shell running
-/// `cargo test` while the first still is. An in-process budget silently
-/// doubles the machine's JVM count there; this one does not.
+/// An in-process budget -- a `Mutex` and a `Condvar` -- is the whole
+/// machine's budget only while one binary runs at a time: a second shell
+/// running `cargo test` while the first still is silently doubles the
+/// machine's JVM count. This one does not, whatever launches the suite.
 ///
 /// `flock` is the budget, one lock file per permit under `target/`. Three
 /// properties are why it is a file lock rather than anything cleverer:
@@ -1722,10 +1660,9 @@ impl PermitPool {
 
     /// The same attempt, plus why each slot was refused.
     ///
-    /// `infrastructure_start_pool_has_two_reusable_permits` failed its second
-    /// acquire only under full-suite load, and "returned `None`" is not enough
-    /// to tell a slot that was locked from a slot that could not be opened.
-    /// The reason travels with the failure so the panic names it.
+    /// "Returned `None`" is not enough to tell a slot that was locked from a
+    /// slot that could not be opened. The reason travels with the failure so
+    /// the panic names it.
     #[cfg(test)]
     fn try_acquire_reporting(&self, maximum: usize) -> (Option<ProcessPermit>, Vec<String>) {
         let directory = self.directory();
@@ -1752,9 +1689,7 @@ impl PermitPool {
             // binary is exposed to is `EINTR`: it reaps thousands of spawned
             // `jails` processes, so `SIGCHLD` arrives constantly, and `fs2`
             // surfaces an interrupted `flock` as an ordinary error. Reading
-            // that as contention is how a pool directory this process created
-            // for itself came to refuse both of its own slots under full-suite
-            // load and neither of them when run alone.
+            // that as contention makes a pool refuse its own slots under load.
             let mut attempts = 0;
             loop {
                 match fs2::FileExt::try_lock_exclusive(&file) {
@@ -1788,15 +1723,14 @@ struct ProcessPermit {
 /// 26) -- deliberately not fetched from start.spring.io, so the
 /// "does scaffold produce a project that compiles" check never depends on
 /// that external service.
-/// Where the compiler puts a file the engine it replaces put somewhere else.
+/// Where the compiler puts a file that a test names by an older path.
 ///
-/// **A closed list, `CLAUDE.md`'s "Package layout" section as data.** Each row
-/// is a documented divergence: ports moved out of `app` into `repository`, an
-/// operation's typed command out of `service` into `application/commands`, and
-/// the two repository adapters out of `adapters` into the sub-packages that
-/// say which one they are. Exact paths are pinned by the golden trees; this
-/// exists so a test about a file's *contents* is not also a second, weaker
-/// assertion about its package.
+/// **A closed list.** Each row is a documented divergence: ports live in
+/// `repository` rather than `app`, an operation's typed command in
+/// `application/commands` rather than `service`, and the two repository
+/// adapters in sub-packages under `adapters` that say which one they are.
+/// Exact paths are pinned by the golden trees; this exists so a test about a
+/// file's *contents* is not also a second, weaker assertion about its package.
 const MOVED_PACKAGES: &[(&str, &[&str])] = &[
     (
         "src/main/java/com/example/demo/app/",
@@ -1808,7 +1742,7 @@ const MOVED_PACKAGES: &[(&str, &[&str])] = &[
             "com/example/demo/application/commands/",
             "com/example/demo/application/queries/",
             "com/example/demo/application/transitions/",
-            // A `Storing...UseCase` was the implementation rather than the
+            // A `Storing...UseCase` names the implementation rather than the
             // port, and the implementation is the operation's JDBC adapter.
             "com/example/demo/adapters/jdbc/",
         ],
@@ -1819,7 +1753,7 @@ const MOVED_PACKAGES: &[(&str, &[&str])] = &[
             "com/example/demo/adapters/jdbc/",
             "com/example/demo/adapters/memory/",
             "com/example/demo/adapters/http/",
-            // An operation's JDBC adapter is not an adapter any more: the
+            // An operation's JDBC adapter is not filed with the adapters: the
             // compiler emits one typed class per operation and puts it with
             // the other operations rather than with the driver code.
             "com/example/demo/application/commands/",
@@ -1858,7 +1792,7 @@ const MOVED_PACKAGES: &[(&str, &[&str])] = &[
 /// Where javac put the class for a generated source, in whichever package the
 /// compiler puts that source.
 ///
-/// **The `.class` moved because the `.java` did**, so an assertion about
+/// **The `.class` is wherever the `.java` is**, so an assertion about
 /// compiled output goes through the same table as one about source. Named with
 /// the source path it is the output of -- `src/main/java/.../Foo.java` -- so
 /// the caller states the thing they generated rather than an output layout
@@ -1879,7 +1813,7 @@ pub fn compiled_class(root: &Path, relative: &str) -> PathBuf {
 ///
 /// For an assertion about *reported* text rather than about bytes: `g field`
 /// names each companion it regenerated, and the name it prints is the path the
-/// compiler wrote rather than the one the engine would have.
+/// compiler wrote rather than an older spelling.
 pub fn generated_relative(root: &Path, relative: &str) -> String {
     generated(root, relative)
         .strip_prefix(root)
@@ -1907,16 +1841,16 @@ pub fn generated(root: &Path, relative: &str) -> PathBuf {
         return managed;
     }
     // **The package may have moved, and only these moves count.** The
-    // canonical layout differs from the engine it replaces in a closed set of
+    // canonical layout differs from the older spelling in a closed set of
     // places, listed here so the divergence is written down once rather than
     // rediscovered at three hundred assertions -- and so a file that turns up
-    // somewhere *unexpected* is still a failure. A basename search would have
-    // accepted any location, which is exactly the check these tests are for.
+    // somewhere *unexpected* is still a failure. A basename search would
+    // accept any location, which is exactly the check these tests are for.
     //
-    // A legacy package can map to more than one canonical package -- `service`
-    // split into commands, queries and transitions by what the operation *is*
-    // -- so each row lists its candidates and the basename still has to match
-    // exactly.
+    // An older package name can map to more than one canonical package --
+    // `service` splits into commands, queries and transitions by what the
+    // operation *is* -- so each row lists its candidates and the basename
+    // still has to match exactly.
     let tree = if relative.starts_with("src/test/") {
         ".jails/generated/test/java"
     } else {
@@ -1957,12 +1891,12 @@ fn renamed_kinds(relative: &str) -> Vec<String> {
         ("QueryController", &["Controller"]),
         ("UseCaseController", &["Controller"]),
     ];
-    // **The prefix moved the same way the suffix did**, and each of these is
-    // one legacy name for one canonical file rather than a pattern. `Storing`
-    // marked the *implementation* of a use case -- the class that wrote the
+    // **The prefix moves the same way the suffix does**, and each of these is
+    // one older name for one canonical file rather than a pattern. `Storing`
+    // marks the *implementation* of a use case -- the class that writes the
     // row -- and the compiler calls that the operation's JDBC adapter, so the
     // prefix is replaced rather than dropped. `Jdbc` is dropped where the
-    // compiler no longer distinguishes an implementation by its technology.
+    // compiler does not distinguish an implementation by its technology.
     //
     // Applied once rather than recursively, which is the part that matters:
     // chaining them would turn `StoringPlaceOrderUseCase` into the bare
@@ -1970,7 +1904,7 @@ fn renamed_kinds(relative: &str) -> Vec<String> {
     // file, in a different package, which an assertion about the
     // implementation would then match instead.
     const PREFIXED: &[(&str, &str)] = &[("Jdbc", ""), ("Storing", "Jdbc"), ("Resolving", "Jdbc")];
-    // **A durable job's unit of work is its queue.** The engine called the
+    // **A durable job's unit of work is its queue.** A test may call the
     // record `...Work`; the compiler names it after what holds it, which is
     // the class a reader looks for when a job is not draining.
     const SUFFIXED: &[(&str, &str)] = &[("Work", "Queue")];
@@ -1996,8 +1930,8 @@ fn renamed_kinds(relative: &str) -> Vec<String> {
     for stem in stems {
         names.push(format!("{directory}{stem}.java"));
         // **A companion test is renamed by whatever renamed its subject.**
-        // `OpenTicketsQueryController` became `OpenTicketsController`, so its
-        // test did too -- and a table listing both spellings of every row
+        // `OpenTicketsQueryController` is `OpenTicketsController`, so its
+        // test is too -- and a table listing both spellings of every row
         // would go stale on the first kind that gains one. The trailing `Test`
         // is lifted off, the rename applied to the type it names, and the
         // suffix put back.
@@ -2071,10 +2005,9 @@ pub fn managed_listing(root: &Path) -> String {
 /// What `jails resource status --output json` says about one resource.
 ///
 /// **The canonical lifecycle record, read through the command that reports
-/// it.** A legacy project kept lifecycles in `.jails/ledger.toml` and these
-/// assertions read that file directly; a canonical one keeps the same three
-/// facts -- which Java type, which table, which migrations -- in the model and
-/// the migration directory, and this is the one place that answers from them.
+/// it.** A project keeps three facts -- which Java type, which table, which
+/// migrations -- in the model and the migration directory, and this is the
+/// one place that answers from them.
 /// Going through the product rather than the files is deliberate: a test that
 /// re-derives the answer can disagree with what a reader is told.
 pub fn resource_status(root: &Path, selector: &str) -> serde_json::Value {
@@ -2120,16 +2053,13 @@ pub fn become_canonical(root: &Path) {
 
 /// Declare PostgreSQL storage, the way a reader would.
 ///
-/// **Replaces `create_dir_all("src/main/resources/db/migration")`.** Creating
-/// the directory was how a test told the legacy engine "there is somewhere to
-/// put a migration"; the compiler asks the *model* whether the project has
-/// storage, so an empty directory says nothing and no DDL is emitted. This is
-/// the declaration those tests were standing in for, and it also brings the
-/// JDBC adapters and the Testcontainers wiring they go on to assert about.
+/// **A declaration, not a directory.** The compiler asks the *model* whether
+/// the project has storage, so an empty `db/migration` directory says nothing
+/// and no DDL is emitted. The declaration also brings the JDBC adapters and
+/// the Testcontainers wiring the tests go on to assert about.
 ///
 /// `--no-start` throughout: nothing here wants a container, and starting one
-/// per test would put a docker invocation on the critical path of a suite that
-/// spends 3% of its time on containers already.
+/// per test would put a docker invocation on the critical path.
 pub fn declare_storage(root: &Path) {
     let output = Command::new(bin())
         .current_dir(root)
@@ -2169,18 +2099,14 @@ pub fn write_spring_fixture(root: &Path) {
 /// A Boot 2.7 project, for the tests that have to prove a classic
 /// `MockMvc` template compiles.
 ///
-/// **`pending.md` §1.2's whole point.** Nine generated companion tests are
-/// written against `MockMvcTester`, which is Spring Framework 6.2 (Boot 3.4).
-/// Seven of them used to refuse on an older project rather than write a test
-/// that cannot compile — the right failure and the wrong feature, since
-/// `jails new --gradle --boot 2.7.18` exists so those projects can be worked
-/// in. They have a classic form now, and the item's own reason for not writing
-/// one earlier was that *a template written and not exercised is a template
-/// nobody has proved compiles*. This fixture is what exercises them.
+/// The generated companion tests are written against `MockMvcTester`, which
+/// is Spring Framework 6.2 (Boot 3.4), and carry a classic form for an older
+/// project -- `jails new --gradle --boot 2.7.18` exists so those projects can
+/// be worked in. A template written and not exercised is a template nobody
+/// has proved compiles; this fixture is what exercises them.
 ///
 /// Boot 2.7.18 on Java 17, resolved from Maven Central like every other pinned
-/// version here, and it runs under this machine's JDK 26 — verified, because
-/// the assumption that it would not is what made this look impossible.
+/// version here, and it runs under this machine's JDK 26.
 pub fn write_spring2_fixture(root: &Path) {
     let pkg_dir = root.join("src/main/java/com/example/demo");
     fs::create_dir_all(&pkg_dir).unwrap();
@@ -2244,13 +2170,11 @@ const SPRING2_FIXTURE_POM: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 
 /// A Spring project shaped exactly like the one `jails new --offline` writes.
 ///
-/// It used to declare `spring-boot-starter-webmvc-test`, which `new` does
-/// not, and that one line hid a release blocker: `add security` generates a
+/// It declares nothing `new` does not -- in particular not
+/// `spring-boot-starter-webmvc-test`: `add security` generates a
 /// `@WebMvcTest`, Boot 4 moved that class into a module
-/// `spring-boot-starter-test` does not bring in, and every real-toolchain
-/// test compiled it happily against a POM the tool never produces. A fixture
-/// that supplies what the tool is supposed to supply proves nothing about
-/// the tool.
+/// `spring-boot-starter-test` does not bring in, and a fixture that supplies
+/// what the tool is supposed to supply proves nothing about the tool.
 const SPRING_FIXTURE_POM: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0">
     <modelVersion>4.0.0</modelVersion>
@@ -2314,21 +2238,12 @@ class DemoApplicationTests {
 }
 "#;
 
-/// Whether the schema-2 ledger mentions this exact string.
-///
-/// The ledger is one hex-encoded payload, so a plain `contains` over the file
-/// finds nothing -- which made every test that scraped the schema-1 TOML pass
-/// vacuously the moment it stopped being TOML. Encoding the needle the same
-/// way the payload is encoded is the smallest honest check: it proves the
-/// bytes are in there without decoding a format the test has no business
 /// Whether the project's own record names something.
 ///
-/// **The record is the model plus the managed tree**, which is where a
-/// canonical project keeps what a legacy one kept in `.jails/ledger.toml`:
-/// the declaration, and the files it owns. The old spelling searched that
-/// file's hex-encoded payload, and on a project that has none it answered
-/// "no" about everything -- a check that cannot fail is a check that is not
-/// there.
+/// **The record is the model plus the managed tree**: the declaration, and
+/// the files it owns. A check that searched a bookkeeping file the project
+/// does not have would answer "no" about everything, and a check that cannot
+/// fail is a check that is not there.
 pub fn ledger_mentions(root: &std::path::Path, needle: &str) -> bool {
     let model = std::fs::read_to_string(root.join(".jails/model.jdl")).unwrap_or_default();
     // A canonical project keeps its bookkeeping in three places, and which one
@@ -2352,10 +2267,8 @@ pub fn write_plain_fixture(root: &Path) {
         format!(
             // `modelVersion` and the project's own `version` are not
             // decoration: without them Maven refuses to read the POM at all,
-            // and every test that only ever *inspected* this fixture passed
-            // while nothing had ever built it. That is plan.md 8.8 in
-            // miniature, and `add format` -- which shells out to Maven -- is
-            // what finally noticed.
+            // and a test that only ever *inspects* this fixture passes
+            // without ever building it.
             "<project>\n    <modelVersion>4.0.0</modelVersion>\n    <groupId>com.example</groupId>\n    <artifactId>demo</artifactId>\n    <version>0.1.0</version>\n    <properties>\n        <maven.compiler.release>{TARGET_RELEASE}</maven.compiler.release>\n    </properties>\n    <dependencies>\n        <dependency>\n            <groupId>org.junit.jupiter</groupId>\n            <artifactId>junit-jupiter</artifactId>\n            <version>5.11.4</version>\n            <scope>test</scope>\n        </dependency>\n    </dependencies>\n</project>\n"
         ),
     )
@@ -2367,8 +2280,7 @@ pub fn write_plain_fixture(root: &Path) {
     .unwrap();
 }
 
-/// Which build the adopted fixture is, since `simplify-sol.md`'s G5 asks for
-/// both.
+/// Which build the adopted fixture is.
 ///
 /// A flavour rather than two fixtures: the reader's classes, packages and
 /// directory names are the same foreignness in either case, and the thing that
@@ -2434,11 +2346,9 @@ pub fn adopted_base(root: &Path) -> PathBuf {
 
 /// A Maven project jails did not write.
 ///
-/// `simplify-sol.md`'s G5 asks for *sanitized adopted and reader-edited*
-/// projects, and every manifest in `examples/proof-policy.tsv` is jails' own
-/// output -- so nothing proved the tool against a codebase it did not
-/// generate. A generator can be perfectly correct about its own layout and
-/// wrong about somebody else's.
+/// Every manifest in `examples/proof-policy.tsv` is jails' own output, and a
+/// generator can be perfectly correct about its own layout and wrong about
+/// somebody else's.
 ///
 /// Deliberately foreign in every respect a generator might assume: its own
 /// groupId and artifactId, a package root that is not `com.example.demo`, a
@@ -2548,27 +2458,19 @@ mod permit_pool_tests {
     /// A pool whose budget belongs to *this process and this test alone*.
     ///
     /// `tests/common/mod.rs` is compiled into every integration-test binary,
-    /// so this module runs thirty-two times over -- and since the budget is
-    /// now a `flock` on named files, a fixed name would make those thirty-two
-    /// copies contend with each other for the very slots they are asserting
-    /// about. They did: CI went red on two of them while the same run passed
-    /// locally, because the collision needs the binaries to reach these tests
-    /// at the same moment.
+    /// so this module runs in every one of them -- and since the budget is a
+    /// `flock` on named files, a fixed name would make those copies contend
+    /// with each other for the very slots they are asserting about. A
+    /// production pool wants exactly this sharing; a test *about* the sharing
+    /// has to own its own budget, so the name carries a per-process token.
     ///
-    /// That is the change working, aimed at itself. A production pool wants
-    /// exactly this sharing; a test *about* the sharing has to own its own
-    /// budget, so the name carries the pid.
-    /// A pool nothing outside this process can be holding.
-    ///
-    /// `test-<label>-<pid>` was not that. Pids are recycled, so a binary
-    /// started later is routinely handed the pid of one
-    /// that has already exited -- and a slot lock outlives the process that
-    /// took it whenever a forked child inherited the descriptor and has not
-    /// reached `exec` yet. These binaries spawn thousands of `jails`
-    /// processes, so that window is hit:
-    /// `infrastructure_start_pool_has_two_reusable_permits` failed its
-    /// *second* acquire under full-suite load and passed every time alone,
-    /// which is what a slot held by somebody else's leftover looks like.
+    /// A pid alone is not that. Pids are recycled, so a binary started later
+    /// is routinely handed the pid of one that has already exited -- and a
+    /// slot lock outlives the process that took it whenever a forked child
+    /// inherited the descriptor and has not reached `exec` yet. These binaries
+    /// spawn thousands of `jails` processes, so that window is hit, and it
+    /// looks like a second acquire failing under full-suite load and passing
+    /// alone.
     ///
     /// The token is per *process*, not per call, because
     /// `a_budget_is_shared_by_every_pool_of_the_same_name` needs two pools
@@ -2577,8 +2479,8 @@ mod permit_pool_tests {
     fn pool(label: &str) -> PermitPool {
         static TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
         let token = TOKEN.get_or_init(|| {
-            // **Nanoseconds since the epoch, not within the second.** Thirty-
-            // three binaries start together and pids are recycled, so a pid
+            // **Nanoseconds since the epoch, not within the second.** The
+            // binaries start together and pids are recycled, so a pid
             // plus a sub-second reading collides often enough to be seen: two
             // live processes then share one named budget, and the assertions
             // below -- which are about *this* process holding and releasing a
@@ -2619,13 +2521,11 @@ mod permit_pool_tests {
                 .is_none()
         );
         drop(first);
-        // **Bounded, because the release is observed to lag under full-suite
-        // load and only there.** Standalone -- twelve consecutive runs, six of
-        // them against eight spinning cores -- the reacquire succeeds every
-        // time; inside `mise run verify-rewrite`, where thirty-three binaries
-        // reap thousands of `jails` children between them, it has reported
-        // `slot 0: held` for a slot this process had just closed. The cause is
-        // not established, so this waits rather than claiming to explain it:
+        // **Bounded, because the release can lag under full-suite load.**
+        // With every binary reaping thousands of `jails` children, a slot
+        // this process has just closed can still report as held for a few
+        // milliseconds. The cause is not established, so this waits rather
+        // than claiming to explain it:
         // what the test is for is that a permit comes back at all, and a
         // release that takes a few milliseconds to become visible to a fresh
         // descriptor still satisfies that. It is written as a loop with a
@@ -2672,14 +2572,13 @@ mod permit_pool_tests {
         assert!(infrastructure.try_acquire(1).is_some());
     }
 
-    /// The property the whole change exists for, and the one the `Mutex`
-    /// version could not have.
+    /// The property a process-shared budget exists for.
     ///
     /// Two pools built independently under one name are what two *processes*
     /// are: each opens the slot files for itself, so each has its own open
     /// file description, and `flock` contends between them exactly as it does
     /// across a `fork`. If this passes in one process it holds across
-    /// thirty-three, whatever launches them.
+    /// every binary, whatever launches them.
     #[test]
     fn a_budget_is_shared_by_every_pool_of_the_same_name() {
         let one = pool("shared-budget");
@@ -2692,15 +2591,13 @@ mod permit_pool_tests {
         );
 
         drop(held);
-        // **Report the refusal, do not summarise it.** This assertion read
-        // "the permit was not released back to the shared budget", which is
-        // one of three things a `None` can mean here and the only one that is
-        // a bug in the pool: the slot may equally have failed to *open*
-        // (fd exhaustion under a loaded suite) or failed to lock for a reason
-        // that is not contention. It failed exactly once, under full-suite
-        // load on a busy machine, and the message sent the reader after a
-        // release path that was never involved -- the same trap
-        // `try_acquire_reporting` was introduced for one test earlier.
+        // **Report the refusal, do not summarise it.** "The permit was not
+        // released back to the shared budget" is one of three things a `None`
+        // can mean here and the only one that is a bug in the pool: the slot
+        // may equally have failed to *open* (fd exhaustion under a loaded
+        // suite) or failed to lock for a reason that is not contention, and a
+        // summary sends the reader after a release path that was never
+        // involved.
         let (permit, refusals) = two.try_acquire_reporting(1);
         assert!(
             permit.is_some(),

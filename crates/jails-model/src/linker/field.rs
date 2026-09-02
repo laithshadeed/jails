@@ -243,10 +243,9 @@ fn link_default(
     linker: &mut Linker,
 ) -> Value {
     let value = link_value(value);
-    // Every arm asks the builtin's own row. The linker used to answer these
-    // four questions with four matches of its own, and the string arm was a
-    // negation -- so a builtin added to the enum was accepted by default
-    // rather than refused until somebody said what it accepts.
+    // Every arm asks the builtin's own row rather than a match of its own: a
+    // negated string arm accepts a builtin added to the enum by default,
+    // rather than refusing until somebody says what it accepts.
     let compatible = match (&value, ty) {
         (Value::String(_), Some(TypeRef::Builtin(builtin))) => {
             builtin.semantics().literal == LiteralKind::Text

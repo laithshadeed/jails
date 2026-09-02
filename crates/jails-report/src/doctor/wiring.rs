@@ -5,12 +5,11 @@
 //! has no `@Import(TestcontainersConfig.class)`, so JDBC auto-config fails on a
 //! test nobody wrote.
 //!
-//! These are deliberately **not** derived from `add::plan_for`, which
-//! `doctor::capability_drift_checks` does do. A derived check knows a
-//! dependency is missing; it does not know that two Jackson majors is a silent
-//! disaster, or that a `spring.factories` left behind starts a second container
-//! for every test. Those are interaction facts no plan carries, and
-//! `abstract.md` §6.2 says exactly that.
+//! These are hand-written rather than derived from a capability's plan. A
+//! derived check knows a dependency is missing; it does not know that two
+//! Jackson majors is a silent disaster, or that a `spring.factories` left
+//! behind starts a second container for every test. Those are interaction
+//! facts no plan carries.
 
 use super::{Check, Status};
 use crate::compose;
@@ -115,11 +114,11 @@ pub(super) fn jackson_check(project: &Project) -> Check {
 
 /// A `@unique` violation answers 409, not 500.
 ///
-/// **`pending.md` §1.1.** jails puts `@unique` in the schema and generates an
-/// `ApiException.Conflict` documented "Becomes a 409", and for a long time
-/// nothing connected the two: inserting a duplicate reached the client as a
-/// **500**, which is what alerting pages on and what client libraries retry.
-/// One duplicate became an incident and then a retry storm.
+/// jails puts `@unique` in the schema and generates an `ApiException.Conflict`
+/// documented "Becomes a 409". Without the arm connecting the two, inserting
+/// a duplicate reaches the client as a **500**, which is what alerting pages
+/// on and what client libraries retry: one duplicate becomes an incident and
+/// then a retry storm.
 ///
 /// `add api` renders the `DuplicateKeyException` arm when the JDBC starter is
 /// present, so `add db api`, `add db` then `add api`, and any `app apply`
@@ -130,19 +129,16 @@ pub(super) fn jackson_check(project: &Project) -> Check {
 ///
 /// That order is not a defect to be prevented; it is the ordinary way somebody
 /// grows a project, and `jails sync` re-plans every recorded capability and
-/// applies the difference. What was missing is anything that *says so*. This
-/// is that.
+/// applies the difference. This check is what *says so*.
 ///
-/// It reads the file rather than the ledger deliberately. The question is what
+/// It reads the file rather than any record deliberately. The question is what
 /// the running application does with a duplicate, and that is decided by the
 /// bytes on disk -- including bytes the reader wrote themselves, which is why
 /// a handler they have taught to answer 409 by hand passes.
 ///
-/// The guard asks [`Project::has_jdbc`] directly. It used to ask the legacy
-/// planner, so that `doctor` could not hold a second opinion about what "has a
-/// database" means -- but the planner's answer *was* this method, three hops
-/// down, and the compiler decides the same arm from the model instead. Asking
-/// the project is now the shortest route to the one opinion there is.
+/// The guard asks [`Project::has_jdbc`] directly: the compiler decides the
+/// same arm from the model, so asking the project is the shortest route to
+/// the one opinion there is about what "has a database" means.
 pub(super) fn duplicate_key_check(project: &Project) -> Check {
     if !project.has_jdbc() {
         return Check::new(
@@ -284,9 +280,9 @@ pub(super) fn cors_checks(project: &Project) -> Vec<Check> {
     // Either spelling. Boot 4 renamed the starter and deprecated the old
     // name, but `spring-boot-starter-web` is what every project written
     // before that says -- and those are exactly the projects being adopted.
-    // Matching only the new name is how this check came to report nothing on
-    // `minicom-15-01-2026`, whose `@EnableWebMvc` was silently discarding
-    // every `spring.jackson.*` property it had.
+    // Matching only the new name would report nothing on an adopted project
+    // whose `@EnableWebMvc` is silently discarding every `spring.jackson.*`
+    // property it has.
     if !pom_text.contains("spring-boot-starter-webmvc")
         && !pom_text.contains("spring-boot-starter-web")
     {
@@ -416,25 +412,18 @@ pub(super) fn virtual_thread_checks(root: &Path) -> Vec<Check> {
 
 /// Whether a save in the editor actually reaches the running application.
 ///
-/// `plan.md` §19.5 asked where jdt.ls writes `.class` files here, because
-/// §10.3's whole `jails dev` supervisor was conditional on the answer. It is
-/// **measured now**, not assumed: a fresh `jails new-cli` project with no
-/// `target/` at all, opened headless in nvim and left alone until class files
-/// appeared, produced `target/classes/**.class` and
-/// `target/test-classes/**.class` with **no Maven run**. m2e points Eclipse's
-/// output folder at Maven's own, which is the premise §10.3 needed.
-///
-/// So the loop already exists, and jails already ships both halves of it:
-/// jdt.ls compiles on `:w`, devtools polls the classpath and restarts, and
-/// `jails new` writes `META-INF/spring-devtools.properties` to cut Boot's
-/// 1 s + 400 ms of waiting down to 200 ms + 50 ms. Nothing here needs a file
+/// jdt.ls writes `target/classes/**.class` and `target/test-classes/**.class`
+/// with **no Maven run** -- m2e points Eclipse's output folder at Maven's own
+/// -- so the loop already exists, and jails ships both halves of it: jdt.ls
+/// compiles on `:w`, devtools polls the classpath and restarts, and `jails
+/// new` writes `META-INF/spring-devtools.properties` to cut Boot's 1 s +
+/// 400 ms of waiting down to 200 ms + 50 ms. Nothing here needs a file
 /// watcher, a `javac` invocation or a JDWP client.
 ///
-/// What was missing was not machinery but a way to find out it is broken --
-/// and every way it breaks is **silent**. Each check below is a property
-/// whose wrong value costs nothing at startup and simply means saving a file
-/// does nothing, which reads as "hot reload doesn't work here" rather than as
-/// a setting somebody chose.
+/// Every way it breaks is **silent**. Each check below is a property whose
+/// wrong value costs nothing at startup and simply means saving a file does
+/// nothing, which reads as "hot reload doesn't work here" rather than as a
+/// setting somebody chose.
 pub(super) fn hot_reload_checks(project: &Project) -> Vec<Check> {
     let pom_text = project.pom();
     if !pom::has_dependency(

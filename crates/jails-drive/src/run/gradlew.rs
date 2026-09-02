@@ -1,7 +1,7 @@
 //! Driving a Gradle build, which is the only thing in this crate that knows
 //! how.
 //!
-//! Split from `run.rs` by secret rather than by size: that module knows what
+//! Apart from `run.rs` by secret rather than by size: that module knows what
 //! each jails command *means* -- `build` does not run tests, `check` cleans
 //! first -- and this one knows how to say it to Gradle. The Maven half stays
 //! in `run.rs` because it is entangled with Surefire report parsing, the mvnd
@@ -36,19 +36,19 @@ pub(super) fn tasks(root: &Path, names: &[&str], debug: bool) -> Result<()> {
 
 /// `jails test` on a Gradle build.
 ///
-/// The report-reading options work here now, because the report is the same
+/// The report-reading options work here, because the report is the same
 /// document: Gradle's `Test` task writes the JUnit XML schema Surefire writes,
 /// under `build/test-results/<task>/` instead of `target/*-reports/`.
 /// `crate::reports` reads both.
 ///
-/// `--fast` and `--affected` still refuse, and by name rather than by being
-/// ignored. Those two need a *resolved classpath*, which jails gets from
-/// `dependency:build-classpath`; Gradle has no equivalent without adding a
-/// task to a file the reader owns, and doing that for a convenience is a
-/// different bargain from splicing a dependency they asked for. A flag that
-/// silently ran the whole suite instead would look like it worked -- the
-/// fast-path rule from `launcher.rs`, one level up: a fast path falls back
-/// *loudly*.
+/// `--fast` and `--affected` cannot take the warm engine here, and the plan
+/// records why rather than ignoring them. Those two need a *resolved
+/// classpath*, which jails gets from `dependency:build-classpath`; Gradle has
+/// no equivalent without adding a task to a file the reader owns, and doing
+/// that for a convenience is a different bargain from splicing a dependency
+/// they asked for. A flag that silently ran the whole suite instead would look
+/// like it worked -- the fast-path rule from `launcher.rs`, one level up: a
+/// fast path falls back *loudly*.
 pub(super) fn test_report(
     root: &Path,
     requested: &[String],

@@ -1,9 +1,7 @@
 //! Read-only, source-bounded `jails why <subject> <name>` reports.
 
-use std::path::PathBuf;
-
+use jails_project::inspect;
 use jails_project::model::Project;
-use jails_project::{inspect, query_workspace};
 use jails_support::Result;
 
 const LIMITATION: &str = "profiles, conditions, post-processors, proxies, programmatic beans, and runtime database state are not evaluated";
@@ -134,8 +132,6 @@ pub fn report(kind: &str, name: &str, json: bool) -> Result<()> {
     let project = Project::discover()?;
     match kind {
         "bean" => bean(&project, name, json),
-        "migration" => migration(&project, name, json),
-        "query" => query(&project, name, json),
         _ => Err(format!(
             "unknown why subject `{kind}`.\n       fix: use `bean`, `migration`, or `query`, or pass one log-file path."
         )
@@ -217,144 +213,6 @@ fn bean(project: &Project, name: &str, json: bool) -> Result<()> {
         report.fixes.push(format!(
             "inspect `jails beans {name}` and register a production bean explicitly"
         ));
-    }
-    report.print(json);
-    Ok(())
-}
-
-fn migration(project: &Project, version: &str, json: bool) -> Result<()> {
-    let wanted = version.trim_start_matches(['V', 'v']).parse::<u64>().map_err(|_| {
-        format!("migration version `{version}` is not numeric.\n       fix: pass a value like `V014`.")
-    })?;
-    let path = migration_path(project, wanted)?.ok_or_else(|| {
-        format!(
-            "no migration uses version V{wanted:03}.\n       fix: inspect src/main/resources/db/migration."
-        )
-    })?;
-    let relative = path
-        .strip_prefix(project.root())
-        .unwrap_or(&path)
-        .to_string_lossy();
-    let mut report = Report::new(
-        format!("migration:V{wanted:03}"),
-        format!("Migration V{wanted:03}"),
-    );
-    report.node(
-        "migration-source",
-        relative.to_string(),
-        "static-inference",
-        "declared-by",
-    );
-    match query_workspace::migration_schema(project, None) {
-        Ok(snapshot) => report.node(
-            "schema-projection",
-            format!(
-                "ordered migrations parse to {} normalized schema object(s)",
-                snapshot.catalog.objects.len()
-            ),
-            "static-inference",
-            "projects-to",
-        ),
-        Err(error) => report.node(
-            "parse-failure",
-            error.to_string(),
-            "static-inference",
-            "fails-because",
-        ),
-    }
-    for finding in query_workspace::migration_lint(project, None)? {
-        if finding.path.as_str() == relative {
-            report.node(
-                "migration-risk",
-                format!(
-                    "statement {}: {} ({:?})",
-                    finding.statement, finding.summary, finding.risks
-                ),
-                "static-inference",
-                "has-risk",
-            );
-        }
-    }
-    report.print(json);
-    Ok(())
-}
-
-fn migration_path(project: &Project, wanted: u64) -> Result<Option<PathBuf>> {
-    let directory = project.root().join("src/main/resources/db/migration");
-    let mut matches = Vec::new();
-    for entry in std::fs::read_dir(&directory).map_err(|error| {
-        format!(
-            "failed to read migration directory {}: {error}",
-            directory.display()
-        )
-    })? {
-        let path = entry
-            .map_err(|error| format!("failed to read migration entry: {error}"))?
-            .path();
-        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        let parsed = name
-            .strip_prefix('V')
-            .and_then(|rest| rest.split_once("__"))
-            .and_then(|(number, _)| number.parse::<u64>().ok());
-        if parsed == Some(wanted) {
-            matches.push(path);
-        }
-    }
-    matches.sort();
-    Ok(matches.into_iter().next())
-}
-
-fn query(project: &Project, name: &str, json: bool) -> Result<()> {
-    let mut report = Report::new(format!("query:{name}"), format!("Query {name}"));
-    match query_workspace::check_offline(project, None, Some(name)) {
-        Ok(checked) => {
-            for query in checked {
-                report.node(
-                    "query-source",
-                    format!(
-                        "{}::{} at {}",
-                        query.source.id.slice.as_str(),
-                        query.source.id.name.as_str(),
-                        query.source.path.as_str()
-                    ),
-                    "static-inference",
-                    "declared-by",
-                );
-                report.node(
-                    "query-contract",
-                    format!(
-                        "verified-offline: {} parameter(s), {} column(s), query digest {}",
-                        query.contract.parameters.len(),
-                        query.contract.columns.len(),
-                        query.contract.query_digest
-                    ),
-                    "static-inference",
-                    "verified-by",
-                );
-                report.node(
-                    "input-closure",
-                    format!(
-                        "{} complete input(s), including manifest, query, and ordered migrations",
-                        query.inputs.len()
-                    ),
-                    "static-inference",
-                    "depends-on",
-                );
-            }
-        }
-        Err(error) => {
-            report.node(
-                "query-diagnostic",
-                error.to_string(),
-                "hypothesis",
-                "unresolved-because",
-            );
-            report.fixes.push(format!(
-                "run `jails sql check {name}` for the full offline diagnostic"
-            ));
-        }
     }
     report.print(json);
     Ok(())

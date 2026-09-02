@@ -1,10 +1,8 @@
-//! Black-box baseline for the pre-unification test/run loop.
+//! Black-box baseline for the test/run loop.
 //!
-//! This is intentionally a record of current behaviour, including gaps. Phase
-//! 1 changes these commands substantially; without a baseline, an intentional
-//! compatibility change and an accidental routing regression look identical.
-//! Fake build tools make the observed value Jails' argv and exit/result
-//! contract rather than whichever Maven or Gradle happens to be installed.
+//! Fake build tools make the observed value jails' argv and exit/result
+//! contract rather than whichever Maven or Gradle happens to be installed, so
+//! a routing regression is distinguishable from a deliberate change.
 
 use super::*;
 

@@ -1,44 +1,31 @@
 //! Validating newtypes: the only place a string becomes a protocol value.
 //!
-//! ## Why these are types
+//! A newtype answers "has this been checked?" once, at construction, instead
+//! of at every use. A package that is sometimes `Option<&str>` and sometimes
+//! `""`, or a recorded path nobody can say is project-relative, is the drift
+//! a bare `String` invites.
 //!
-//! Every one of them is currently a `String` somewhere, and the bugs that
-//! motivates are already in this repository's history: a package that was
-//! sometimes `Option<&str>` and sometimes `""`, a recorded path that had to be
-//! re-derived because nobody could say whether it was project-relative. A
-//! newtype answers "has this been checked?" once, at construction, instead of
-//! at every use.
+//! ## The Java rules
 //!
-//! ## The rules that are not in the RFC
-//!
-//! plan.md §R1.1 says `Name` and `Package` "validate the Java/package rules
-//! once" without spelling them out. They are taken from the Java Language
-//! Specification §3.8/§3.9 rather than invented: a Java letter or `_`/`$`
-//! first, Java letters and digits after, and never a keyword or the `true`,
-//! `false` and `null` literals. `Package` is a dot-separated sequence of the
-//! same, and is **allowed to be empty** — `--package ''` puts a generated tree
-//! flat in the base package, and CLAUDE.md pins that as a shape that must keep
+//! `Name` and `Package` validate the Java rules once, taken from the Java
+//! Language Specification §3.8/§3.9 rather than invented: a Java letter or
+//! `_`/`$` first, Java letters and digits after, and never a keyword or the
+//! `true`, `false` and `null` literals. `Package` is a dot-separated sequence
+//! of the same, and is **allowed to be empty** -- `--package ''` puts a
+//! generated tree flat in the base package, and that shape must keep
 //! compiling.
 //!
 //! Restricting the first character to ASCII is deliberate and stricter than
 //! the JLS, which permits any Unicode letter. jails generates file *names*
 //! from these on filesystems that disagree about Unicode normalisation, so a
-//! type whose name is one sequence in the ledger and another on disk is a
+//! type whose name is one sequence in the model and another on disk is a
 //! class of bug not worth accepting for a feature nobody has asked for.
 
 use crate::Result;
 use crate::codec::{self, Codec, DIGEST_BYTES, Decoder, Encoder};
 
-mod component;
-mod literal;
-mod route;
 mod sql;
-mod wire;
-pub use component::FieldName;
-pub use literal::LiteralValue;
-pub use route::RoutePath;
 pub use sql::SqlName;
-pub use wire::WireName;
 
 // ---------------------------------------------------------------------------
 // Digests
@@ -52,10 +39,6 @@ pub struct ObjectId([u8; DIGEST_BYTES]);
 /// Identifies one logical operation across its attempts.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
 pub struct OperationId([u8; DIGEST_BYTES]);
-
-/// Identifies one prepared transaction; also names its directory.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
-pub struct TransactionId([u8; DIGEST_BYTES]);
 
 macro_rules! digest_newtype {
     ($name:ident) => {
@@ -100,7 +83,6 @@ macro_rules! digest_newtype {
 
 digest_newtype!(ObjectId);
 digest_newtype!(OperationId);
-digest_newtype!(TransactionId);
 
 // ---------------------------------------------------------------------------
 // Java names
@@ -139,10 +121,10 @@ impl std::fmt::Display for Name {
 /// A resolved package. Empty is the base package and is valid: `--package ''`
 /// is a supported shape, not a missing value.
 ///
-/// This is why the RFC says "convention resolved; never optional here" —
-/// `Option<Package>` at this layer would put "the user did not say" and "the
-/// user said flat" into the same slot, which is exactly the ambiguity that
-/// made `package: Option<&str>` versus `""` a recurring source of drift.
+/// Convention is resolved here and never optional: `Option<Package>` at this
+/// layer would put "the user did not say" and "the user said flat" into the
+/// same slot, which is the ambiguity `package: Option<&str>` versus `""`
+/// carries.
 #[derive(Clone, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Hash)]
 pub struct Package(String);
 
@@ -168,7 +150,7 @@ impl Package {
         Ok(Self(text.to_string()))
     }
 
-    pub fn is_base(&self) -> bool {
+    pub(crate) fn is_base(&self) -> bool {
         self.0.is_empty()
     }
 
@@ -205,7 +187,7 @@ impl std::fmt::Display for Package {
 /// A fully qualified Java type: `com.example.demo.domain.Note`.
 ///
 /// Fully qualified always. A bare `Note` would be a name whose meaning depends
-/// on an import list nobody recorded, and the ledger has to be able to say
+/// on an import list nobody recorded, and the model has to be able to say
 /// which type a reference meant a year later.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
 pub struct JavaType {
@@ -336,139 +318,6 @@ const RESERVED: &[&str] = &[
     "null",
 ];
 
-/// Every public type in `java.lang`, which the compiler imports into every
-/// file whether or not anybody asked.
-///
-/// A table rather than a refusal: `Name` is "a type name, a field name, a
-/// package segment", so it validates *references* as well as declarations, and
-/// refusing `String` here would refuse `value:String`. Only a declaration
-/// shadows, and only the rendered plan knows there is one --
-/// `route::request::naming` asks it.
-///
-/// `bugs.md` B50: `jails g record String value:string` wrote
-/// `public record String(String value)`, whose component is typed as the
-/// record rather than as text -- a package member outranks the implicit
-/// import. It compiles, its generated test compiles, and the caller who asked
-/// for a string field silently got a self-reference. `RESERVED` did not catch
-/// it because every Java reserved word is lowercase and a type name is
-/// capitalised before the check, so `class`, `int` and `String` all passed.
-///
-/// **Read off the JDK, not recalled**: the class list of `java.base`'s
-/// `java/lang/` filtered to the ones `javap` reports as `public`, on the JDK
-/// this project targets. A hand-written subset would be a check that silently
-/// stops applying to whatever it omitted, which is the shape this whole
-/// refusal exists to remove.
-pub const JAVA_LANG: &[&str] = &[
-    "AbstractMethodError",
-    "Appendable",
-    "ArithmeticException",
-    "ArrayIndexOutOfBoundsException",
-    "ArrayStoreException",
-    "AssertionError",
-    "AutoCloseable",
-    "Boolean",
-    "BootstrapMethodError",
-    "Byte",
-    "Character",
-    "CharSequence",
-    "Class",
-    "ClassCastException",
-    "ClassCircularityError",
-    "ClassFormatError",
-    "ClassLoader",
-    "ClassNotFoundException",
-    "ClassValue",
-    "Cloneable",
-    "CloneNotSupportedException",
-    "Comparable",
-    "Deprecated",
-    "Double",
-    "Enum",
-    "EnumConstantNotPresentException",
-    "Error",
-    "Exception",
-    "ExceptionInInitializerError",
-    "Float",
-    "FunctionalInterface",
-    "IllegalAccessError",
-    "IllegalAccessException",
-    "IllegalArgumentException",
-    "IllegalCallerException",
-    "IllegalMonitorStateException",
-    "IllegalStateException",
-    "IllegalThreadStateException",
-    "IncompatibleClassChangeError",
-    "IndexOutOfBoundsException",
-    "InheritableThreadLocal",
-    "InstantiationError",
-    "InstantiationException",
-    "Integer",
-    "InternalError",
-    "InterruptedException",
-    "IO",
-    "Iterable",
-    "LayerInstantiationException",
-    "LazyConstant",
-    "LinkageError",
-    "Long",
-    "MatchException",
-    "Math",
-    "Module",
-    "ModuleLayer",
-    "NegativeArraySizeException",
-    "NoClassDefFoundError",
-    "NoSuchFieldError",
-    "NoSuchFieldException",
-    "NoSuchMethodError",
-    "NoSuchMethodException",
-    "NullPointerException",
-    "Number",
-    "NumberFormatException",
-    "Object",
-    "OutOfMemoryError",
-    "Override",
-    "Package",
-    "Process",
-    "ProcessBuilder",
-    "ProcessHandle",
-    "Readable",
-    "Record",
-    "ReflectiveOperationException",
-    "Runnable",
-    "Runtime",
-    "RuntimeException",
-    "RuntimePermission",
-    "SafeVarargs",
-    "ScopedValue",
-    "SecurityException",
-    "SecurityManager",
-    "Short",
-    "StackOverflowError",
-    "StackTraceElement",
-    "StackWalker",
-    "StrictMath",
-    "String",
-    "StringBuffer",
-    "StringBuilder",
-    "StringIndexOutOfBoundsException",
-    "SuppressWarnings",
-    "System",
-    "Thread",
-    "ThreadDeath",
-    "ThreadGroup",
-    "ThreadLocal",
-    "Throwable",
-    "TypeNotPresentException",
-    "UnknownError",
-    "UnsatisfiedLinkError",
-    "UnsupportedClassVersionError",
-    "UnsupportedOperationException",
-    "VerifyError",
-    "VirtualMachineError",
-    "Void",
-    "WrongThreadException",
-];
-
 fn validate_identifier(text: &str, what: &str) -> Result<()> {
     if text.is_empty() {
         return Err(format!("{what} is empty").into());
@@ -511,8 +360,7 @@ fn validate_identifier(text: &str, what: &str) -> Result<()> {
 ///   `target/` is derived output Maven may delete under it.
 /// - **everything under `.jails`** — that is machine state with its own typed
 ///   representations. A plain path into it would let an ordinary file
-///   operation rewrite the ledger, which is precisely what the transaction
-///   design exists to prevent.
+///   operation rewrite jails' own state.
 ///
 /// The exception allowlist is closed: the human app manifest, the project
 /// template override layer, reviewed architecture policy, and checked-in
@@ -611,15 +459,6 @@ impl ProjectPath {
     pub fn as_str(&self) -> &str {
         &self.0
     }
-
-    /// Whether this is one of the explicitly reachable paths under `.jails`.
-    pub fn is_machine_adjacent(&self) -> bool {
-        self.0.starts_with(".jails/")
-    }
-
-    pub fn is_sql_contract(&self) -> bool {
-        self.0 == SQL_CONTRACTS || self.0.starts_with(&format!("{SQL_CONTRACTS}/"))
-    }
 }
 impl Codec for ProjectPath {
     fn encode(&self, encoder: &mut Encoder) -> Result<()> {
@@ -637,39 +476,15 @@ impl std::fmt::Display for ProjectPath {
     }
 }
 
-/// A stored object's address **and its length**.
-///
-/// plan.md §R3.1: *"`ObjectRef` is an `ObjectId` plus its length; `FileImage`
-/// never repeats those facts."* The length travels with the id because every
-/// consumer needs it before reading — to check a limit, to size a buffer, to
-/// tell a truncated object from a missing one — and a length recorded
-/// somewhere else is a length that can disagree with the bytes.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, jails_codec_derive::Codec)]
-pub struct ObjectRef {
-    pub id: ObjectId,
-    pub len: u64,
-}
-
-impl ObjectRef {
-    pub fn new(id: ObjectId, len: u64) -> Self {
-        Self { id, len }
-    }
-}
-impl std::fmt::Display for ObjectRef {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}+{}", self.id, self.len)
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Logical identifiers
 // ---------------------------------------------------------------------------
 
 /// A non-empty canonical logical identifier that is never an absolute path.
 ///
-/// §R1.1 lists nine of these — `TemplateId`, `ToolId`, `ServiceName`,
-/// `MavenId`, `MarkerId`, `VolumeName`, `PropertyKey` and friends. They share
-/// one rule, so they share one constructor: a name that is not a location.
+/// `TemplateId`, `ToolId`, `ServiceName`, `MavenId`, `MarkerId`,
+/// `VolumeName`, `PropertyKey` and friends share one rule, so they share one
+/// constructor: a name that is not a location.
 macro_rules! logical_id {
     ($name:ident, $what:literal) => {
         #[doc = concat!("A canonical ", $what, ". Non-empty, and never a path.")]
@@ -881,7 +696,7 @@ mod tests {
     }
 
     /// Machine state has typed representations. A plain path into `.jails`
-    /// would let an ordinary file operation rewrite the ledger.
+    /// would let an ordinary file operation rewrite jails' own state.
     #[test]
     fn dot_jails_is_reserved_except_for_explicit_reachable_namespaces() {
         for allowed in [
@@ -937,7 +752,7 @@ mod tests {
     }
 
     /// Every wire decoder calls the same constructor, so a value refused at
-    /// the CLI cannot arrive through a recovered journal instead.
+    /// the CLI cannot arrive through a decoded record instead.
     #[test]
     fn decoding_runs_the_same_validation_as_parsing() {
         let mut encoder = Encoder::new();
@@ -981,17 +796,5 @@ mod tests {
         assert_eq!(JavaType::decode(&mut decoder).unwrap(), ty);
         assert_eq!(ObjectId::decode(&mut decoder).unwrap(), object);
         decoder.finish().unwrap();
-    }
-
-    #[test]
-    fn a_digest_id_is_lowercase_hex_and_round_trips_byte_identically() {
-        let id = TransactionId::from_bytes(jails_support::codec::sha256(b"abc"));
-        let text = id.to_hex();
-        assert_eq!(
-            text,
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-        );
-        assert_eq!(TransactionId::parse_hex(&text).unwrap(), id);
-        assert!(TransactionId::parse_hex(&text.to_uppercase()).is_err());
     }
 }

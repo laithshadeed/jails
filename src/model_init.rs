@@ -1,19 +1,13 @@
 //! `jails model init`: the canonical on-ramp for a project jails did not create.
 //!
-//! **This is what the legacy engine was load-bearing for.** `new` seeds a
-//! model, so a project jails creates is canonical from its first command, and
-//! `model import` carries a *legacy ledger* across. Neither reaches the case
-//! that matters most: somebody else's repository, which has no model, no
-//! ledger, and until now no command that could give it one. Every mutation
-//! there went through the legacy path, which is why deleting that path was
-//! blocked on a feature rather than on a port.
+//! `new` seeds a model, so a project jails creates is canonical from its
+//! first command; this is the command that gives somebody else's repository
+//! one.
 //!
 //! What it writes is the app block and nothing else. The reader's existing
 //! Java stays exactly where it is and stays theirs -- this does not adopt a
 //! line of it. What changes is that the *next* `jails g` renders into
-//! `.jails/generated` through the compiler instead of splicing into `src/`
-//! through the engine, which is the whole of the cutover for a foreign
-//! project.
+//! `.jails/generated` through the compiler.
 //!
 //! Every field is read off the project rather than asked for, because each is
 //! a fact the project already states and a prompt for a fact is a prompt for a
@@ -35,10 +29,9 @@ fn run_as(invocation: Invocation) -> Result<()> {
     let source = derive(&project)?;
     // **Deriving the same model twice is a no-op, not a collision.** Every
     // other canonical frontend is idempotent -- a second `g record` with the
-    // same shape writes nothing -- and this refused outright, so a project
-    // that already had exactly the model `model init` would write could not be
-    // asked for one. Compared by content: a `.jails/model.jdl` that differs is
-    // still the one editable source the cutover turns on, and still refuses.
+    // same shape writes nothing -- and so is this. Compared by content: a
+    // `.jails/model.jdl` that differs is the one editable source, and still
+    // refuses.
     if let Ok(existing) = std::fs::read_to_string(root.join(crate::model_command::JDL_PATH))
         && existing == source
     {
@@ -100,26 +93,19 @@ fn run_as(invocation: Invocation) -> Result<()> {
     Ok(())
 }
 
-/// Where this line goes: stdout when the reader asked, stderr when they did not.
-/// One editable source, which is the rule the whole cutover turns on.
+/// One editable source: a project that has a model is refused by name.
 pub(crate) fn refuse_if_modelled(root: &Path) -> Result<()> {
-    for existing in [
-        crate::model_command::JDL_PATH,
-        crate::model_command::TOML_PATH,
-    ] {
-        if root.join(existing).is_file() {
-            return Err(Failure::Told(format!(
-                "this project already has an application model at `{existing}`.\n       fix: edit it, or run `jails sync`; `model init` is for a project that has none"
-            )));
-        }
+    let existing = crate::model_command::JDL_PATH;
+    if root.join(existing).is_file() {
+        return Err(Failure::Told(format!(
+            "this project already has an application model at `{existing}`.\n       fix: edit it, or run `jails sync`; `model init` is for a project that has none"
+        )));
     }
-    // **A legacy ledger is refused, not carried.** `model import` was the
-    // one-way door across, and it read an object store the legacy engine
-    // wrote; with that engine deleted nothing in this binary can write one,
-    // and nothing can read one either. So the honest answer is to name the
-    // file rather than seed a model beside declarations this jails cannot see
-    // -- which would strand a project's whole contents outside the model that
-    // now owns it.
+    // **A project holding `.jails/ledger.toml` is refused by name.** Nothing
+    // in this binary can read or write one, so the honest answer names the
+    // file rather than seeding a model beside declarations this jails cannot
+    // see -- which would strand a project's whole contents outside the model
+    // that owns it.
     if root.join(".jails/ledger.toml").is_file() {
         return Err(Failure::Told(
             "this project has a legacy ledger, which this jails cannot read.\n       fix: remove `.jails/ledger.toml` and its `.jails/objects`, or keep using the jails that wrote them"
@@ -151,7 +137,7 @@ pub(crate) fn derive(project: &jails_project::model::Project) -> Result<String> 
     // **A build that states no release is read as targeting the floor.** An
     // ordinary Gradle script declares neither a toolchain nor a
     // `sourceCompatibility` and compiles with whatever JDK Gradle is running
-    // on, so there is no configured release to keep -- and refusing there put
+    // on, so there is no configured release to keep, and refusing would put
     // `jails g` out of reach of the commonest build file there is. The floor
     // is the safe reading: generated code compiles on every release jails
     // supports, and a project that *does* state one keeps it, because

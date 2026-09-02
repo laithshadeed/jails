@@ -45,20 +45,13 @@ fn owns_terminal_output(path: &Path) -> bool {
         // of it.
         || relative == "src/model_generate/report.rs"
         || relative == "src/model_generate/effects.rs"
-        // The other half of the same door. `model_import` carries a legacy
-        // ledger across; this one gives a project jails never created its
-        // first model, and saying so is part of the command: a reader who has
-        // just made their repository canonical needs to know that generation
-        // has moved to `.jails/generated` and their own sources have not.
+        // Gives a project jails never created its first model, and saying so
+        // is part of the command: a reader who has just made their repository
+        // canonical needs to know that generation has moved to
+        // `.jails/generated` and their own sources have not.
         || relative == "src/model_init.rs"
-        // Sibling of `model_import.rs` and classified for the same reason: a
-        // CLI command module whose contract includes telling the reader what
-        // the upgrade changes about the model before the plan is shown. §22
-        // requires that review step, and two of the translations mean
-        // something a reviewer should not have to spot in the diff.
-        || relative == "src/model_upgrade.rs"
         // A read-only report whose entire contract is terminal output:
-        // `jdl-sol.md` §18.4 asks that a derived name be *inspectable*, and a
+        // JDL v1 §18.4 asks that a derived name be *inspectable*, and a
         // command that returned the records to a caller with nowhere to print
         // them would satisfy the type and not the requirement.
         || relative == "src/model_explain.rs"
@@ -131,7 +124,7 @@ fn the_abstract_md_ladder_gates_are_ratchets_that_only_move_down() {
     let mut rose = Vec::new();
     let mut fell = Vec::new();
 
-    println!("\nabstract.md §7 ladder — gate status\n");
+    println!("\narchitecture gates — status\n");
     println!(
         "{:<52} {:>7} {:>9} {:>8}  rung",
         "gate", "now", "ceiling", "target"
@@ -172,7 +165,7 @@ fn the_abstract_md_ladder_gates_are_ratchets_that_only_move_down() {
             "\nIMPROVED, RECORD IT: {} is {actual}, below the recorded ceiling of {}.\n  \
              rung {}\n  Lower this row's `ceiling` to {actual} in tests/architecture/board.rs. An \
              improvement that is not recorded here is one the next change may silently \
-             undo, which is exactly the failure abstract.md §8.1 documented.\n",
+             undo.\n",
             gate.name, gate.ceiling, gate.rung
         ));
     }
@@ -185,35 +178,24 @@ fn the_abstract_md_ladder_gates_are_ratchets_that_only_move_down() {
 /// Both directions. A name that has gone means the function was fixed or
 /// renamed and the reason is now permission for nothing; a reader that is not
 /// named is one nobody decided about.
-/// The layering the workspace split is built on, as a test, so it holds before
-/// the crates physically exist and keeps holding for module-level edges the
+/// The crate layering, as a test, so it holds for module-level edges the
 /// compiler will never see.
 ///
 /// Every module is assigned the crate it belongs to, and a module may only
-/// reference one at its own level or below. That is the whole property: the
-/// twelve-module strongly connected component this replaced -- `add`, `compose`,
-/// `config`, `generate`, `inspect`, `launcher`, `model`, `project`, `run`,
-/// `spring`, `sql`, `why` -- existed because everything below the generators
-/// reached up into `generate.rs` for `Field`, `layout` and `find_project_root`.
-/// A cycle is a boundary nothing can enforce, and `CLAUDE.md` records what an
-/// unenforced boundary produces: `inspect.rs` kept its own copy of the layer
-/// list and silently reported a renamed layer as "Other".
+/// reference one at its own level or below. A cycle is a boundary nothing can
+/// enforce, and an unenforced boundary is how a module comes to keep its own
+/// copy of a shared list and silently report against it.
 ///
-/// Same-level edges are allowed, including mutual ones: `generate` and `spring`
-/// call each other and ship in the same crate, which is a design decision
-/// rather than an accident.
+/// Same-level edges are allowed, including mutual ones: two modules that call
+/// each other and ship in the same crate is a design decision rather than an
+/// accident.
 /// Every gate that names a file must name one that is there.
 ///
 /// A gate keyed by path has two failure modes, and only one of them is loud.
-/// Pointing at the *wrong* file drags rows red, which `SPRING_RS`'s comment
-/// records. Pointing at a file that no longer exists is silent: the exclusion
-/// excludes nothing, or the measurement measures nothing, and the row keeps
-/// printing a number nobody can tell from a real one.
-///
-/// `CODEMOD_RS` spent a whole change stale -- it still said
-/// `jails-project/src/codemod.rs` after the splice moved to its own crate --
-/// and nothing failed. It was harmless there by luck: the owner's own markers
-/// are all in comments, so excluding nothing excluded nothing that counted.
+/// Pointing at the *wrong* file drags rows red. Pointing at a file that does
+/// not exist is silent: the exclusion excludes nothing, or the measurement
+/// measures nothing, and the row keeps printing a number nobody can tell from
+/// a real one.
 #[test]
 fn every_path_a_gate_names_is_a_file_the_scanner_found() {
     let files = sources();
@@ -273,8 +255,7 @@ fn no_module_depends_on_a_layer_above_its_own() {
             // `crate::model` names this crate's `model` when it has one. It
             // cannot simultaneously name another crate's module with the same
             // basename. Module identity is `(crate, module)`; resolving by the
-            // second half alone recreates the collision this table was changed
-            // to eliminate.
+            // second half alone collides same-named modules in two crates.
             if LAYERS.iter().any(|(candidate_crate, candidate, _)| {
                 *candidate_crate == krate && *candidate == *other
             }) {
@@ -294,9 +275,8 @@ fn no_module_depends_on_a_layer_above_its_own() {
 
     // Both directions, the same rule `SUBPROCESS_CLASSIFICATION` is held to: a
     // row naming a module that is no longer there is permission for nothing,
-    // and it hides the fact that the module went. Four such rows were found
-    // when this was added -- `ledger` and `migration` had become submodules,
-    // `rename` was deleted, and `main.rs` is excluded by `module_of` by design.
+    // and it hides the fact that the module went. `main.rs` is excluded by
+    // `module_of` by design.
     let stale: Vec<String> = LAYERS
         .iter()
         .filter(|(c, m, _)| !assigned.contains(&(*c, *m)))
@@ -322,21 +302,10 @@ fn no_module_depends_on_a_layer_above_its_own() {
 
 /// `LAYERS` must not list one module twice.
 ///
-/// The gate that used to live here forbade two crates from declaring the same
-/// top-level module name, because `module_of` identified a file by its
-/// basename alone and the layering check would then measure one module against
-/// another's level. That was a real hazard -- it happened once, between
-/// `jails_spec::spec` and a `spec` module in `jails-protocol`, and nothing
-/// reported it.
-///
-/// It was also **a test choosing production names**: `src/dispatch.rs` shipped
-/// as `invoke` for no reason other than that `jails-java` already had a
-/// `dispatch`, and its module docs said so. `pending.md` §10.3. `module_of`
-/// answers `(crate, module)` now, so the collision cannot arise and the module
-/// is called what it is.
-///
-/// What is left is the one property the pair still has to have: a duplicate row
-/// would make the `find` above pick whichever came first.
+/// `module_of` answers `(crate, module)`, so two crates may declare the same
+/// top-level module name and a production module is called what it is. What
+/// the pair still has to have is uniqueness: a duplicate row would make the
+/// `find` above pick whichever came first.
 #[test]
 fn layers_lists_each_module_once() {
     let mut names: Vec<(&str, &str)> = LAYERS.iter().map(|(c, m, _)| (*c, *m)).collect();
@@ -346,9 +315,8 @@ fn layers_lists_each_module_once() {
     assert_eq!(before, names.len(), "`LAYERS` lists one module twice");
 }
 
-/// Which crate each module ships in, lowest first. Legacy and canonical
-/// compiler modules coexist during cutover; every module stays classified so
-/// deleting the legacy half cannot silently loosen a boundary.
+/// Which crate each module ships in, lowest first. Every module is
+/// classified, so deleting one cannot silently loosen a boundary.
 const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-model", "app", 2),
     ("jails-model", "builtin", 2),
@@ -358,10 +326,8 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-model", "layout", 2),
     // jails-support: no jails concepts at all -- writing, running, encoding.
     // `jails-codemod` depends on nothing at all -- it knows one text format
-    // and no more -- so it sits beside the support primitives rather than in
-    // the project layer it came from. It moved out of `jails-project` because
-    // three more implementations of the marked block had appeared in crates
-    // that could not depend on it.
+    // and no more -- so it sits beside the support primitives, where every
+    // crate on either ladder can reach it.
     ("jails-codemod", "annotate", 0),
     ("jails-codemod", "dispatch", 0),
     ("jails-codemod", "marked", 0),
@@ -447,66 +413,25 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-workspace", "reconcile", 5),
     ("jails-workspace", "verify", 5),
     // jails-protocol: the validated values every closed format is built from.
-    ("jails-protocol", "compatibility", 3),
-    ("jails-protocol", "durable", 3),
-    ("jails-protocol", "intent", 3),
-    ("jails-protocol", "observe", 3),
-    ("jails-protocol", "vocabulary", 3),
     // jails-state: `.jails/` and what a directory holds. Below the Java
     // project on purpose -- `jails-commit` needs both and neither is about Java.
-    ("jails-state", "compat", 4),
-    ("jails-state", "listing", 4),
     // jails-project: the resolved project and everything jails records about it.
-    ("jails-project", "application_manifest", 5),
-    ("jails-project", "query_workspace", 5),
     ("jails-project", "gradle", 5),
     ("jails-project", "pom", 5),
     ("jails-project", "maven", 5),
     ("jails-project", "capability", 5),
     ("jails-project", "config", 5),
     ("jails-project", "synonyms", 5),
-    ("jails-project", "capture", 5),
     ("jails-project", "compose", 5),
-    ("jails-project", "named_query", 5),
+    ("jails-project", "feature", 5),
     ("jails-project", "model", 5),
     ("jails-project", "modernize", 5),
     ("jails-project", "project", 5),
-    ("jails-project", "projection", 5),
     ("jails-project", "properties", 5),
-    ("jails-project", "query_compiler", 5),
-    ("jails-project", "schema", 5),
-    ("jails-project", "generated_files", 5),
     ("jails-project", "inspect", 5),
     // jails-generate: everything that decides what Java to write.
-    ("jails-generate", "sql", 6),
-    ("jails-generate", "generate", 6),
     // jails-prepare: turning desire into an exact executable transition.
-    ("jails-prepare", "command", 6),
-    ("jails-prepare", "desire", 6),
-    ("jails-prepare", "operation", 6),
-    ("jails-prepare", "pipeline", 6),
-    ("jails-prepare", "prepare", 6),
-    ("jails-prepare", "prepared_after", 6),
-    ("jails-prepare", "receipt", 6),
-    ("jails-prepare", "merge", 6),
-    ("jails-prepare", "reconcile", 6),
-    ("jails-prepare", "recovery", 6),
-    ("jails-prepare", "report", 6),
-    ("jails-prepare", "review", 6),
-    ("jails-prepare", "sandbox", 6),
-    ("jails-prepare", "serialize", 6),
-    ("jails-prepare", "timing", 6),
-    ("jails-prepare", "tool", 6),
     // jails-commit: making a prepared transaction durable, and recovering one.
-    ("jails-commit", "activate", 7),
-    ("jails-commit", "execute", 7),
-    ("jails-commit", "fault", 7),
-    ("jails-commit", "gc", 7),
-    ("jails-commit", "runtime", 7),
-    ("jails-commit", "journal", 7),
-    ("jails-commit", "outcome", 7),
-    ("jails-commit", "recover", 7),
-    ("jails-commit", "store", 7),
     // jails-report: commands that answer a question. Read-only by contract,
     // and below `jails-drive` so the contract is structural.
     ("jails-report", "doctor", 7),
@@ -517,8 +442,6 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-report", "explain", 7),
     ("jails-report", "commands", 7),
     ("jails-report", "source", 7),
-    ("jails-report", "lifecycle_status", 7),
-    ("jails-report", "managed_drift", 7),
     // jails-drive: commands that start something.
     ("jails-drive", "run", 8),
     ("jails-drive", "launcher", 8),
@@ -532,16 +455,12 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-drive", "bench", 8),
     ("jails-drive", "reports", 8),
     ("jails-drive", "lint", 8),
-    ("jails-drive", "datasource", 8),
-    ("jails-drive", "live_sql", 8),
     ("jails-drive", "testing", 8),
     // jails-cli: the binary and the whole-project lifecycle commands.
     ("jails", "new", 9),
     ("jails", "adopt", 9),
     ("jails", "modernize", 9),
     ("jails", "app", 9),
-    ("jails", "sql_command", 9),
-    ("jails", "schema_command", 9),
     ("jails", "editor_command", 9),
     ("jails", "contract_command", 9),
     ("jails", "tool_command", 9),
@@ -563,7 +482,6 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails", "model_setting", 9),
     ("jails", "model_status", 9),
     ("jails", "model_migration", 9),
-    ("jails", "model_upgrade", 9),
     ("jails", "canonical_support", 9),
     ("jails", "parse_error", 9),
     ("jails", "facade", 9),
@@ -624,17 +542,13 @@ fn canonical_workspace_has_one_mutation_owner() {
     );
 }
 
-/// Every module that starts a process, and which R6.6 row it is.
+/// Every module that starts a process, and which row it is.
 ///
-/// plan.md §R6.6 fixes the classification "so 'one writer' is not
-/// overclaimed": a subprocess can change a project as surely as a write can,
-/// and the filesystem gate says nothing about it. `mvn` writes `target/`;
+/// A subprocess can change a project as surely as a write can, and the
+/// filesystem gate says nothing about it. `mvn` writes `target/`;
 /// `docker compose up` starts a service; `git merge-file` produces bytes a
-/// transaction commits. Each is fine — *once somebody has said which it is*.
-///
-/// The test below fails when a module starts a process and is not named here,
-/// which is the audit §R6.6 asks for expressed as a ratchet rather than a
-/// list somebody re-derives.
+/// transaction commits. Each is fine -- *once somebody has said which it is*.
+/// The test below fails when a module starts a process and is not named here.
 const SUBPROCESS_CLASSIFICATION: &[(&str, &str)] = &[
     // Derived build processes. They may write `target/` and dependency
     // caches, which are excluded from the snapshot and the store, and they
@@ -660,7 +574,6 @@ const SUBPROCESS_CLASSIFICATION: &[(&str, &str)] = &[
     ("console", "read-only client"),
     ("contract_command", "read-only client"),
     ("tool_command", "read-only client"),
-    ("live_sql", "read-only probe"),
     ("doctor", "read-only probe"),
     // Asks `git merge-file` what it can do, on three throwaway files in a
     // scratch directory, and reads the exit status. It writes nothing the
@@ -668,17 +581,16 @@ const SUBPROCESS_CLASSIFICATION: &[(&str, &str)] = &[
     // `transaction input` row below.
     ("git", "read-only probe"),
     // Bootstrap, outside any project transaction: these run before a project
-    // exists (§R6.5), inside a scratch tree that is published atomically.
+    // exists, inside a scratch tree that is published atomically.
     ("new", "new-project bootstrap"),
     // A three-way merge is transaction preparation, not a renderer and not an
     // effect: it runs `git merge-file` over three scratch inputs to compute
-    // bytes the commit then guards like any other. §R5.2 says so explicitly --
-    // git appears in the preparation fingerprint and never in a renderer stamp.
+    // bytes the commit then guards like any other: git appears in the
+    // preparation fingerprint and never in a renderer stamp.
     ("merge", "transaction input"),
     // The executor's own runner and tool resolver.
     ("process", "the one executor"),
     ("hermetic", "the one executor"),
-    ("sandbox", "the one executor"),
 ];
 
 /// Which module a file belongs to: `(crate, module)`.
@@ -686,18 +598,12 @@ const SUBPROCESS_CLASSIFICATION: &[(&str, &str)] = &[
 /// `crates/jails-generate/src/spring/durable.rs` ->
 /// `("jails-generate", "spring")`.
 ///
-/// **The crate half is not decoration.** This used to answer with the basename
-/// alone, so `crates/a/src/spec.rs` and `crates/b/src/spec.rs` were one name to
-/// every gate here, and the layering check would silently measure one against
-/// the other's level. That happened once, between `jails_spec::spec` and a
-/// `spec` module in `jails-protocol`, and nothing reported it -- the test
-/// passed while checking the wrong thing. A separate gate,
-/// `no_two_crates_share_a_module_name`, existed to forbid the collision, which
-/// made a *test* the reason a production module could not be called what it is:
-/// `src/dispatch.rs` was named `invoke` because `jails-java` already had a
-/// `dispatch`. `pending.md` §10.3.
-///
-/// Identify a module by `(crate, module)` and the constraint goes away.
+/// **The crate half is not decoration.** By basename alone,
+/// `crates/a/src/spec.rs` and `crates/b/src/spec.rs` are one name to every
+/// gate here, and the layering check silently measures one against the
+/// other's level. Identifying a module by `(crate, module)` also lets a
+/// production module be called what it is when another crate has a module of
+/// that name.
 fn module_of(path: &Path) -> Option<(String, String)> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut crate_name = "jails".to_string();
@@ -719,7 +625,7 @@ fn module_of(path: &Path) -> Option<(String, String)> {
     ))
 }
 
-/// §R6.6: "The audit must leave no unclassified production mutation."
+/// No unclassified production mutation.
 ///
 /// A subprocess changes things a write gate cannot see. This fails when a
 /// module starts one and nobody has said which row it belongs to — and it
@@ -756,7 +662,7 @@ fn every_module_that_starts_a_process_is_classified() {
         unclassified.is_empty(),
         "\n\n{unclassified:?} start a subprocess and are not in \
          SUBPROCESS_CLASSIFICATION.\n\
-         plan.md §R6.6 fixes the rows: derived build process, external runtime effect, \
+         The rows are: derived build process, external runtime effect, \
          read-only client/probe, new-project bootstrap, transaction input, or the one \
          executor. Say which, so `one writer` is not overclaimed.\n"
     );
@@ -782,7 +688,7 @@ fn every_fresh_read_of_the_pom_is_a_decision_somebody_wrote_down() {
     assert_eq!(
         found, declared,
         "\n\nA root-taking function reads the pom for a fact a resolved `Project` holds.\n\
-         Either pass it the `Project` -- which is rung 1 -- or, if reading again is \
+         Either pass it the `Project`, or, if reading again is \
          genuinely correct, add it to A_FRESH_READ_IS_CORRECT with the reason.\n\
          A name in the list that is no longer found has to come out: a reason nobody \
          needs is permission nobody asked for."
@@ -798,14 +704,13 @@ fn every_fresh_read_of_the_pom_is_a_decision_somebody_wrote_down() {
 /// Production scratch trees go through `ScratchDir`, which is the only thing
 /// that creates one exclusively.
 ///
-/// plan.md §3.2. `env::temp_dir().join(pid + timestamp)` followed by
-/// `create_dir_all` is not exclusive in either half: two callers can read the
-/// same clock, and `create_dir_all` treats "it already exists" as success. That
-/// handed one test another's tree, and in `app/reconcile.rs` it would have
-/// merged a regenerated intent against somebody else's base.
+/// `env::temp_dir().join(pid + timestamp)` followed by `create_dir_all` is not
+/// exclusive in either half: two callers can read the same clock, and
+/// `create_dir_all` treats "it already exists" as success, so one caller is
+/// handed another's tree.
 ///
-/// Test modules are exempt only because `Source::production` blanks them, and
-/// they are being converted separately; a production site has no exemption.
+/// Test modules are exempt only because `Source::production` blanks them; a
+/// production site has no exemption.
 #[test]
 fn production_scratch_directories_are_exclusively_created() {
     let mut offenders = Vec::new();
@@ -847,13 +752,9 @@ fn a_gate_that_reached_its_target_is_never_reopened() {
 /// different one for the current default names the tier-3 test that executes
 /// the branch it takes **on the default**, and that test exists.
 ///
-/// modern.md §11.6, generalised. `add cors` *is* run through real `mvn test`
-/// -- against a Boot 2 fixture, so it renders its *classic* `MockMvc` variant
-/// and the assertion proves the modern one was not chosen. The Boot 4 branch,
-/// which is what every real project gets, had never been compiled, let alone
-/// run. A tier-3 test pinned to the legacy branch reports green for a branch
-/// it never touched: the same failure mode as a skipped tier-3 test, one level
-/// up, and neither is visible in the count.
+/// A tier-3 test pinned to the old-version branch reports green for the
+/// default branch it never touched: the same failure mode as a skipped tier-3
+/// test, one level up, and neither is visible in the count.
 ///
 /// The table is small on purpose and the scanner is what keeps it honest: a
 /// new sniff site fails this until somebody names where its default branch is
@@ -1018,11 +919,9 @@ fn harness_text() -> String {
 
 /// The two layer lists are one list, in two crates that cannot see each other.
 ///
-/// `jails-model`'s `Layer::ALL` is what the compiler will rename;
-/// `jails-spec`'s `Layer::ALL` is what the legacy engine renames and what
-/// `jails.toml`'s parser accepts. A layer in one and not the other is a rename
-/// that half of jails honours -- which is `bugs.md` B59 in the other
-/// direction, and the reason that entry exists at all.
+/// `jails-model`'s `Layer::ALL` is what the compiler renames; `jails-spec`'s
+/// `Layer::ALL` is what `jails.toml`'s parser accepts. A layer in one and not
+/// the other is a rename that half of jails honours.
 ///
 /// They are written out separately because `jails-model` sits below
 /// `jails-spec` and may not depend on it. This test is where they meet.
@@ -1042,16 +941,14 @@ fn the_compilers_renameable_layers_are_the_engines_layers() {
     );
 }
 
-/// **G2's other half: every command path reaches at least one journey.**
+/// **Every command path reaches at least one journey.**
 ///
-/// `simplify-sol.md`'s G2 asks that "all 100 live command paths map to at
-/// least one checked-in journey". Half of that was already held --
 /// `cli::feature_inventory_covers_the_live_clap_tree_exactly_once` pins the
-/// inventory against the live `clap::Command`, so the *list* cannot drift.
-/// Nothing checked the other half, so a command could be inventoried,
-/// advertised in `jails commands`, and invoked by no test at all.
+/// inventory against the live `clap::Command`, so the *list* cannot drift;
+/// this holds the other half, so a command cannot be inventoried, advertised
+/// in `jails commands`, and invoked by no test at all.
 ///
-/// **A floor rather than a hard requirement**, because ten command paths
+/// **A floor rather than a hard requirement**, because some command paths
 /// genuinely have no test here and pretending otherwise would mean either a
 /// permanently red build or a fake test. They are named below with the reason,
 /// so the gate fails in both directions that matter: coverage may not fall,
@@ -1087,7 +984,7 @@ fn every_inventoried_command_path_is_invoked_by_a_test() {
         .filter_map(|line| line.split('\t').next())
         .collect();
     assert!(
-        commands.len() > 100,
+        commands.len() > 90,
         "the inventory reader found only {} command paths -- it has lost the \
          file and this gate would pass over anything",
         commands.len()
@@ -1206,95 +1103,6 @@ fn collect_rust_sources(dir: &Path, out: &mut String) {
     }
 }
 
-/// The two pluralizers agree, word for word.
-///
-/// **There are two, and there has to be until the cutover.** `jdl-sol.md`
-/// §9.7 specifies one table-naming rule; the legacy ladder implements it in
-/// `jails-protocol::SqlName::conventional_table` and the canonical one in
-/// `jails_model::plural_snake_case`, and the two ladders cannot depend on each
-/// other. `CLAUDE.md`'s rule about a second pluraliser is exactly right about
-/// what happens when they drift -- a route served `/categorys` over a table
-/// called `categories`, from two functions forty lines apart -- so what
-/// replaces "one owner" here is this: one *rule*, two implementations, and a
-/// gate that fails the moment they answer differently.
-///
-/// It matters more than a style disagreement would. `jails model import`
-/// carries a legacy project onto the canonical path, and a canonical
-/// pluralizer that said `task` where the legacy one said `tasks` pointed every
-/// generated statement at a table the database does not have (`audit.md`
-/// A2.6).
-///
-/// Delete this test when `jails-protocol`'s copy goes, not before.
-#[test]
-fn both_pluralizers_answer_the_same_for_every_specified_rule() {
-    // Every branch of §9.7, plus the compounds that make the "final word"
-    // rule observable, plus the words a guesser would get wrong.
-    const WORDS: &[&str] = &[
-        "reward",
-        "work_item",
-        "address",
-        "box",
-        "quiz",
-        "batch",
-        "dish",
-        "category",
-        "toy",
-        "knife",
-        "shelf",
-        "cliff",
-        "status",
-        "person",
-        "child",
-        "man",
-        "woman",
-        "foot",
-        "tooth",
-        "goose",
-        "mouse",
-        "support_person",
-        "pocket_knife",
-        "equipment",
-        "information",
-        "money",
-        "news",
-        "series",
-        "species",
-        "staff",
-        "audio",
-        "metadata",
-        "data",
-        "ox",
-        "note",
-        "task",
-        "invoice",
-        "company",
-        "party",
-        "day",
-    ];
-    let mut disagreements = Vec::new();
-    for word in WORDS {
-        let canonical = jails_model::plural_snake_case(word);
-        let name = jails_protocol::identity::Name::parse(word)
-            .unwrap_or_else(|error| panic!("`{word}` is not a valid name: {error}"));
-        let legacy = jails_protocol::identity::SqlName::conventional_table(&name)
-            .as_str()
-            .to_string();
-        if canonical != legacy {
-            disagreements.push(format!(
-                "  {word}: canonical `{canonical}`, legacy `{legacy}`"
-            ));
-        }
-    }
-    assert!(
-        disagreements.is_empty(),
-        "the canonical and legacy pluralizers disagree:\n{}\n\n\
-         Both implement `jdl-sol.md` §9.7 and both are used on projects that \
-         cross between them, so a disagreement renames a table under a running \
-         application. Fix whichever one departs from the spec.",
-        disagreements.join("\n")
-    );
-}
-
 /// Every file that runs this project's automation: scripts, hooks, workflows.
 ///
 /// One scan, because the three rot the same way. Each names Rust targets,
@@ -1328,19 +1136,11 @@ fn automation_files() -> Vec<(std::path::PathBuf, String)> {
 /// Every `cargo test --test <target>` this project's automation runs is a real
 /// target.
 ///
-/// `scripts/verify-rewrite-g1-canary.sh` ran `--test differential` for as long
-/// as that harness was called `differential`. It was renamed to `product_loop`
-/// and the script was not, so the one thing that compares this implementation
-/// against a frozen legacy binary -- the differential half of G1 and G5 -- could
-/// not start. Nothing said so: the canary is a separate `mise` task, CI runs
-/// `verify-rewrite` and nothing else, and a script that exits non-zero on a
-/// command nobody runs is indistinguishable from one that passes.
-///
 /// A shell script naming a Rust target is exactly the kind of edge `cargo`
-/// cannot check and a rename does not carry, which is why it is checked here
-/// rather than left to be noticed the next time somebody runs the canary. The
-/// workflows are read for the same reason and it is a sharper one: a scheduled
-/// job is read by nobody until it has already not run.
+/// cannot check and a rename does not carry: a script that exits non-zero on
+/// a command nobody runs is indistinguishable from one that passes. The
+/// workflows are read for the same reason and it is a sharper one: a
+/// scheduled job is read by nobody until it has already not run.
 #[test]
 fn every_test_target_a_script_names_exists() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -1386,7 +1186,7 @@ fn every_test_target_a_script_names_exists() {
 
 /// Every script and `mise` task this project's automation names exists.
 ///
-/// The same defect as the one above, one level out: `.githooks/pre-push` and
+/// One level out from the target check above: `.githooks/pre-push` and
 /// both workflows are three files that reach the suite by *name* rather than
 /// by a path `cargo` resolves. A renamed script or a renamed task fails them
 /// at the moment they run, which for a weekly scheduled job is a week later
@@ -1444,11 +1244,12 @@ fn every_script_and_task_the_automation_names_exists() {
     );
 }
 
-/// Every markdown file under `docs/`, with fenced code blocks removed.
+/// Every markdown file under `docs/` plus the three root documents, with
+/// fenced code blocks removed.
 ///
 /// The fences are dropped because every rule below reads a backticked token as
 /// a name somebody is citing, and a fenced block is a command line rather than
-/// a citation -- `git show <commit>^:jdl-sol.md` names a file that is supposed
+/// a citation -- `git show <commit>^:deleted.md` names a file that is supposed
 /// to be gone.
 fn document_prose() -> Vec<(std::path::PathBuf, String)> {
     fn walk(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
@@ -1467,6 +1268,9 @@ fn document_prose() -> Vec<(std::path::PathBuf, String)> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut paths = Vec::new();
     walk(&root.join("docs"), &mut paths);
+    for name in ["CLAUDE.md", "ARCHITECTURE.md", "README.md"] {
+        paths.push(root.join(name));
+    }
     paths.sort();
     // A scanner that has lost the tree reports exactly what a clean one does.
     assert!(
@@ -1573,31 +1377,21 @@ fn backticked(text: &str) -> Vec<(usize, String)> {
 
 /// Every file, part, crate and test name the documents cite is one that exists.
 ///
-/// `docs/00-contracts.md` is the file all four workstreams read first, so a
+/// `docs/00-contracts.md` is the file every workstream reads first, so a
 /// reference in it that names nothing sends whoever followed it looking for a
-/// section that is not there. Three such references were live when this gate
-/// was written, and the oldest had been wrong since the six documents were
-/// split out of `new.md`: *"what stops the deletion is named in Part 5"*, in a
-/// document whose parts are 1 and 6. `docs/01-jdl-v1.md` cited a `Part 3`
-/// twice for the same reason -- the audit findings that were Part 3 moved into
-/// the three workstream documents, and the citations stayed where they were.
-///
-/// This is the failure `CLAUDE.md` already records against the twelve
-/// documents these six replaced: two of them named a differential harness
-/// under a filename it had not had for days. A reference nothing checks is a
-/// reference that rots, and checking it costs one scan of nine files.
+/// section that is not there. A reference nothing checks is a reference that
+/// rots, and checking it costs one scan of a handful of files.
 ///
 /// Four rules, each over `docs/**/*.md` with fenced blocks removed:
 ///
 /// - a `docs/<name>.md` path is a file that exists;
 /// - a cited `Part <n>` has a `# Part <n>` heading somewhere in the set;
 /// - a backticked `jails-<crate>` or `jails_<crate>` names a crate that
-///   exists. `jails-engine` was deleted whole in `2e52c964`, and this is the
-///   rule that would say so the moment a document still named it;
+///   exists;
 /// - a backticked snake_case identifier carrying three or more underscores is
 ///   a `fn` in the tree. That is how these documents write a test they claim
 ///   holds a rule -- `rules::canonical_compiler_is_pure_after_capture` and
-///   fifteen others -- and all sixteen resolve today.
+///   its siblings.
 ///
 /// The last two rules skip any paragraph that cites a commit hash, because a
 /// document must be able to name what was deleted -- see
@@ -1608,11 +1402,7 @@ fn backticked(text: &str) -> Vec<(usize, String)> {
 /// wanting to backtick a Java or SQL identifier carrying three underscores
 /// should spell it without the backticks. Nothing under `docs/` does.
 ///
-/// **`CLAUDE.md`, `ARCHITECTURE.md` and `README.md` are deliberately not
-/// scanned yet**, and the reason is recorded in `docs/40-gates-and-ci.md`
-/// rather than here: the first two carry eight references to `jails-engine`,
-/// which is prose the cutover made wrong and belongs to whoever owns that
-/// path, not to this gate.
+/// `CLAUDE.md`, `ARCHITECTURE.md` and `README.md` are scanned with `docs/`.
 #[test]
 fn every_cross_reference_in_the_documents_resolves() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -1672,9 +1462,9 @@ fn every_cross_reference_in_the_documents_resolves() {
                 .find(|c: char| !(c.is_ascii_alphanumeric() || "._/-".contains(c)))
                 .unwrap_or(rest.len());
             // Trailing full stops belong to the sentence, not the path: a
-            // reference ending one read as `…/name.md.` and was skipped by the
-            // `.md` check below, so rule A missed exactly the citations that
-            // end a sentence. Found by injecting one.
+            // reference ending one reads as `…/name.md.` and would be skipped
+            // by the `.md` check below, missing exactly the citations that end
+            // a sentence.
             let cited = rest[..end].trim_end_matches('.');
             if cited.ends_with(".md") && !root.join("docs").join(cited).is_file() {
                 dangling.push(format!(
@@ -1747,21 +1537,16 @@ fn every_cross_reference_in_the_documents_resolves() {
 
 /// Every diagnostic code belongs to the crate that owns its phase.
 ///
-/// **§18.3 asks for one diagnostic contract, and the way it is lost is a
-/// third vocabulary.** `jails-compiler` and `jails-workspace` return
-/// `Result<_, String>` today -- no code, no path -- so a refusal from the
-/// compiler and a refusal from the parser are different kinds of object. When
-/// those are converted, the failure mode is not that they stay strings: it is
-/// that a `model-*` code appears in an emitter, because that prefix is the
-/// one already in the tree to copy. Then two crates own one namespace and
-/// nothing says which pass a code came from.
+/// **JDL v1 §18.3 asks for one diagnostic contract, and the way it is lost is
+/// a third vocabulary**: a `model-*` code appearing in an emitter because that
+/// prefix is the one already in the tree to copy. Then two crates own one
+/// namespace and nothing says which pass a code came from.
 ///
 /// A code says which pass refused, so the prefix is owned by the crate that
 /// owns the pass: `JDL####` and `model-*` are `jails-model`'s, `compile-*` is
 /// `jails-compiler`'s, `plan-*` is `jails-workspace`'s. The rule is checked
 /// over *string literals* -- a code only ever appears inside one, and blanked
-/// source would report zero however wrong the tree was, which is the mistake
-/// `CODEMOD_RS` records having made.
+/// source would report zero however wrong the tree was.
 #[test]
 fn every_diagnostic_code_belongs_to_the_crate_that_owns_its_phase() {
     const OWNERS: &[(&str, &str)] = &[

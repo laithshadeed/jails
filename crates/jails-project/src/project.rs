@@ -1,9 +1,9 @@
 //! One resolved project: where it is, what builds it, and how it is laid out.
 //!
-//! `Project` is the parameter object `abstract.md` rung 1 asks for, and its
-//! existence is what the `root: &Path` ratchet is measuring the absence of: a
-//! root threaded through a call graph lets every level re-derive the same
-//! facts, differently. Resolving once and passing the value is the cure.
+//! `Project` is a parameter object, and the `root: &Path` ratchet measures
+//! the absence of one: a root threaded through a call graph lets every level
+//! re-derive the same facts, differently. Resolving once and passing the
+//! value is the cure.
 //!
 //! It answers the questions the generators actually ask — the base package,
 //! the layer packages after `jails.toml`'s renames, the pom flavour, the SQL
@@ -11,8 +11,8 @@
 //! the project rather than from a manifest wherever the two could disagree.
 //!
 //! **`base_package()` falls back to the shallowest `.java` file** rather than
-//! requiring `*Application.java`, which only Spring projects have. Requiring
-//! it made `add` fail on exactly the projects it is most useful for.
+//! requiring `*Application.java`, which only Spring projects have; requiring
+//! it fails `add` on exactly the projects it is most useful for.
 
 use std::collections::HashSet;
 use std::env;
@@ -50,7 +50,7 @@ impl ProjectContext {
         Self::discover_from(&cwd)
     }
 
-    pub fn discover_from(start: &Path) -> Result<Self> {
+    pub(crate) fn discover_from(start: &Path) -> Result<Self> {
         let start = fs::canonicalize(start)
             .map_err(|e| format!("failed to resolve {}: {e}", start.display()))?;
         let start = if start.is_file() {
@@ -63,11 +63,9 @@ impl ProjectContext {
         };
 
         // One authority on "where does this project start", shared with every
-        // other command. `nearest_pom` was a second one that only knew
-        // `pom.xml`, so `about` was the single command that never got the
-        // widened door `build.rs` opened -- it refused on a Gradle project
-        // saying "no pom.xml found in this or any parent directory", which is
-        // both wrong and unactionable when jails works there.
+        // other command. A second walk that knows only `pom.xml` refuses on a
+        // Gradle project with "no pom.xml found", which is both wrong and
+        // unactionable when jails works there.
         let module_root = nearest_build_root(&start)?;
         if crate::build::detect(&module_root) == crate::build::Build::Gradle {
             return Self::gradle(&module_root);
@@ -276,8 +274,7 @@ pub fn about(json: bool) -> Result<()> {
 /// The nearest ancestor holding a build file jails reads.
 ///
 /// Through `build::detect`, so this cannot drift from what every other command
-/// considers a project root -- which is exactly what happened while it was a
-/// private `nearest_pom`.
+/// considers a project root.
 fn nearest_build_root(start: &Path) -> Result<PathBuf> {
     for dir in start.ancestors() {
         if crate::build::is_readable(crate::build::detect(dir)) {
@@ -391,9 +388,7 @@ fn roots_to_workspace<'a>(module_root: &'a Path, workspace_root: &'a Path) -> Ve
 }
 
 /// What `about` reports is what `run`/`test` will actually execute, because
-/// it is the same function. These were two copies that had already drifted:
-/// this one probed for `mvnd.cmd` on Windows and `run.rs` probed for a bare
-/// `mvnd`, so the reported command and the run command disagreed there.
+/// it is the same function; two copies disagree about `mvnd.cmd` on Windows.
 fn maven_command(workspace_root: &Path) -> PathBuf {
     crate::maven::binary(workspace_root)
 }

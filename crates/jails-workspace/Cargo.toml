@@ -22,9 +22,9 @@ jails-compiler.workspace = true
 jails-workspace = { workspace = true, features = ["fault-injection"] }
 
 [features]
-# simplify-sol.md G4: failpoints exist for the crash suite and are compiled
-# out of a release build. An environment-triggered abort in a shipped binary
-# is a way to stop somebody's project halfway.
+# Failpoints exist for the crash suite and are compiled out of a release
+# build: an environment-triggered abort in a shipped binary stops a project
+# halfway.
 fault-injection = []
 
 [lints]

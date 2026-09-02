@@ -1,18 +1,11 @@
 //! Executable acceptance cases for generated ArchUnit allowance policy.
 //!
-//! **Four cases, four projects, one Maven run each -- concurrently.** They
-//! used to share one directory that each case rewrote `.jails/architecture.toml`
-//! in, which forced them into a sequence: the second case could not start until
-//! the first had finished reading the file it was about to overwrite. Four
-//! `mvn test` runs at roughly 2.8s each made this a 14s test binary, all of it
-//! on one thread, for four questions that have nothing to say to each other.
-//!
-//! Nothing about the cases required sharing. Each is a policy file and the
-//! verdict ArchUnit reaches on it, and the project around it is eight small
-//! files that cost microseconds to write. Giving each case its own project
-//! removes the only reason they were ordered, and they go through the same
-//! process-wide scheduler the rest of the suite uses -- so four Maven trees
-//! here still count against the same budget as everyone else's.
+//! Four cases, four projects, one Maven run each, concurrently. Each case is a
+//! policy file and the verdict ArchUnit reaches on it; the project around it
+//! is eight small files, so each case owns its own directory and nothing
+//! orders them. They go through the process-wide scheduler the rest of the
+//! suite uses, so four Maven trees here count against the same budget as
+//! everyone else's.
 
 #[path = "common/parallel.rs"]
 mod parallel;
@@ -77,15 +70,9 @@ const CASES: &[Case] = &[
 
 #[test]
 fn allowances_are_bounded_current_and_used() {
-    // The gate this binary evaded twice, now taken from its one owner.
-    //
-    // It was first a bare `eprintln!` and a `return` -- the one thing a skip
-    // must never be, since the whole point of the tier switch is that nothing
-    // may report green without running. Replacing that with a hand-copied
-    // assertion fixed the symptom and left the cause: two spellings of one
-    // contract, in a repository whose own rules say a second copy is a copy
-    // that drifts. `toolchain::skip` is that contract, and `common/mod.rs`
-    // re-exports the same function to everyone else.
+    // The skip goes through `toolchain::skip`, the one owner of the tier
+    // contract: a bare `eprintln!` and `return` would report green without
+    // running, and a hand-copied assertion is a second spelling that drifts.
     if !toolchain::toolchain_enabled() || Command::new("mvn").arg("--version").output().is_err() {
         toolchain::skip("architecture allowance acceptance: Maven is unavailable");
         return;
@@ -176,11 +163,10 @@ fn project(root: &Path) {
          import com.example.demo.domain.billing.Bill;\n\
          public record Money(Bill bill) {}\n",
     );
-    // **`repository`, which is where the canonical layout puts a port.** The
-    // rule under test names that package by generated text, so a fixture whose
-    // port sat in `app` left `APPLICATION_PORTS_DEPEND_INWARD` matching no
-    // class at all -- and ArchUnit fails a rule that checked nothing, which is
-    // the whole reason it does.
+    // `repository` is where the canonical layout puts a port. The rule under
+    // test names that package by generated text; a port anywhere else leaves
+    // `APPLICATION_PORTS_DEPEND_INWARD` matching no class, and ArchUnit fails
+    // a rule that checked nothing.
     write(
         root.join("src/main/java/com/example/demo/repository/Port.java"),
         "package com.example.demo.repository;\npublic interface Port {}\n",
@@ -198,11 +184,10 @@ fn project(root: &Path) {
 fn architecture_test(root: &Path) -> Output {
     let _ = fs::remove_dir_all(root.join("target/surefire-reports"));
     Command::new("mvn")
-        // `-DforkCount=0` for the same reason the rest of the suite uses it:
-        // Surefire's default fork starts a *cold* JVM per run and re-pays class
-        // loading and JIT warmup that the Maven JVM has already done. These four
-        // ArchUnit policies are pure classpath analysis with no isolation to
-        // lose.
+        // `-DforkCount=0`: Surefire's default fork starts a cold JVM per run
+        // and re-pays class loading and JIT warmup the Maven JVM has already
+        // done, and these ArchUnit policies are pure classpath analysis with
+        // no isolation to lose.
         .args(["-q", "-DforkCount=0", "-Dtest=ArchitectureTest", "test"])
         .current_dir(root)
         .output()

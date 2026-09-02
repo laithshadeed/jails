@@ -1,11 +1,10 @@
 //! What Java each entity facet means.
 //!
-//! Split out of [`super`] by secret rather than by size: the parent traverses
-//! the model, renders a [`Unit`] and holds the type/import helpers every
-//! emitter shares, and this answers one question -- given an entity and a
-//! facet, what is the package, the type name and the body. The two grew
-//! together because the match arms use those helpers, which is what
-//! `use super::*` is for.
+//! [`super`] traverses the model, renders a [`Unit`] and holds the
+//! type/import helpers every emitter shares; this answers one question --
+//! given an entity and a facet, what is the package, the type name and the
+//! body. The match arms use those helpers, which is what `use super::*` is
+//! for.
 
 use super::*;
 
@@ -59,14 +58,14 @@ pub(super) fn lower_facet(
         // generated `ArchitectureTest` that settles it. That suite's
         // `CONTROLLERS_DO_NOT_EXPOSE_PERSISTENCE` rule forbids a `*Controller`
         // depending on the repository package, and the controller has four
-        // methods to serve -- so a service that only saved left the two
+        // methods to serve -- so a service that only saves leaves the two
         // generators contradicting each other, and a freshly scaffolded
-        // project failed its own architecture test on the first `mvn test`.
+        // project fails its own architecture test on the first `mvn test`.
         //
-        // `modern.md` §6.4 calls a forwarding service ceremony, and it is
-        // ceremony right up until the first business rule, which is the moment
-        // a project without one has to touch every call site in the web layer.
-        // The scaffold is code the reader grows; the boundary is the point.
+        // A forwarding service is ceremony right up until the first business
+        // rule, which is the moment a project without one has to touch every
+        // call site in the web layer. The scaffold is code the reader grows;
+        // the boundary is the point.
         Facet::Service => {
             let package = crate::emit_java::entity_package(model, entity, Package::Service);
             let primary_key = primary_key(entity)?;
@@ -137,9 +136,9 @@ pub(super) fn lower_facet(
         }
         // Three files rather than one, so it never reaches here. Falling
         // through to the *factory's* arm instead makes `use seed` link,
-        // validate, and emit `<Name>Factory.java` while reporting success
-        // (`bugs.md` B59). A wrong artifact reported as written is a worse
-        // failure than a missing one, because nothing looks wrong.
+        // validate, and emit `<Name>Factory.java` while reporting success.
+        // A wrong artifact reported as written is a worse failure than a
+        // missing one, because nothing looks wrong.
         Facet::Seed => unreachable!("seed has a multi-file backend"),
         Facet::Search => {
             let package = crate::emit_java::entity_package(model, entity, Package::PortsSearch);

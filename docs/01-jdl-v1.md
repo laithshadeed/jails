@@ -1,45 +1,27 @@
 <!--
-One of six. `docs/00-contracts.md` is the one every reader starts from; it
-carries the contracts, the identifier map and the ownership table that keep
-these six from contradicting each other.
-
-**A closed item is deleted from the file that holds it**, in the commit that
-closes it -- never marked done. `git log -p -- docs/` is the record.
-
-**Item and section numbers are stable and never reused.** A section with no
-open items disappears rather than being renumbered.
-
-Status prose is dated where it is a measurement. Everything else is written in
-the present tense as a rule: a note narrating what a module used to be gives a
-reader nothing to act on and goes stale on its own.
+The JDL v1 specification. Section numbers are stable and cited from source
+comments as `JDL v1 §N`; a section is never renumbered.
 -->
 
 # 01 — JDL v1
 
-**Normative, and this file is a reference rather than a workstream.** Its
-section numbers are the ones source comments cite as `jdl-sol.md §N` and are
-unchanged; `the_specification_complete_example_links_except_its_one_recorded_gap`
-extracts §4 out of this file and links it, so the example cannot rot into
-prose.
+**Normative.** The section numbers below are the ones source comments cite as
+`JDL v1 §N`; they are stable. The key words **MUST**, **MUST NOT**, **SHOULD**
+and **MAY** have their RFC 2119 meanings.
 
-Read the sections your work touches. The four workstream files name them.
+The complete-document example in §4 is valid JDL v1 and is an executable
+conformance fixture:
+`the_specification_complete_example_links_except_its_one_recorded_gap`
+extracts it from this file and links it. Smaller `jdl` blocks are valid
+declaration fragments in the surrounding entity/workspace context unless the
+text says they show a before/after transformation.
+
+Where this specification and the implementation differ, the workstream
+document that owns the subject holds the open item.
 
 ---
 
 # Part 2 — JDL v1
-
-**Normative.** The section numbers below are the ones source comments cite as
-`jdl-sol.md §N`; they are unchanged. The key words **MUST**, **MUST NOT**,
-**SHOULD** and **MAY** have their RFC 2119 meanings.
-
-The complete-document example in §4 is valid JDL v1 and is an executable
-conformance fixture. Smaller `jdl` blocks are valid declaration fragments in
-the surrounding entity/workspace context unless the text says they show a
-before/after transformation.
-
-The three workstream documents are where this specification and the
-implementation currently differ; `docs/00-contracts.md`'s identifier map says
-which one holds a given entry.
 
 ## 1. Decision
 
@@ -2513,52 +2495,10 @@ fragments are not extracted, and that is the rest of this family.
 
 ## 22. Upgrade from the pre-v1 draft
 
-A file without `jdl 1` is parsed only by the legacy importer. It is never
-silently interpreted as v1. `jails model upgrade --to 1` produces a diff and
-requires normal review/apply before replacing the source.
-
-The mechanical translations are:
-
-| Legacy draft | JDL v1 |
-|---|---|
-| unbraced `application` plus following properties | braced `app { ... }` |
-| root `package com.example` | app property `pkg com.example` |
-| declaration `@package(...)` | no syntax; plan a canonical layer move or eject the implementation boundary |
-| `dialect postgresql` | `storage postgres` |
-| `dialect h2` | `storage h2` |
-| `capability db` or alias `postgres` | removed after materializing `storage postgres` |
-| `capability h2` | removed after materializing `storage h2` |
-| `capability <kind>` | `cap <kind>` |
-| `dependency group:artifact ...` | `dep group:artifact ...` |
-| `setting key = value` | `prop key = value` |
-| `use repository` | `use repo` |
-| entity `@scaffold` | `use scaffold` inside the entity |
-| `string!` | required `string @notBlank` |
-| `index (a, b desc)` | `index [a, b desc]` |
-| `capability json @name(Orders) @package(io.orders)` | `cap json Orders`; plan a canonical placement move or eject an incompatible reader unit |
-| dependency `group:artifact = "version"` | `dep group:artifact @version("version")` |
-| route property with an unquoted path | `route METHOD "path"` |
-| generator-specific top-level unit | matching projection, operation, relation, or typed `component` |
-| inferred `--via` relation | explicit `join` or `resolve` mapping |
-
-The legacy file does not contain the new `platform` and `build` axes. During
-upgrade, the importer MUST inspect the selected module once and materialize
-`platform spring|plain` and `build maven|gradle` in the `app` block. A module
-with conflicting build evidence, an unsupported build language, or ambiguous
-platform evidence aborts upgrade with a diagnostic; it is never guessed.
-
-The upgrader preserves comments, source order, explicit IDs, logical names,
-physical names, and operation routes. It materializes effective legacy IDs
-before changing syntax. Non-conventional generated packages are not copied as
-new JDL choices: the plan lists a canonical move for unchanged managed code or
-requires ejection/adoption when reader changes prevent that move. If legacy
-inference has multiple possible targets or an old free-form value has no typed
-v1 equivalent, upgrade aborts with all candidate spans; it never chooses one.
-
-Legacy TOML model state is imported into the same v1 AST through a separate
-one-shot command. It does not become an alternate source format. After a
-successful accepted upgrade, the compiler writes the language version to the
-accepted-model metadata and no longer invokes the legacy parser.
+A file without `jdl 1` is never interpreted as v1. `jdl 1` is the only
+editable source; a project carrying an older draft or a `.jails/model.toml`
+is refused by name, and the refusal names the last revision of jails that can
+carry it across (`docs/54-language.md` S54.1).
 
 ## 23. Deliberate non-goals and future additions
 

@@ -182,11 +182,10 @@ fn test_command_infers_unit_and_integration_test_names() {
             .success()
     );
 
-    // `Class#method` is the case that was silently wrong: the `Test` suffix
-    // was appended to the whole filter (`Payout#settlesTest`), and the
-    // Failsafe routing decision was then taken on that mangled string, so
-    // `PayoutIT#settles` went to Surefire -- which does not run `*IT` -- and
-    // Maven reported success having executed nothing.
+    // `Class#method`: the `Test` suffix goes on the class half, not the whole
+    // filter, and the Failsafe routing decision is taken on the class -- so
+    // `PayoutIT#settles` goes to Failsafe rather than to Surefire, which does
+    // not run `*IT` and would report success having executed nothing.
     for filter in ["Payout#settles", "PayoutIT#settles"] {
         assert!(
             jails_cmd(&root, Some(&fake_dir))
@@ -566,9 +565,9 @@ fn run_starts_compose_services_only_when_explicitly_requested() {
     // jails reads. `run --services start` will not launch Spring until the
     // declared PostgreSQL accepts TCP connections, and a fake `docker` that
     // exits 0 starts no container -- so without this the command spends its
-    // whole thirty-second readiness budget failing to reach a server that was
-    // never going to exist, for a test whose question is only whether compose
-    // went up before Spring. See `common::listening_loopback_port`.
+    // whole readiness budget failing to reach a server that was never going
+    // to exist, for a test whose question is only whether compose went up
+    // before Spring. See `common::listening_loopback_port`.
     let (_postgres, postgres_port) = listening_loopback_port();
     fs::write(
         root.join("compose.yaml"),
@@ -837,14 +836,11 @@ fn console_launches_jshell_with_the_project_classpath() {
     let fake = temp_dir("console-jshell-bin");
     let log = fake.join("log.txt");
     write_fake_maven(&fake, &["mvn", "java", "jshell"], &log);
-    // **The fake `mvn` writes the file it is told to, because the real one
-    // does.** This used to seed `target/jails-runtime-classpath` by hand so
-    // the read after the resolve had something to find, and that seed is now
+    // The fake `mvn` writes the file it is told to, because the real one
+    // does. Seeding `target/jails-runtime-classpath` by hand instead is
     // indistinguishable from an already-resolved classpath: `jails console`
     // reuses one that is newer than the pom, so the resolve this test exists
-    // to observe was correctly skipped and the test failed on its absence. A
-    // stand-in that answers the question differently from the tool it stands
-    // in for will eventually be believed over the tool.
+    // to observe would be correctly skipped.
     fs::write(
         fake.join("mvn"),
         format!(
@@ -973,8 +969,7 @@ fn run_command_compiles_before_attempting_a_plain_main_class() {
     // The fake `mvn compile` is a no-op, so target/classes stays empty and
     // the subsequent `java -cp target/classes ...` step genuinely fails --
     // this only asserts jails attempted the compile step first, not that
-    // the whole pipeline succeeds (that needs the real toolchain; see the
-    // `#[ignore]`d tests below).
+    // the whole pipeline succeeds (that needs the real toolchain).
     jails_cmd(&root, Some(&fake_dir))
         .arg("run")
         .status()
@@ -1327,9 +1322,9 @@ fn a_generated_command_is_reachable_by_name_through_jails_run() {
     );
 }
 
-/// `plan.md` §12. Before this, **zero** of jails' ~30 commands worked on a
-/// project it did not create -- and the whole gate was eleven lines looking for
-/// `pom.xml`, not anything the commands actually do.
+/// The reading commands work on a project jails did not create, and the
+/// Maven-inherent ones refuse by name: the door is any recognised build
+/// marker, not `pom.xml`.
 #[test]
 fn a_gradle_project_gets_the_commands_that_do_not_need_maven() {
     let root = temp_dir("foreign-build");
@@ -1558,14 +1553,13 @@ fn maven_json_is_one_report_and_timeout_is_bounded_without_tool_noise() {
     );
 }
 
-/// `jails modernize` against the exact file it was discovered on.
+/// `jails modernize` against a real Boot 2 Gradle build.
 ///
-/// The fixture is `minicom-15-01-2026/spring`'s `build.gradle`, unedited:
-/// Spring Boot 2.7.18 through the legacy `buildscript` spelling, a project-level
-/// `sourceCompatibility`, no test block, and a Gradle 8.5 wrapper. Every
-/// assertion below is a `./gradlew build` on JDK 26 that failed without it,
-/// discovered in this order -- unknown property `sourceCompatibility`, then
-/// "did not discover any tests", then `Unknown data type: "DATETIME"`.
+/// The fixture is Spring Boot 2.7.18 through the `buildscript` spelling, a
+/// project-level `sourceCompatibility`, no test block, and a Gradle 8.5
+/// wrapper. Every assertion below is something `./gradlew build` on a
+/// current JDK fails on without it -- unknown property `sourceCompatibility`,
+/// "did not discover any tests", `Unknown data type: "DATETIME"`.
 ///
 /// It is one commit, not five, because the edits are interdependent: a wrapper
 /// bumped without the toolchain block fails evaluation, and a toolchain bumped
@@ -1666,10 +1660,10 @@ fn modernize_takes_a_boot_2_gradle_project_to_the_versions_jails_generates_again
 
     // Rewritten when the rename *is* the whole migration: every type
     // `Reader.java` names exists in 3.x under the same name, `new
-    // ObjectMapper()` included
-    // (`deps/jackson-databind` `tools/jackson/databind/ObjectMapper.java:276`).
-    // Refusing this file left a project jails had just moved to Boot 4 unable
-    // to compile over one import.
+    // ObjectMapper()` included (`deps/jackson-databind`,
+    // `tools/jackson/databind/ObjectMapper.java`). Refusing this file would
+    // leave a project jails had just moved to Boot 4 unable to compile over
+    // one import.
     let reader = fs::read_to_string(base.join("Reader.java")).unwrap();
     assert!(
         reader.contains("tools.jackson.databind.ObjectMapper"),
@@ -1681,8 +1675,7 @@ fn modernize_takes_a_boot_2_gradle_project_to_the_versions_jails_generates_again
         "{report}"
     );
 
-    // Reported and never rewritten when the API changed, which is the half the
-    // blanket refusal was right about.
+    // Reported and never rewritten when the API changed.
     assert!(report.contains("Jackson 2"), "{report}");
     assert!(report.contains("Legacy.java"), "{report}");
     assert!(
@@ -1703,9 +1696,9 @@ fn modernize_takes_a_boot_2_gradle_project_to_the_versions_jails_generates_again
     assert!(again.contains("already 4.1.0"), "{again}");
 }
 
-/// `plan.md` §12: `jails adopt` writes a `[layout]` table, not new machinery.
-/// The proof is that a *reporting* command's answer changes with no code path
-/// of its own — `stats` counted a renamed web package as "Other".
+/// `jails adopt` writes a `[layout]` table, not new machinery. The proof is
+/// that a *reporting* command's answer changes with no code path of its own:
+/// `stats` counts a renamed web package under its layer rather than "Other".
 #[test]
 fn adopt_teaches_jails_where_an_existing_project_keeps_things() {
     let root = temp_dir("adopt");
@@ -1762,9 +1755,8 @@ fn adopt_teaches_jails_where_an_existing_project_keeps_things() {
     assert!(after.contains("Adapters"), "{after}");
 }
 
-/// `plan.md` §10.2. The measured finding is recorded in §19.1: `--fast` does
-/// not beat `mvnd`, so what this test pins is not speed but the two properties
-/// that make the path safe to offer at all.
+/// `--fast` does not beat `mvnd`, measured, so what this test pins is not
+/// speed but the two properties that make the path safe to offer at all.
 #[test]
 fn test_fast_is_a_visible_alias_for_the_complete_auto_engine() {
     let root = temp_dir("test-fast");
@@ -1869,14 +1861,13 @@ fn a_timed_warm_run_cancels_the_request_and_recycles_the_daemon() {
         ),
     )
     .unwrap();
-    // **The warm-up compiles `SlowTest` without running it, and leaves a
-    // daemon up.** What is being proved below is that a one-second budget
+    // The warm-up compiles `SlowTest` without running it, and leaves a
+    // daemon up. What is being proved below is that a one-second budget
     // cancels a request still in flight, so the fixture's test sleeps thirty
     // seconds and the warm-up must not be the thing that waits for it: naming
     // `PingTest` as the selector leaves `SlowTest` compiled and unrun, which
     // is what the timed run needs since it passes `--compile none`. A bare
-    // `jails test --fast` sits through all thirty, which measured 33.7s at the
-    // tail of `tests/cli` on an otherwise idle box -- straight onto the
+    // `jails test --fast` would sit through all thirty, straight onto the
     // suite's wall clock.
     fs::write(
         tests.join("PingTest.java"),
@@ -1897,7 +1888,7 @@ fn a_timed_warm_run_cancels_the_request_and_recycles_the_daemon() {
         return;
     }
 
-    // **The daemon has to be up before the clock starts.** `--fast` is the
+    // The daemon has to be up before the clock starts. `--fast` is the
     // launcher, not `testd`, so without this the timed run pays a cold JVM
     // boot and the daemon's own `--scan-class-path` warm-up inside the window
     // it is measuring -- which is not what a one-second budget is about, and
@@ -1939,18 +1930,12 @@ fn a_timed_warm_run_cancels_the_request_and_recycles_the_daemon() {
         report.contains("active request was cancelled") && report.contains("testd was recycled"),
         "the timeout must explain both cancellation and isolation cleanup: {report}"
     );
-    // **Bounded by the sleep, not by a guess at how fast the machine is.**
-    //
-    // This was `< 10s` and failed at 19.9s on a contended box -- while both
-    // assertions above passed, so the request *had* been cancelled and the
-    // daemon *had* been recycled. Ten seconds was never the property; it was
-    // an estimate of scheduling latency, which is the one quantity a loaded
-    // machine is free to change without anything being wrong.
-    //
-    // The property is that cancellation returned control before the work
-    // would have finished on its own, and `SLOW_TEST_SLEEP` is exactly that
-    // line: a run that waited the sleep out cannot come in under it, whatever
-    // the machine is doing.
+    // Bounded by the sleep, not by a guess at how fast the machine is: a
+    // wall-clock estimate is scheduling latency, which a loaded machine is
+    // free to change without anything being wrong. The property is that
+    // cancellation returned control before the work would have finished on
+    // its own, and `SLOW_TEST_SLEEP` is exactly that line: a run that waited
+    // the sleep out cannot come in under it, whatever the machine is doing.
     assert!(
         elapsed < SLOW_TEST_SLEEP,
         "the 1s timeout took {elapsed:?}, which is not less than the {SLOW_TEST_SLEEP:?} \
@@ -1969,8 +1954,8 @@ fn a_timed_warm_run_cancels_the_request_and_recycles_the_daemon() {
     );
 }
 
-/// `plan.md` item 13, and the two things about a daemon that must be true
-/// before speed matters at all.
+/// The two things about a daemon that must be true before speed matters at
+/// all.
 ///
 /// The first is that it refuses rather than runs when the classes are older
 /// than their sources -- a resident JVM makes a green-over-deleted-code report
@@ -2102,10 +2087,10 @@ fn testd_refuses_stale_classes_and_sees_a_recompile_after_it_started() {
     );
 }
 
-/// `plan.md` §10.2 step 3. The property worth an integration test is not that
-/// the selection is small -- it is that it is small *and* transitive: a change
-/// to a record two hops from a test still selects that test. A one-hop version
-/// looks correct on any scaffold and quietly misses the failure.
+/// The property worth an integration test is not that the selection is small
+/// -- it is that it is small *and* transitive: a change to a record two hops
+/// from a test still selects that test. A one-hop version looks correct on
+/// any scaffold and quietly misses the failure.
 #[test]
 fn testd_affected_selects_transitively_and_widens_when_it_cannot_know() {
     if !real_mvn_available() || !real_java_supports_target_release() {
@@ -2236,9 +2221,9 @@ fn testd_affected_selects_transitively_and_widens_when_it_cannot_know() {
     );
 }
 
-/// `plan.md` §17 item 5b. k6 is not installed here, so what is checked is the
-/// two refusals and the command jails would run — the tier-2 shape, which is
-/// the honest one when the tool under test is absent.
+/// k6 is not installed here, so what is checked is the two refusals and the
+/// command jails would run — the tier-2 shape, which is the honest one when
+/// the tool under test is absent.
 #[test]
 fn bench_refuses_without_a_load_test_and_without_k6() {
     let root = temp_dir("bench");
@@ -2312,12 +2297,10 @@ fn bench_states_the_profile_it_is_about_to_run() {
 
 /// A project jails did not write: adopted, edited, generated into, and built.
 ///
-/// `simplify-sol.md`'s G5 asks for *sanitized adopted and reader-edited
-/// Spring/plain projects*, and this is the gap the proof corpus had: every
-/// manifest in `examples/proof-policy.tsv` is jails' own output, so nothing in
-/// the suite proved the tool against a codebase it did not generate. A
-/// generator can be perfectly correct about its own layout and still be wrong
-/// about somebody else's.
+/// Every manifest in `examples/proof-policy.tsv` is jails' own output, so this
+/// is the one place the tool is proved against a codebase it did not
+/// generate. A generator can be perfectly correct about its own layout and
+/// still be wrong about somebody else's.
 ///
 /// The pom here is hand-written rather than `write_plain_fixture`'s: a
 /// different groupId, a different artifactId, a source layout jails would not
@@ -2341,10 +2324,9 @@ fn an_adopted_reader_written_project_generates_compiles_and_keeps_its_own_bytes(
     }
     let path = real_path_without_mvnd();
     let root = temp_dir("adopted-foreign-project");
-    // The fixture lives in `tests/common` because `tests/differential.rs` runs
-    // the same project through both implementations. Two copies of a project
-    // that is *defined* by being foreign would drift into two different
-    // foreignnesses.
+    // The fixture lives in `tests/common` because other binaries run the same
+    // project. Two copies of a project that is *defined* by being foreign
+    // would drift into two different foreignnesses.
     write_adopted_fixture(&root, Adopted::Plain);
     let before = adopted_reader_bytes(&root, Adopted::Plain);
 
@@ -2393,10 +2375,10 @@ fn an_adopted_reader_written_project_generates_compiles_and_keeps_its_own_bytes(
         "jails rewrote a file it did not author"
     );
 
-    // 4. Rerun is idempotent, which is what `simplify-sol.md`'s differential
-    // list asks for. Re-declaring the same record is not a collision to refuse
-    // -- identity is the entity, so this is an update that changes nothing --
-    // and the check that matters is that it *says* so and writes nothing.
+    // 4. Rerun is idempotent. Re-declaring the same record is not a collision
+    // to refuse -- identity is the entity, so this is an update that changes
+    // nothing -- and the check that matters is that it *says* so and writes
+    // nothing.
     let generated_at =
         common::generated(&root, "src/main/java/net/acme/legacy/domain/Receipt.java");
     let generated_before = fs::read_to_string(&generated_at).unwrap();

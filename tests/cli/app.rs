@@ -69,8 +69,8 @@ fn app_manifest_plan_is_domain_blind_and_writes_nothing() {
     // apply declares a moment earlier. Once the model exists, `app plan`
     // names the files -- that is the case below.
     assert!(stdout.contains("would be created"), "{stdout}");
-    // The kind the manifest names, not the one the engine collapsed it to:
-    // `CrawlRun` is a `[[generate]]` row of kind `scaffold`.
+    // The kind the manifest names: `CrawlRun` is a `[[generate]]` row of kind
+    // `scaffold`.
     assert!(stdout.contains("declare scaffold CrawlRun"), "{stdout}");
     assert!(stdout.contains("nothing was written"), "{stdout}");
     assert!(!root.join("jails.toml").exists());
@@ -111,14 +111,9 @@ fn app_manifest_formats_the_complete_generated_tree_once() {
     assert!(common::generated(&root, "src/main/java/com/example/demo/domain/Note.java").is_file());
 }
 
-/// `app plan` names an entity the manifest has stopped asking for.
-///
-/// It was silent about those: a reader could not tell "this manifest is fully
-/// applied" from "this manifest has quietly dropped something it used to
-/// declare". Verified against the previous binary, which printed only the
-/// retained entity. This is what the owner model buys — the imperative plan
-/// compares each declaration against a recorded row and so can only speak
-/// about declarations that still exist.
+/// `app plan` names an entity the manifest has stopped asking for, so a
+/// reader can tell "this manifest is fully applied" from "this manifest has
+/// quietly dropped something it used to declare".
 #[test]
 fn app_plan_names_an_entity_the_manifest_no_longer_declares() {
     let root = temp_dir("app-plan-orphan");
@@ -157,17 +152,15 @@ fn app_plan_names_an_entity_the_manifest_no_longer_declares() {
         .unwrap();
     let stdout = String::from_utf8_lossy(&planned.stdout);
     assert!(planned.status.success(), "{stdout}");
-    // Named by the files it would relinquish. V1 printed `orphan record
-    // Dropped` from a separate walk over the intent list; here the plan is
-    // the apply, so the entity leaving *is* two deletes.
+    // Named by the files it would relinquish: the plan is the apply, so the
+    // entity leaving *is* two deletes.
     assert!(
         stdout.contains("delete ") && stdout.contains("Dropped.java"),
         "the dropped entity is named: {stdout}"
     );
     // And the retained one is *not* named: a plan lists what changes, and an
     // entity the manifest still declares and disk already matches changes
-    // nothing. V1's walk printed a row per intent whether or not it had
-    // anything to say.
+    // nothing.
     assert!(
         !stdout
             .lines()
@@ -185,15 +178,10 @@ fn app_plan_names_an_entity_the_manifest_no_longer_declares() {
     );
 }
 
-/// Appending a component to a `[[generate]]` block is a forward migration.
-///
-/// The most common shape change there is, and the declarative path could not
-/// express it: re-planning the scaffold at the new list re-rendered
-/// `V001__create_deals.sql` with the extra column, the append-only seal
-/// refused, and the offered fix named something the manifest has no syntax
-/// for. `jails resource field add` was not an escape either -- it works on the
-/// imperative identity, so the manifest and the entity disagreed about the
-/// field list on the very next apply.
+/// Appending a component to a `[[generate]]` block is a forward migration,
+/// not a re-render of the sealed create migration: schema history is
+/// append-only, and the manifest and the entity must agree about the field
+/// list on the next apply.
 #[test]
 fn a_manifest_field_appended_to_a_scaffold_becomes_a_forward_migration() {
     let root = temp_dir("app-field-evolution");
@@ -277,14 +265,9 @@ fn a_manifest_field_appended_to_a_scaffold_becomes_a_forward_migration() {
 }
 
 /// Removing a table-backed row from the manifest demands the same care the
-/// imperative destroy does.
-///
-/// `jails destroy scaffold Deal` refuses without a storage policy, because
-/// deleting the Java says nothing about what happens to the rows. Deleting the
-/// `[[generate]]` block did the same removal with no policy, no confirmation
-/// and no `drop table` migration: the table survived with no code that knows
-/// about it, and nothing reports an orphan. The same intent, expressed two
-/// ways, got two different levels of care.
+/// imperative destroy does: `jails destroy scaffold Deal` refuses without a
+/// storage policy, because deleting the Java says nothing about what happens
+/// to the rows, and deleting the `[[generate]]` block is the same intent.
 #[test]
 fn a_manifest_removal_of_a_table_backed_row_needs_a_storage_policy() {
     let root = temp_dir("app-remove-storage-policy");
@@ -396,10 +379,9 @@ fn app_manifest_merges_an_edited_intent_over_user_changes() {
         String::from_utf8_lossy(&first.stdout),
         String::from_utf8_lossy(&first.stderr)
     );
-    // Simulate a project written by the schema-1 state format. The migration
-    // must recover the old field spec from the recorded model (the legacy comma
-    // join was ambiguous for map<K,V>) and fold this file into the one ledger,
-    // removing it -- two registries that disagree are worse than one.
+    // An older intent registry beside the model. It must be folded into the
+    // one bookkeeping file and removed -- two registries that disagree are
+    // worse than one.
     fs::write(
         root.join(".jails/app-state-v1"),
         "schema=1\nrecord|Note||id:uuid@pk|false|||\n",
@@ -425,13 +407,10 @@ fn app_manifest_merges_an_edited_intent_over_user_changes() {
         .output()
         .unwrap();
     assert!(plan.status.success());
-    // The plan names the file the edit would rewrite. V1 printed `update
-    // generate record Note` from a walk of the intent list, which could not
-    // see whether the file on disk actually differed.
+    // The plan names the file the edit would rewrite.
     let shown = String::from_utf8_lossy(&plan.stdout);
     // The verb is `write`: the file is managed, it exists, and the plan is
-    // rewriting jails' own output over it. `replace` was the legacy engine's
-    // word for the same operation.
+    // rewriting jails' own output over it.
     assert!(shown.contains("write "), "{shown}");
     assert!(shown.contains("Note.java"), "{shown}");
     let update = jails_cmd(&root, None)
@@ -468,10 +447,9 @@ fn app_manifest_merges_an_edited_intent_over_user_changes() {
     );
 }
 
-/// V1 refused an intent update outside a git repository, because it
-/// overwrote the file irreversibly and git was the only way back. V2 records
-/// the exact previous bytes as a guarded preimage before it writes, so the
-/// recovery git was standing in for is jails' own.
+/// An intent update proceeds outside a git repository: the previous bytes are
+/// reproducible from the model and the accepted projection, so git is not
+/// needed as the way back.
 #[test]
 fn app_manifest_updates_an_intent_without_needing_a_git_repository() {
     let root = temp_dir("app-intent-no-git");
@@ -504,12 +482,8 @@ fn app_manifest_updates_an_intent_without_needing_a_git_repository() {
         .output()
         .unwrap();
 
-    // No git, and the update proceeds. V1 refused, because it overwrote the
-    // file irreversibly and git was the only way back. V2 records the exact
-    // previous bytes as a guarded preimage in its own object store before it
-    // writes, so the recovery git was standing in for is jails' own -- and
-    // demanding a repository jails does not need is a refusal with nothing
-    // behind it.
+    // No git, and the update proceeds: demanding a repository jails does not
+    // need is a refusal with nothing behind it.
     assert!(
         output.status.success(),
         "{}",
@@ -517,10 +491,10 @@ fn app_manifest_updates_an_intent_without_needing_a_git_repository() {
     );
     let after = fs::read_to_string(&record).unwrap();
     assert_ne!(after, before, "the update happened");
-    // Recoverable without a repository, and without an object store of jails'
-    // own: the model states the shape and the accepted projection in
-    // `.jails/compiler.lock.json` is the merge base, so the previous bytes are
-    // reproducible by compiling rather than by keeping a copy of them.
+    // Recoverable without a repository: the model states the shape and the
+    // accepted projection in `.jails/compiler.lock.json` is the merge base, so
+    // the previous bytes are reproducible by compiling rather than by keeping
+    // a copy of them.
     assert!(root.join(".jails/compiler.lock.json").is_file());
     assert!(
         !root.join(".jails/objects").exists(),
@@ -534,8 +508,7 @@ fn app_apply_keys_a_suffixed_name_to_the_row_generate_writes() {
     // AcquirerFetcher` writes files under `Acquirer`. `app apply` records the
     // manifest's spec onto the same row -- it has to normalise identically, or
     // one entity gets two half-rows: files with no spec, and a spec with no
-    // files. `doctor` then reports the empty half as an unowned legacy entity
-    // and offers an adopt command for nothing.
+    // files.
     let root = temp_dir("app-suffixed-name");
     write_spring_fixture(&root);
     fs::create_dir_all(root.join(".jails")).unwrap();
@@ -788,12 +761,10 @@ fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
         )
         .is_file()
     );
-    // **Five things, not seven.** `.jails/` holds the reader's manifest, the
-    // one editable model, the lock sealing the projection it was compiled
-    // from, the generated tree, and the executor's own lock -- and nothing
-    // else. Closed rather than counted, so a legacy ledger, an object store, a
-    // transaction log or a receipts directory growing back here fails, which
-    // is the cutover running backwards.
+    // `.jails/` holds the reader's manifest, the one editable model, the lock
+    // sealing the projection it was compiled from, the generated tree, and
+    // the executor's own lock -- and nothing else. Closed rather than counted,
+    // so any other bookkeeping appearing here fails.
     let bookkeeping = fs::read_dir(root.join(".jails"))
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
@@ -961,13 +932,10 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
         )
         .is_file()
     );
-    // **One bean, one transaction.** The legacy generator wrapped the use case
-    // in a second `Outbox<X>UseCase` that delegated to a storing one and
-    // staged afterwards, because it had already written a service it could not
-    // reach inside. Here the command *port* is the ABI and `Jdbc<X>Command` is
-    // its one implementation, so staging goes in the statement's own method
-    // under `@Transactional` -- with no `@Primary` deciding which of two
-    // implementations Spring injects.
+    // One bean, one transaction: the command *port* is the ABI and
+    // `Jdbc<X>Command` is its one implementation, so staging goes in the
+    // statement's own method under `@Transactional` -- with no `@Primary`
+    // deciding which of two implementations Spring injects.
     assert!(
         !common::generated(
             &root,
@@ -1178,9 +1146,9 @@ fn app_manifests_compile_without_manual_source_edits() {
         return;
     }
     let path = real_path_without_mvnd();
-    // `verify` contains compile and test-compile and is therefore stronger
-    // than the old preliminary lifecycle. Both Rust tests share this exact
-    // execution through the OnceLock above; no generated test is omitted.
+    // `verify` contains compile and test-compile. Both Rust tests share this
+    // exact execution through the OnceLock above; no generated test is
+    // omitted.
     let verified = verified_app_unit_fixtures(&path);
     assert_eq!(verified.len(), SPRING_APP_MANIFESTS.len());
     for (name, root) in verified {
@@ -1214,9 +1182,9 @@ fn app_manifests_pass_the_full_generated_verification_gate() {
     verified_app_images(fixtures);
 }
 
-/// The control application: `plan.md` §4.4's whole point is that the crawler,
-/// the inbox and the payments gateway are all Spring Boot, so a Spring-shaped
-/// assumption in the generic machinery is invisible to every one of them.
+/// The control application: the crawler, the inbox and the payments gateway
+/// are all Spring Boot, so a Spring-shaped assumption in the generic machinery
+/// is invisible to every one of them.
 ///
 /// It runs against the **plain** fixture -- no parent POM, no starters, no
 /// container -- and asks for `value`, `sealed`, `strategy`, `record`, `cli`
@@ -1239,10 +1207,9 @@ fn ledger_cli_manifest_builds_without_spring() {
     let root = verified_plain_toolbox(&path);
 
     // The manifest names the dispatcher its command belongs to, so the
-    // registration is part of what this gate proves rather than a note.
-    // Under `.jails/generated` since the toolbox became canonical: the
-    // dispatcher is compiler output, and this assertion is about what the
-    // compiler put in it.
+    // registration is part of what this gate proves rather than a note. Under
+    // `.jails/generated`: the dispatcher is compiler output, and this
+    // assertion is about what the compiler put in it.
     let dispatcher = fs::read_to_string(
         root.join(".jails/generated/main/java/com/example/demo/cli/LedgerCli.java"),
     )
@@ -1254,10 +1221,9 @@ fn ledger_cli_manifest_builds_without_spring() {
 
     // And the jar starts *that* dispatcher. `new-cli` writes `App.java` and
     // names it as the entry point; a manifest that then generates `LedgerCli`
-    // and registers `reconcile` into it used to produce a jar answering only
-    // `help`, with `jails run -- reconcile` reporting "unknown command". The
-    // entry point moves when it is still jails' own stub and nobody has
-    // registered anything there.
+    // and registers `reconcile` into it must move the entry point, or the jar
+    // answers only `help`. The entry point moves when it is still jails' own
+    // stub and nobody has registered anything there.
     let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
     assert!(
         pom.contains("<mainClass>com.example.demo.cli.LedgerCli</mainClass>"),

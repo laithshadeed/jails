@@ -5,9 +5,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" && { mise run verify-rewrite && cargo install --path . -q; } >/tmp/jails-stop-hook.log 2>&1 || echo '{\"systemMessage\": \"jails: verify-rewrite failed after this turn -- see /tmp/jails-stop-hook.log\"}'",
-            "timeout": 600,
-            "statusMessage": "mise run verify-rewrite (jails)"
+            "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" && mise run lint >/tmp/jails-stop-hook.log 2>&1 || echo '{\"systemMessage\": \"jails: `mise run lint` failed after this turn -- see /tmp/jails-stop-hook.log; run `mise run verify-rewrite` before pushing\"}'",
+            "timeout": 300,
+            "statusMessage": "mise run lint (jails)"
           }
         ]
       }

@@ -210,19 +210,14 @@ dependencies = [
  "clap_complete",
  "fs2",
  "jails-codemod",
- "jails-commit",
  "jails-compiler",
  "jails-contracts",
  "jails-drive",
- "jails-generate",
  "jails-java",
  "jails-model",
- "jails-prepare",
  "jails-project",
- "jails-protocol",
  "jails-report",
  "jails-spec",
- "jails-state",
  "jails-support",
  "jails-testkit",
  "jails-workspace",
@@ -242,18 +237,6 @@ dependencies = [
 [[package]]
 name = "jails-codemod"
 version = "0.1.0"
-
-[[package]]
-name = "jails-commit"
-version = "0.1.0"
-dependencies = [
- "jails-codec-derive",
- "jails-commit",
- "jails-prepare",
- "jails-protocol",
- "jails-state",
- "jails-support",
-]
 
 [[package]]
 name = "jails-compiler"
@@ -281,27 +264,11 @@ dependencies = [
  "clap",
  "jails-codec-derive",
  "jails-codemod",
- "jails-commit",
  "jails-java",
  "jails-project",
- "jails-protocol",
  "jails-report",
  "jails-spec",
  "jails-support",
- "tempfile",
-]
-
-[[package]]
-name = "jails-generate"
-version = "0.1.0"
-dependencies = [
- "clap",
- "jails-java",
- "jails-project",
- "jails-protocol",
- "jails-spec",
- "jails-support",
- "jails-testkit",
  "tempfile",
 ]
 
@@ -319,19 +286,6 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
- "toml",
-]
-
-[[package]]
-name = "jails-prepare"
-version = "0.1.0"
-dependencies = [
- "jails-codec-derive",
- "jails-java",
- "jails-project",
- "jails-protocol",
- "jails-spec",
- "jails-support",
 ]
 
 [[package]]
@@ -341,9 +295,7 @@ dependencies = [
  "clap",
  "jails-codemod",
  "jails-java",
- "jails-protocol",
  "jails-spec",
- "jails-state",
  "jails-support",
  "jails-testkit",
  "serde",
@@ -354,29 +306,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "jails-protocol"
-version = "0.1.0"
-dependencies = [
- "clap",
- "jails-codec-derive",
- "jails-codemod",
- "jails-java",
- "jails-spec",
- "jails-support",
-]
-
-[[package]]
 name = "jails-report"
 version = "0.1.0"
 dependencies = [
  "clap",
- "jails-commit",
- "jails-generate",
  "jails-java",
  "jails-project",
- "jails-protocol",
  "jails-spec",
- "jails-state",
  "jails-support",
 ]
 
@@ -385,15 +321,6 @@ name = "jails-spec"
 version = "0.1.0"
 dependencies = [
  "clap",
- "jails-java",
- "jails-support",
-]
-
-[[package]]
-name = "jails-state"
-version = "0.1.0"
-dependencies = [
- "jails-protocol",
  "jails-support",
 ]
 

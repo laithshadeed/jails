@@ -259,18 +259,13 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation, kind: Kind) -> Res
     })
 }
 
-/// Add one projection, with the arguments it carries.
-///
-/// Separate from [`set_marker`] because only this direction can take an
-/// argument: removing `use search(fields: [...])` names the projection, not
-/// its fields.
 /// Add every facet an entity does not already carry, as one transition.
 ///
 /// **A scaffold over an existing record is an addition**, the same way one
 /// more field is: `g record Post` then `g scaffold Post` asks for the four
 /// projections the record has not got, and refusing it as "already declared
-/// with a different shape" made the two commands unusable in the order a
-/// reader would type them.
+/// with a different shape" would make the two commands unusable in the order
+/// a reader would type them.
 pub(super) fn add_facets(
     source: &str,
     entity: &jails_model::Entity,
@@ -313,7 +308,7 @@ pub(super) fn add_facets(
 /// **A widened enum is an addition, exactly as a new facet is.** `g enum
 /// Status OPEN CLOSED` then `g enum Status OPEN CLOSED PENDING` is how a
 /// reader adds a constant, and refusing it as "already declared with a
-/// different shape" left no command that could -- the only advice was to
+/// different shape" would leave no command that can, only the advice to
 /// hand-edit `.jails/model.jdl`.
 ///
 /// The accepted constants must be a *prefix* of the request. A Java enum's
@@ -330,7 +325,7 @@ pub(super) fn widen_enum(
     }
     // **A constant that left is refused here, in the compiler's words.** The
     // frontend sees the narrowing first, so letting it through to be caught
-    // during lowering was not an option -- and writing the sentence twice is
+    // during lowering is not an option -- and writing the sentence twice is
     // how two refusals for one situation come to disagree.
     let removed = entity
         .enum_constants
@@ -388,6 +383,11 @@ fn marker_of(facet: Facet) -> Option<&'static str> {
     }
 }
 
+/// Add one projection, with the arguments it carries.
+///
+/// Separate from [`set_marker`] because only this direction can take an
+/// argument: removing `use search(fields: [...])` names the projection, not
+/// its fields.
 fn set_projection(
     source: &str,
     entity_java_name: &str,

@@ -1,25 +1,18 @@
 //! A scratch directory nothing else can be handed, and that cleans up after
 //! itself.
 //!
-//! ## Why this is not four lines of `create_dir_all`
-//!
-//! It was, and the four lines were wrong in both halves. The name came from a
-//! process id plus a nanosecond timestamp, which is not unique: two threads in
-//! one process read the same nanosecond, and `create_dir_all` -- whose whole
-//! contract is that an existing directory is *success* -- happily handed both
-//! of them the same tree. The second `jails g cli Admin` then failed with
-//! "already exists" over the first one's files. It reproduced about once in
-//! five full-workspace runs.
-//!
 //! [`tempfile`] creates the directory atomically with OS randomness in the
 //! name, so exclusivity is the filesystem's guarantee rather than a hope about
-//! clock resolution.
+//! clock resolution. A name built from a process id plus a nanosecond
+//! timestamp is not unique -- two threads in one process can read the same
+//! nanosecond -- and `create_dir_all`, whose whole contract is that an
+//! existing directory is *success*, hands both of them the same tree.
 //!
 //! ## The three rules
 //!
 //! - **Never claim a directory that already exists.** `reserve` cannot: it asks
 //!   the OS for a fresh one. A caller reaching for `create_dir_all` to "make
-//!   sure" the scratch root is there has reintroduced the bug above.
+//!   sure" the scratch root is there has reintroduced that race.
 //! - **`Drop` removes only what `tempfile` returned**, never a path assembled
 //!   by hand, so a guard can never delete a directory it did not create.
 //! - **Cleanup failure is reported on the explicit path.** `Drop` cannot return
@@ -101,7 +94,7 @@ mod tests {
     use super::*;
     use std::fs;
 
-    /// The property the old pid-plus-timestamp naming did not have.
+    /// Two reservations never share a tree.
     #[test]
     fn two_reservations_with_one_prefix_are_different_directories() {
         let first = ScratchDir::in_temp("jails-scratch-test").unwrap();
@@ -113,8 +106,8 @@ mod tests {
     }
 
     /// A directory that is already there is never adopted, and never removed.
-    /// `create_dir_all` treated "it exists" as success, which is exactly how
-    /// one test came to be handed another's tree.
+    /// `create_dir_all` treats "it exists" as success, which is how one test
+    /// would be handed another's tree.
     #[test]
     fn an_existing_directory_is_neither_reused_nor_removed() {
         let parent = ScratchDir::in_temp("jails-scratch-parent").unwrap();

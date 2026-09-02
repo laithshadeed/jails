@@ -1,10 +1,8 @@
-//! The `doctor` checks a canonical project can answer and a legacy one cannot.
+//! The `doctor` checks over a canonical project's managed tree.
 //!
-//! `doctor`'s managed-output checks read `.jails/ledger.toml`. A canonical
-//! project has no ledger, so on one of those `jails doctor` reported *nothing*
-//! about the tree it generates -- an edited file under `.jails/generated` was
-//! invisible, and the report still ended `all clear`. Silence about a question
-//! nobody can see you failed to ask is the worst answer available.
+//! An edited or deleted file under `.jails/generated` must not be invisible
+//! to a report that ends `all clear`: silence about a question nobody can see
+//! you failed to ask is the worst answer available.
 //!
 //! Three questions, each answered from the lock rather than from a fresh
 //! render, for `managed_drift`'s reason: a merge deliberately preserves reader
@@ -15,9 +13,7 @@
 //!   one is gone -- "restore it or eject its implementation boundary; nothing
 //!   was written" -- so the project cannot converge until somebody acts.
 //! - **Has one been changed?** `Warn`, and deliberately not a fault: the merge
-//!   preserves the edit and carries it forward. Checked by editing a generated
-//!   record, adding a field, and confirming the hand-written line survived the
-//!   re-render.
+//!   preserves the edit and carries it forward.
 //! - **Does the model declare something the lock has not accepted?** `Warn`.
 //!   That is the ordinary state between `g` and `sync`.
 //!
@@ -86,8 +82,7 @@ fn collect() -> Result<Vec<Check>> {
 
     // A deleted managed file is a `Fail` because `sync` refuses while it is
     // gone -- "restore it or eject its implementation boundary; nothing was
-    // written" -- so the project cannot converge until somebody acts. Measured
-    // against the binary, not assumed from the design.
+    // written" -- so the project cannot converge until somebody acts.
     checks.push(match missing.is_empty() {
         true => Check::new(
             Status::Ok,
@@ -106,10 +101,9 @@ fn collect() -> Result<Vec<Check>> {
     });
 
     // An *edited* one is not a fault at all: the merge preserves it and the
-    // next model change carries it forward, which this was checked against by
-    // adding a field and confirming the hand-written line survived. It is a
-    // `Warn` for `template_override_checks`' reason -- a supported thing to be
-    // doing, and the reader is entitled to know they are doing it.
+    // next model change carries it forward. It is a `Warn` for
+    // `template_override_checks`' reason -- a supported thing to be doing,
+    // and the reader is entitled to know they are doing it.
     checks.push(match edited.is_empty() {
         true => Check::new(
             Status::Ok,
@@ -330,12 +324,11 @@ fn published_history(
 
 /// Does every column a stored entity's Java carries exist in its migrations?
 ///
-/// `schema_lineage`'s finding, on the canonical path. `doctor` answers "are
-/// these the bytes jails wrote"; it did not answer "is this project
-/// coherent", and that gap is what let a torn transaction and a half-carried
-/// rename both end green -- the Java carried a component, the schema history
-/// did not, every file was byte-identical to what jails wrote, and only a
-/// query at runtime found it.
+/// "Are these the bytes jails wrote" is a different question from "is this
+/// project coherent": a torn transaction or a half-carried rename leaves the
+/// Java carrying a component the schema history does not, with every file
+/// byte-identical to what jails wrote, and only a query at runtime would
+/// find it.
 ///
 /// The SQL reader is `jails-report`'s, not a second one. Two readers of the
 /// handful of statements the compiler emits would drift, and the drift would

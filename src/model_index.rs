@@ -78,11 +78,7 @@ pub(crate) fn add(
     let suffix = &hex(&sha256(signature.as_bytes()))[..12];
     let index_id = IndexId::parse(format!("idx_{model_label}_{suffix}")).map_err(Failure::Told)?;
     // v1's `field_list` reads `index [ user_id, created_at desc ]` and allows
-    // only `@id` and `@map`. The pre-v1 draft took parentheses and named the
-    // index with `@as`, and `.jails/model.toml` stated it as a table; picking
-    // between them used to be a test on the source rather than on the
-    // filename, because a `.jdl` file held either syntax. It no longer does,
-    // and neither of the other two accepts an edit.
+    // only `@id` and `@map`.
     let member = format!(
         "  index [{}] @id({})",
         canonical.join(", "),

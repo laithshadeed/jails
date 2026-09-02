@@ -41,21 +41,17 @@ mod model_rename;
 mod model_resource;
 mod model_setting;
 mod model_status;
-mod model_upgrade;
 mod modernize;
 mod new;
 mod parse_error;
 mod plan_command;
 mod rename_source;
-mod schema_command;
-mod sql_command;
 mod template_macro;
 mod tool_command;
 
 // What the CLI accepts lives in `cli`; what it does is the match below.
 pub(crate) use cli::{
-    Cli, Command, Declare, Invocation, Output, ResourceCommand, ResourceIndexCommand, SqlCommand,
-    Undeclare,
+    Cli, Command, Declare, Invocation, Output, ResourceCommand, ResourceIndexCommand, Undeclare,
 };
 pub(crate) use facade::*;
 
@@ -103,23 +99,6 @@ fn main() -> std::process::ExitCode {
         Command::NewCli(args) => new::new_cli(&new::cli_request(&args, debug, pretend)),
         Command::App { command } => app::run(command, invocation),
         Command::Model { command } => model_command::run(command, invocation),
-        Command::Sql { command } => sql_command::run(command, invocation),
-        Command::Introspect { command } => schema_command::introspect(command, invocation),
-        Command::Pull {
-            datasource,
-            schema,
-            table,
-            into_slice,
-            services,
-        } => schema_command::pull(
-            &datasource,
-            &schema,
-            table.as_deref(),
-            into_slice.as_deref(),
-            services,
-            invocation,
-        ),
-        Command::Schema { command } => schema_command::schema(command, invocation),
         Command::Editor { command } => editor_command::run(command, invocation),
         Command::Contract { command } => contract_command::run(command, invocation),
         Command::Request { request } => tool_command::request(
@@ -284,11 +263,11 @@ fn main() -> std::process::ExitCode {
             migrate,
             datasource,
         } => {
-            // The migration flags are the legacy engine's vocabulary:
-            // canonical removal is model subtraction plus an explicit storage
-            // policy, and `--storage drop` is the confirmation they stood in
-            // for. `--force` survives with a narrower meaning -- the reader
-            // saying that edits to the files being removed may go with them.
+            // Canonical removal is model subtraction plus an explicit storage
+            // policy, so the migration flags are refused and `--storage drop`
+            // is the confirmation. `--force` has a narrower meaning -- the
+            // reader saying that edits to the files being removed may go with
+            // them.
             let invocation = invocation.forcing(force);
             let result = model_command::ensure_owned(invocation.clone()).and_then(|()| {
                 model_destroy::run(
@@ -306,10 +285,8 @@ fn main() -> std::process::ExitCode {
             return dispatch::finish_invocation(result, failure_output, &failure_path);
         }
         Command::Resource { command } => match command {
-            ResourceCommand::Status {
-                selector,
-                datasource,
-            } => schema_command::resource_status(&selector, datasource.as_deref(), invocation),
+            ResourceCommand::Status { selector } => model_command::ensure_owned(invocation.clone())
+                .and_then(|()| model_status::run(&selector, None, invocation)),
             ResourceCommand::Revive { selector, table } => {
                 model_command::ensure_owned(invocation.clone())
                     .and_then(|()| model_destroy::revive(selector, table, invocation))
@@ -328,7 +305,6 @@ fn main() -> std::process::ExitCode {
             ResourceCommand::Repair {
                 selector,
                 strategy: _,
-                datasource,
             } => {
                 if selector.is_some() {
                     Err(jails_support::Failure::Told(
@@ -336,7 +312,7 @@ fn main() -> std::process::ExitCode {
                     ))
                 } else {
                     model_command::ensure_owned(invocation.clone())
-                        .and_then(|()| model_command::repair(datasource.as_deref(), invocation))
+                        .and_then(|()| model_command::repair(invocation))
                 }
             }
             ResourceCommand::Index { command } => model_index::run(command, invocation),
@@ -371,21 +347,14 @@ fn main() -> std::process::ExitCode {
         Command::Notes { tag, json } => inspect::notes(tag.as_deref(), json),
         Command::Routes { json } => inspect::routes(json),
         Command::Beans { pattern, json } => inspect::beans(pattern.as_deref(), json),
-        Command::Migrate {
-            command,
-            check,
-            no_start,
-        } => match command {
-            Some(cli::MigrateCommand::Lint { manifest }) => {
-                schema_command::migrate_lint(manifest.as_deref(), invocation)
-            }
-            None if !check => Err(
+        Command::Migrate { check, no_start } => match () {
+            () if !check => Err(
                 "`--check` is the only mode jails has: it applies the migrations to a \
                      scratch database and drops it. Applying them for real is Flyway's job, \
                      which the application does at startup.\n\nfix: run `jails migrate`."
                     .into(),
             ),
-            None => migrate::check(no_start, debug),
+            () => migrate::check(no_start, debug),
         },
         Command::Kafka { command, no_start } => kafka::kafka(command, no_start, debug),
         Command::Lint => lint::lint(),
@@ -455,9 +424,8 @@ fn main() -> std::process::ExitCode {
             // `--fast` can run anything, and that is a dependency in the
             // reader's POM -- so it is an owned entity installed by an
             // ordinary transition, not a side effect of how the tests were
-            // run. V1 spliced it from inside `run::test`, recorded nothing,
-            // and left no way to take it back out; `jails remove fast-test`
-            // is that way. Idempotent, so every later `--fast` writes nothing.
+            // run, and `jails remove fast-test` takes it back out. Idempotent,
+            // so every later `--fast` writes nothing.
             let options = run::TestOptions {
                 scope: scope.into(),
                 compile: compile.into(),

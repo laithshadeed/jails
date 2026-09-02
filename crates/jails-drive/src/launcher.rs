@@ -1,8 +1,8 @@
 //! `jails test --fast`: run already-compiled tests without starting Maven.
 //!
-//! `plan.md` §10.2 step 1. `mvn test` on one method costs about 2.5 s here and
-//! almost none of it is the test: it is Maven resolving a reactor, reading a
-//! pom, running a lifecycle and forking Surefire. When the classes are already
+//! `mvn test` on one method is almost none of it the test: it is Maven
+//! resolving a reactor, reading a pom, running a lifecycle and forking
+//! Surefire. When the classes are already
 //! compiled — the inner loop, where you re-run one test to read its output
 //! again — none of that has to happen. JUnit ships a launcher that takes a
 //! classpath and a selector, and that is all this is.
@@ -13,7 +13,7 @@
 //! worst outcome a test runner can produce: green over code that no longer
 //! exists. So this compares the newest `.java` under `src/` against the newest
 //! `.class` under `target/`, and when a source is newer it says so and hands
-//! the run back to `mvn`. §10.2's rule, in one place: **every fast path falls
+//! the run back to `mvn`. The rule, in one place: **every fast path falls
 //! back loudly.**
 //!
 //! `jails check` stays `mvn clean verify` and is not touched by any of this.
@@ -151,8 +151,8 @@ pub(crate) fn test_classpath(root: &Path, debug: bool) -> Result<TestClasspath> 
 
 /// Whether a cached `dependency:build-classpath` answer can still be believed.
 ///
-/// **One owner, because there are two callers and they had drifted into two
-/// copies of the same predicate** -- this one and the runtime classpath's.
+/// **One owner for both callers** -- this one and the runtime classpath's --
+/// so the predicate cannot drift into two copies.
 ///
 /// **An empty file is not a cached answer.** `dependency:build-classpath`
 /// creates its output before it has resolved anything, so a Maven run that

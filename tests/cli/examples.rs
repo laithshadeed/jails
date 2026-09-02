@@ -1,9 +1,9 @@
 //! Completeness and real-toolchain gates for checked-in example manifests.
 //!
-//! The large production-style examples retain their shared service gate in
-//! `app.rs`. This module owns the two previously unheld examples and makes the
-//! checked-in cost policy exhaustive, so adding a manifest without choosing a
-//! tier fails an offline test.
+//! The large production-style examples have their shared service gate in
+//! `app.rs`. This module owns the remaining examples and makes the checked-in
+//! cost policy exhaustive, so adding a manifest without choosing a tier fails
+//! an offline test.
 
 use super::*;
 use std::collections::BTreeSet;
@@ -102,26 +102,14 @@ fn example_manifest_policy_covers_every_checked_in_manifest() {
 
 /// A broken container engine cannot touch what `jails new --app` produces.
 ///
-/// **The original property was weaker, and it is worth keeping the history.**
-/// `jails new --app` publishes by rename, so an error thrown out of the
-/// manifest apply discarded the whole scratch tree. A compose service that
-/// would not start -- an ordinary state on a machine where something else
-/// already holds `:5432` -- printed `ledger create`, exited 1, and left no
-/// directory: no `jails:` line, no project, and no way to tell which of the
-/// two had happened. The fix made the effect report *against a project that
-/// exists*, so this test asserted an exit of 1 beside a complete tree.
-///
-/// A canonical project has no post-commit effects at all -- the model is
-/// compiled and its exact plan executed, and nothing external is started, which
-/// is the same reason `sync` refuses `--no-start` by name. So the failure this
-/// was written for cannot occur, and the guarantee is now the stronger one:
-/// the engine being unusable changes nothing about what is generated.
+/// The model is compiled and its exact plan executed, and nothing external is
+/// started -- the same reason `sync` refuses `--no-start` by name -- so the
+/// engine being unusable changes nothing about what is generated.
 #[test]
 fn a_failed_post_commit_effect_reports_against_a_project_that_exists() {
     let parent = temp_dir("new-app-effect-failure");
     fs::create_dir_all(&parent).unwrap();
-    // A compose engine that refuses everything, so the effect fails for a
-    // reason that has nothing to do with what was generated.
+    // A compose engine that refuses everything.
     let tools = parent.join("tools");
     fs::create_dir_all(&tools).unwrap();
     let docker = tools.join("docker");
@@ -257,10 +245,8 @@ fn generated_unheld_gradle_example() -> &'static PathBuf {
 }
 
 fn assert_second_apply_is_a_noop(root: &Path) {
-    // The first revisit may upgrade durable bookkeeping (for example sealing
-    // newly published migrations). The executable project is the example's
-    // output contract; `.jails` is the engine's versioned state, and is tested
-    // by its own protocol/ledger gates.
+    // The executable project is the example's output contract; `.jails` is
+    // versioned bookkeeping with its own gates.
     let generated_tree = || {
         snapshot_tree(root)
             .into_iter()
@@ -325,43 +311,18 @@ fn unheld_maven_example_manifest_passes_real_verification() {
     assert_eq!(
         maven_report_summary(root, "surefire-reports"),
         MavenReportSummary {
-            // **These are the canonical compiler's numbers, and they are
-            // lower than the legacy engine's 21 and 57.** The difference is
-            // not lost checks but a different shape: canonical emits an
-            // `HttpPort` for an entity where legacy emitted a controller and
-            // its test, and it has no per-operation use-case unit test because
-            // an operation *is* its port plus a JDBC adapter, and the adapter
-            // is proved against a real database below rather than against a
-            // mock here.
-            //
-            // What is pinned here is one controller test per routed operation
-            // -- `SendMessage`, `MarkAsRead`, `Conversation`, `UnreadForEmail`
-            // and `EnsureUser` -- each issuing a real request through the
-            // dispatcher with a body built from the model's own JSON samples.
-            // Canonical emitted the adapters and nothing that proved them
-            // until this pin was written.
-            //
-            // 15 -> 17 reports, 33 -> 35 tests: `MessageControllerTest` and
-            // `UserControllerTest`, from the `http` facet finally serving the
-            // resource it declares. It emitted a port nothing implemented, so
-            // the sentence above about canonical emitting an `HttpPort` "where
-            // legacy emitted a controller and its test" no longer describes a
-            // difference in shape -- it described a missing endpoint.
-            //
-            // 17 -> 18 reports, 35 -> 42 tests: `ArchitectureTest`, whose
-            // seven ArchUnit rules the compiler now emits for any model that
-            // serves a resource. It is the one generated test that checks the
-            // *reader's* code as well as jails' own, which is why it counts
-            // for seven where a controller test counts for one.
-            //
-            // 18 -> 20 reports, 42 -> 46 tests: `MessageDtoTest` and
-            // `UserDtoTest`, two cases each. A scaffold declares the request
-            // boundary now, so every resource ships the request and response
-            // records and the test that holds them to what a caller supplies.
-            // 46 -> 48: the error model gained the two outcomes a transition
-            // can have when its `If-Match` does not match -- 412 for a version
-            // that moved on, 404 for a row that is not there. Both reached the
-            // client as a 500 before, which is what alerting pages on.
+            // What is pinned: one controller test per routed operation
+            // (`SendMessage`, `MarkAsRead`, `Conversation`, `UnreadForEmail`,
+            // `EnsureUser`), each issuing a real request through the
+            // dispatcher with a body built from the model's own JSON samples;
+            // `MessageControllerTest` and `UserControllerTest` for the `http`
+            // facet's resources; `ArchitectureTest`, whose seven ArchUnit
+            // rules check the reader's code as well as jails' own; and
+            // `MessageDtoTest` and `UserDtoTest`, two cases each, holding the
+            // request boundary to what a caller supplies. There is no
+            // per-operation use-case unit test: an operation is its port plus
+            // a JDBC adapter, and the adapter is proved against a real
+            // database below rather than against a mock here.
             reports: 20,
             tests: 48,
             failures: 0,
@@ -372,34 +333,16 @@ fn unheld_maven_example_manifest_passes_real_verification() {
     assert_eq!(
         maven_report_summary(root, "failsafe-reports"),
         MavenReportSummary {
-            // **Failsafe ran nothing at all before this.** The canonical
-            // path never added the plugin, so every `*IT` it emitted -- the
-            // presence adapter's included -- sat in a project that could not
-            // run it while `mvn verify` reported success. That is the exact
-            // failure `CLAUDE.md` records for the legacy engine, reintroduced.
-            //
-            // The four here are one per JDBC query adapter plus the presence
-            // adapter's three cases. They store a row through the entity's own
-            // repository and read it back through the operation, against the
-            // real PostgreSQL `add db` wires -- which is the only place a
-            // quoted join alias, a foreign key, a `timestamptz` bind and
-            // `cast(:x as text) is null` mean anything. Writing them found
-            // three defects nothing else could: a `--via` join that reached no
-            // emitter, an `Instant` the driver cannot infer a type for, and a
-            // `generated always as identity` key that made `save` impossible.
-            //
-            // 4 -> 7 reports, 6 -> 9 tests: the write half. `SendMessage` and
-            // `EnsureUser` are commands and `MarkAsRead` is a transition, and
-            // their `insert ... returning` and `update ... returning` were
-            // asserted by nothing -- so only the repository adapter's
-            // parameters went through `bound_value`, and an enum reached
-            // PostgreSQL raw. `Can't infer the SQL type to use for an instance
-            // of MessageDirection`, from a statement that compiled.
-            //
-            // 7 -> 10 reports, 9 -> 13 tests: three declared relations gained
-            // an `AssociationIT` each. A foreign key is the one thing in a
-            // generated project no unit test can observe, and the catalogue
-            // half of that proof is what catches a mapping written backwards.
+            // Failsafe must run every `*IT` the compiler emits; a project that
+            // cannot run them reports success over nothing. The ITs are one
+            // per JDBC query adapter, one per write operation (`SendMessage`,
+            // `EnsureUser`, `MarkAsRead`), the presence adapter's three cases,
+            // and an `AssociationIT` per declared relation. They store a row
+            // through the entity's own repository and read it back through the
+            // operation, against the real PostgreSQL `add db` wires -- the
+            // only place a quoted join alias, a foreign key, a `timestamptz`
+            // bind, an enum parameter's SQL type and `cast(:x as text) is
+            // null` mean anything.
             reports: 10,
             tests: 13,
             failures: 0,
@@ -409,29 +352,21 @@ fn unheld_maven_example_manifest_passes_real_verification() {
     );
 }
 
-/// The pinned Gradle 8.5 / JDK 21 pair, **located rather than inherited**.
+/// The pinned Gradle 8.5 / JDK 21 pair, located rather than inherited, so the
+/// test runs inside the ordinary suite instead of needing the gate re-entered
+/// under `mise x java@21 gradle@8.5`.
 ///
-/// This test used to require the whole gate to be re-entered under
-/// `mise x java@21 gradle@8.5`, because it read `gradle` and `JAVA_HOME`
-/// straight off the ambient environment. That cost a second `cargo test`
-/// invocation running exactly one test, serialised after everything else --
-/// 29.15s measured, against a cargo overhead of 0.1s, so essentially all of
-/// it was the Gradle build waiting its turn. Located here instead, the test
-/// runs inside the ordinary suite and those 29s overlap a 299s test phase
-/// rather than following it.
-///
-/// The ambient pair is still honoured first, so running this test by hand
-/// under `mise x` behaves exactly as it did. `mise where` is the fallback,
-/// and mise is not an extra dependency: it is what invokes the gate.
+/// The ambient pair is honoured first, so running this test by hand under
+/// `mise x` works. mise is the fallback and not an extra dependency: it is
+/// what invokes the gate.
 fn pinned_gradle_toolchain() -> Option<(PathBuf, Option<PathBuf>)> {
     if pinned_gradle_reports_eight_five(Command::new("gradle")) {
         return Some((PathBuf::from("gradle"), None));
     }
-    // `mise which --tool=` resolves the executable itself. `mise where` was
-    // the obvious call and is the wrong one: it answers with the *install
-    // root*, and the layout under it is not uniform -- Gradle 8.5 unpacks to
-    // `<root>/gradle-8.5/bin/gradle`, so a joined `bin/gradle` does not exist
-    // and the probe silently reported the toolchain missing.
+    // `mise which --tool=` resolves the executable itself. `mise where`
+    // answers with the install root, and the layout under it is not uniform
+    // -- Gradle 8.5 unpacks to `<root>/gradle-8.5/bin/gradle`, so a joined
+    // `bin/gradle` does not exist.
     let located = |tool: &str, exe: &str| {
         let output = Command::new("mise")
             .args(["which", exe, &format!("--tool={tool}")])

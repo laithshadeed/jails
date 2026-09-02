@@ -166,9 +166,8 @@ pub(super) fn link(
                         entity_fields,
                         linker,
                     );
-                    // `.jails/model.toml` spells only the flat `order_by`
-                    // list, which has nowhere to put a direction, so it folds
-                    // in as ascending. A source that spells the rich form
+                    // The flat `order_by` list has nowhere to put a
+                    // direction, so it folds in as ascending. A source that spells the rich form
                     // wins.
                     if semantics.order.is_empty() {
                         semantics.order = order_by
@@ -238,11 +237,10 @@ pub(super) fn link(
                         &events,
                         linker,
                     );
-                    // `.jails/model.toml` spells only the flat `sets`/`yields`
-                    // pair, so it is folded into the rich fields here and the
-                    // linked transition keeps one home per fact. A source that
-                    // spells the rich form wins: JDL v1 fills both, and its
-                    // `sets` projection is the one that was wrong.
+                    // The flat `sets`/`yields` pair is folded into the rich
+                    // fields here, so the linked transition keeps one home
+                    // per fact. A source that
+                    // spells the rich form wins.
                     if semantics.update.is_empty() {
                         semantics.update = sets;
                     }
@@ -285,18 +283,15 @@ pub(super) fn link(
                     linker,
                 );
                 // **The flat spelling folds into the rich one, here.** `fields`
-                // is `.jails/model.toml`'s and the pre-v1 draft's way of saying
-                // what an event carries, and it can only name fields of the
+                // is the flat way of saying what an event carries, and it can only name fields of the
                 // target entity. `semantics.parameters` can also carry a
                 // `Typed` component -- an event's own identity, a timestamp --
                 // which the flat form cannot express at all.
                 //
                 // Emitters read the rich form only, so the two cannot disagree
-                // about a payload. This is the last of `audit.md` A3.9: the
-                // same fold transitions and queries already got, and the one
-                // that was still losing data, because an emitter reading
-                // `fields` renders an empty payload for an event declared with
-                // typed components.
+                // about a payload. The same fold transitions and queries get;
+                // without it an emitter reading `fields` renders an empty
+                // payload for an event declared with typed components.
                 if semantics.parameters.is_empty() {
                     semantics.parameters = fields
                         .iter()
@@ -377,8 +372,8 @@ pub(super) fn link(
 /// names a component, and `?` on a parameter already means a presence-
 /// sensitive *filter* and is legal only on a query. So `required` on a
 /// field-sourced parameter is not something an author states -- it is a fact
-/// about the field, and reading it from the declaration made
-/// `displayName:string?` render an `Input` with a plain `String` and a
+/// about the field, and reading it from the declaration renders
+/// `displayName:string?` as an `Input` with a plain `String` and a
 /// `requireNonNull`: a caller forced to supply a value for a column that
 /// permits none. A typed parameter has no field to read and keeps what it was
 /// given.

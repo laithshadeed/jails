@@ -2,24 +2,14 @@
 //!
 //! Every other module *plans*: it returns a `Change`, a `Vec<Artifact>`, a
 //! spliced `String`. This one is where a plan becomes bytes on disk, and it is
-//! the only place `fs::write` is allowed to appear.
+//! the only place `fs::write` is allowed to appear. `tests/architecture/`
+//! makes that a boundary rather than a convention by failing when `fs::write`
+//! appears anywhere else: a convention leaves a hole exactly where a caller
+//! writes past the collision check.
 //!
-//! ## Why one module rather than a rule everybody remembers
-//!
-//! `write_new_file` looked like the single choke point and was not.
-//! `src/add.rs` wrote a capability file with a bare `fs::write`, straight past
-//! the collision check, and `plan.md` §11 names the consequence exactly: a
-//! ledger hung off `write_new_file` alone has a hole precisely where a
-//! capability updates a file it previously wrote. That is not a bug anybody
-//! introduced carelessly -- it is what happens when "route writes through the
-//! helper" is a convention instead of a boundary. `tests/architecture/`
-//! makes it a boundary by failing when `fs::write` appears anywhere else.
-//!
-//! ## The four ways to write, and why they are different
-//!
-//! The distinction is *what the caller believes about the file already there*,
-//! because that belief is the whole difference between a safe generator and
-//! one that eats work:
+//! The writing verbs differ in *what the caller believes about the file
+//! already there*, because that belief is the whole difference between a safe
+//! generator and one that eats work:
 //!
 //! - [`create`] -- it must not exist. A generator refusing to overwrite is the
 //!   property `g scaffold` and `g record` are built on.
@@ -37,36 +27,16 @@
 //! A caller that cannot say which of the four it means does not yet know what
 //! it is doing, which is the point of making it choose.
 //!
-//! ## Removing, and why it took so long to get a verb
+//! The removing verbs carry the same kind of belief. `fs::remove_file` is as
+//! much a mutation as `fs::write`, so the gate counts it too:
 //!
-//! For a long time this module could only write, so every caller that had to
-//! *remove* something reached for `fs::remove_file` directly — twenty-nine
-//! sites across generators, capabilities, `rename` and `app apply`. plan.md
-//! §R6.4 is what forced the count to be taken: the gate banned one spelling
-//! and read green while a dozen other calls mutated projects through other
-//! names.
-//!
-//! The verbs below close that. They are not conveniences; each carries the
-//! same kind of belief the writing verbs do:
-//!
-//! - [`remove`] — jails wrote this file and is taking it back. Absence is
+//! - [`remove`] -- jails wrote this file and is taking it back. Absence is
 //!   success, because `destroy` after a manual delete is not an error.
-//! - [`ensure_directory`] — the parent chain for something about to be
+//! - [`ensure_directory`] -- the parent chain for something about to be
 //!   written, made explicit at the call site rather than implied.
 //!
 //! What is deliberately *not* here is a recursive delete of anything a user
 //! might own. A caller that wants a tree gone has to say so path by path.
-//!
-//! ## Six verbs that used to be here
-//!
-//! `put_bytes`, `move_file`, `copy_into_scratch`, `remove_managed_tree`,
-//! `remove_managed_directory` and `atomically` are gone. They were the V1
-//! spellings of moving, copying and rewriting `.jails/` bookkeeping, and each
-//! of those is the executor's job now: `jails-commit`'s `activate` moves the
-//! bytes and its `store` owns the ledger. Nothing had called any of them for
-//! some time, and nothing said so, because `pub` on a library item tells the
-//! compiler another crate might — which is the whole reason this crate's API
-//! is closed to `pub(crate)` by default.
 
 use crate::Result;
 use std::fs;
@@ -184,7 +154,7 @@ pub fn put(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> {
 ///
 /// The mode is only applied on Unix. Windows has no permission bit to set and
 /// runs `gradlew.bat` instead, so there is nothing to do and nothing to fail.
-pub fn put_executable(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> {
+pub(crate) fn put_executable(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<()> {
     let (path, contents) = (path.as_ref(), contents.as_ref());
     ensure_parent(path)?;
     fs::write(path, contents)
@@ -506,18 +476,16 @@ fn monotonic_nonce() -> u64 {
 
 /// The build tool's output directory, which is not the project.
 ///
-/// **Derived output is deliberately outside the transaction.** `target/` and
-/// `build/` are Maven's and Gradle's, nothing in the ledger claims a byte of
-/// them, and a transition that rewrote one would be claiming ownership of
-/// something jails does not own. `dispatch::drop_compiled_shadows` says the
-/// same thing from the other end: the compiled shadow of a deleted source has
-/// to go, and it goes *after* the commit rather than inside it.
+/// Derived output is deliberately outside the transaction. `target/` and
+/// `build/` are Maven's and Gradle's, no plan claims a byte of them, and a
+/// transition that rewrote one would be claiming ownership of something jails
+/// does not own; the compiled shadow of a deleted source goes *after* the
+/// commit rather than inside it.
 ///
-/// So these two verbs exist to make that claim checkable instead of implied.
-/// A `remove` on a path under `target/` and a `remove` on a path under `src/`
-/// are the same call today, which is why the R6.4 gate had to count both;
-/// naming the first separately is what lets it stop counting, and the refusal
-/// below is what stops the name being a lie. `pending.md` §7.7.
+/// The two verbs below exist to make that claim checkable instead of implied:
+/// a `remove` under `target/` is named separately from one under `src/` so
+/// the architecture gate can exempt it, and the refusal here is what stops the
+/// name being a lie.
 fn derived(path: &Path) -> Result<()> {
     if path
         .components()
@@ -552,8 +520,8 @@ pub fn ensure_derived_directory(path: impl AsRef<Path>) -> Result<()> {
 /// Publish a completed tree by renaming it onto a destination that must be
 /// absent, then flushing the directory entry that now names it.
 ///
-/// This is what makes a new project "absent or complete" (plan.md §R6.5).
-/// Everything a `jails new` writes goes into a scratch sibling of the
+/// This is what makes a new project "absent or complete". Everything a
+/// `jails new` writes goes into a scratch sibling of the
 /// destination, so a download that fails, a template that refuses or a
 /// killed process leaves nothing behind for the reader to distinguish from a
 /// project — and the one step that makes it real is a rename, which the
@@ -720,23 +688,17 @@ mod tests {
 
 /// The staging tree, and the only way to write into it.
 ///
-/// **This exists so a claim can be checked rather than believed.** `jails new`
-/// writes ~33 files with no project to lock and no ledger to journal, which the
-/// R6.4 gate counted as mutations that bypass the executor -- and they are not.
-/// Every one lands inside a reserved scratch that is published by a single
-/// `rename` or discarded entire, which is the same guarantee the executor
-/// gives, bought the way this module's header describes.
-///
-/// What was missing was any way to *say* that. `root: &Path` is a path like any
-/// other, so nothing distinguished a write into the staging tree from a write
-/// into a live project, and the gate could only assume the worst. A function
-/// that takes a `Tree` is a function that cannot reach a published project --
-/// `Tree::inside` refuses a path outside it. `pending.md` §5.
+/// This exists so a claim can be checked rather than believed. `jails new`
+/// writes its files with no project to lock: every one lands inside a reserved
+/// scratch that is published by a single `rename` or discarded entire, which
+/// is the same guarantee the executor gives. A bare `root: &Path` cannot say
+/// that, so the architecture gate would have to assume the worst; a function
+/// that takes a `Tree` is a function that cannot reach a published project,
+/// because `Tree::inside` refuses a path outside it.
 ///
 /// It lives here rather than beside `jails new` because the generators write
-/// into it too: `generate::write_new_file` is called only from the publication
-/// path, and taking a `Tree` is what says so in the signature rather than in a
-/// comment. `pending.md` §7.7.
+/// into it too, and taking a `Tree` says so in the signature rather than in a
+/// comment.
 ///
 /// The verbs are `apply`'s, unchanged, and deliberately not the full set: a
 /// staging tree is jails' own, created empty moments earlier, so there is

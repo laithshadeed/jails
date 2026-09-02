@@ -1,10 +1,9 @@
 //! One row per `ComponentKind`: which fields it may, must and must not carry.
 //!
-//! **A table, and exhaustive over the enum.** The linker used to answer these
-//! questions inline, which meant a kind added without an arm was silently
-//! permissive — `on` accepted where it means nothing, a route ignored, a
-//! required reference not required. Here the compiler refuses to build until
-//! the new kind has a row.
+//! **A table, and exhaustive over the enum.** Answered inline, a kind added
+//! without an arm is silently permissive — `on` accepted where it means
+//! nothing, a route ignored, a required reference not required. Here the
+//! compiler refuses to build until the new kind has a row.
 //!
 //! `Presence` is three-valued for the same reason: `Optional` has to be a
 //! deliberate answer rather than the absence of one, or the table decays back
@@ -114,13 +113,10 @@ pub(super) fn validate_route(
     routes: &mut BTreeMap<String, String>,
     linker: &mut Linker,
 ) {
-    // **The two rules the `SourceUnit` linker had and this one did not.** A
-    // controller's request body is the `on` entity, and `GET`/`DELETE` do not
-    // carry one -- so `g controller Verify --method get --on Request` refused
-    // on the pre-v1 draft and silently emitted a body-bound `@GetMapping` once
-    // the same command went through a v1 component. Found by porting the
-    // draft's own test, which is the reason to port a test rather than delete
-    // it.
+    // **The same two rules the `SourceUnit` linker applies.** A controller's
+    // request body is the `on` entity, and `GET`/`DELETE` do not carry one, so
+    // `g controller Verify --method get --on Request` refuses rather than
+    // emitting a body-bound `@GetMapping`.
     //
     // **Above the `route` guard**, because a controller with no `route` member
     // still answers on one: `component::endpoint` defaults the method to `GET`

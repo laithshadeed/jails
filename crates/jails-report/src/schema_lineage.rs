@@ -1,11 +1,10 @@
 //! Which columns a resource's own migrations actually created.
 //!
-//! `doctor` answers "are these the bytes jails wrote". It did not answer "is
-//! this project coherent", and that gap is what let a torn transaction and a
-//! half-carried rename both end green: the Java carried a component, the
-//! schema history did not, and every file on disk was byte-identical to what
-//! jails wrote, so nothing had a reason to complain. Only a query at runtime
-//! found it.
+//! `doctor`'s other checks answer "are these the bytes jails wrote"; this one
+//! answers "is this project coherent". The two differ when the Java carries a
+//! component the schema history does not: every file on disk is byte-identical
+//! to what jails wrote, so nothing else has a reason to complain, and only a
+//! query at runtime would find it.
 //!
 //! **This reads only bytes jails published, verified by digest.** Every
 //! migration in the lineage is a lifecycle *seal*, and the seal carries the
@@ -20,160 +19,9 @@
 //! column list and reporting a project broken on the strength of it would be
 //! worse than the silence it replaces.
 
-use crate::diagnostic::{Check, Status};
-use crate::model::Project;
-use jails_protocol::entity::{EntityId, EntitySpec};
-use jails_protocol::lifecycle::ResourceState;
-use jails_state::compat::MachineState;
 use std::collections::BTreeSet;
 
-/// Compare each active resource's recorded components against the columns its
-/// own migration lineage declares.
-pub(crate) fn schema_lineage_checks(project: &Project) -> Vec<Check> {
-    let MachineState::Current(store) = jails_state::compat::read(project.root()) else {
-        return Vec::new();
-    };
-    let mut checks = Vec::new();
-    for lifecycle in &store.lifecycles {
-        let EntityId::Intent(id) = &lifecycle.entity else {
-            continue;
-        };
-        if !matches!(lifecycle.state, ResourceState::Active) {
-            continue;
-        }
-        let Some(table) = lifecycle.table.as_ref() else {
-            continue;
-        };
-        let EntitySpec::Intent(spec) = &lifecycle.last_spec else {
-            continue;
-        };
-        let Some(declared) = lineage_columns(project, lifecycle, table.table.as_str()) else {
-            continue;
-        };
-        let Some(expected) = expected_columns(project, id, spec) else {
-            continue;
-        };
-
-        let title = format!("schema {}", id.name);
-        let missing: Vec<&str> = expected
-            .iter()
-            .filter(|column| !declared.contains(*column))
-            .map(String::as_str)
-            .collect();
-        let extra: Vec<&str> = declared
-            .iter()
-            .filter(|column| !expected.contains(*column))
-            .map(String::as_str)
-            .collect();
-        if !missing.is_empty() {
-            checks.push(
-                Check::new(
-                    Status::Fail,
-                    title.clone(),
-                    format!(
-                        "`{}` has component(s) `{}` that table `{}` has no column for -- every \
-                         query against them fails at runtime",
-                        id.name,
-                        missing.join("`, `"),
-                        table.table.as_str()
-                    ),
-                )
-                .fix(format!(
-                    "jails resource field add {} <name>:<type> -- or restore the component list \
-                     the migrations describe",
-                    id.name
-                )),
-            );
-        }
-        if !extra.is_empty() {
-            checks.push(
-                Check::new(
-                    Status::Warn,
-                    title,
-                    format!(
-                        "table `{}` has column(s) `{}` that `{}` no longer declares",
-                        table.table.as_str(),
-                        extra.join("`, `"),
-                        id.name
-                    ),
-                )
-                .fix(format!(
-                    "jails resource field drop {} <name> --confirm-column <column>, or declare \
-                     the component again",
-                    id.name
-                )),
-            );
-        }
-    }
-    checks
-}
-
-/// The columns this resource's projection needs, as SQL names.
-fn expected_columns(
-    project: &Project,
-    id: &jails_protocol::entity::IntentId,
-    spec: &jails_protocol::declaration::IntentSpec,
-) -> Option<BTreeSet<String>> {
-    let fields = spec
-        .fields()
-        .iter()
-        .map(|field| field.projected())
-        .collect::<jails_support::Result<Vec<_>>>()
-        .ok()?;
-    let columns = jails_generate::sql::columns(
-        &fields,
-        project,
-        &project.package_named(jails_spec::spec::layout::DOMAIN, None),
-        &jails_generate::generate::lower_first(id.name.as_str()),
-    );
-    // A component jails cannot map to one column -- a project record reached
-    // through an association -- has no column to look for, so it is not
-    // evidence of anything either way.
-    Some(
-        columns
-            .iter()
-            .filter(|column| column.mapped())
-            .map(|column| column.name.clone())
-            .collect(),
-    )
-}
-
-/// Replay the lineage and return the column set it leaves, or `None` when
-/// anything in it is outside what jails writes.
-fn lineage_columns(
-    project: &Project,
-    lifecycle: &jails_protocol::lifecycle::ResourceLifecycleV1,
-    table: &str,
-) -> Option<BTreeSet<String>> {
-    let mut columns = BTreeSet::new();
-    let mut created = false;
-    for seal in &lifecycle.migrations {
-        let bytes = std::fs::read(project.root().join(seal.path.as_str())).ok()?;
-        if jails_support::identity::ObjectId::from_bytes(jails_support::codec::sha256(&bytes))
-            != seal.content_digest
-        {
-            // Already reported as a broken seal. Reading it would be reading
-            // something jails did not write.
-            return None;
-        }
-        let text = String::from_utf8(bytes).ok()?;
-        apply(&text, table, &mut columns, &mut created)?;
-    }
-    created.then_some(columns)
-}
-
-/// Fold one migration's statements into the column set.
-///
-/// Returns `None` for anything this reader does not recognise *about this
-/// table*, which is what keeps a hand-written or hand-edited lineage from
-/// producing a confident wrong answer.
-/// Fold migration texts, in order, into the column set for one table.
-///
-/// The canonical half of this check needs the same reader, and two readers of
-/// the statements jails emits would drift the way every duplicated reader in
-/// this repository has. `None` means the lineage is not readable -- a
-/// statement outside the handful the compiler writes, or no `create table` at
-/// all -- and unknown widens rather than accusing.
+/// `create table` at all -- and unknown widens rather than accusing.
 pub fn columns_from(migrations: &[&str], table: &str) -> Option<BTreeSet<String>> {
     let mut columns = BTreeSet::new();
     let mut created = false;
@@ -183,6 +31,11 @@ pub fn columns_from(migrations: &[&str], table: &str) -> Option<BTreeSet<String>
     created.then_some(columns)
 }
 
+/// Fold one migration's statements into the column set.
+///
+/// Returns `None` for anything this reader does not recognise *about this
+/// table*, which is what keeps a hand-written or hand-edited lineage from
+/// producing a confident wrong answer.
 fn apply(
     text: &str,
     table: &str,

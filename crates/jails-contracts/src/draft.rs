@@ -19,9 +19,9 @@
 //!
 //! `BuildFeature` is keyed by what a plugin *does*, never by its coordinate,
 //! because `jacoco-maven-plugin` is not a name Gradle resolves and keying by
-//! it filed a Gradle project's claim under a plugin it does not have. Adding a
+//! it files a Gradle project's claim under a plugin it does not have. Adding a
 //! variant is a compile error in the Gradle backend until that side exists,
-//! which is what replaced a run-time refusal for an unrecognised plugin.
+//! rather than a run-time refusal for an unrecognised plugin.
 
 use crate::ProjectPath;
 use jails_model::AppModel;
@@ -69,11 +69,6 @@ pub enum BuildFeature {
     Coverage,
     IntegrationTests,
     /// Spotless plus a pinned formatter.
-    ///
-    /// Keyed by what it does rather than by a plugin coordinate, for the
-    /// reason the other two are: `spotless-maven-plugin` is not a name Gradle
-    /// resolves, and keying by it files a Gradle project's claim under a
-    /// plugin it does not have.
     Formatting,
 }
 
@@ -214,11 +209,11 @@ pub enum DocumentIntent {
     /// Every generated root Maven must compile, as one intent.
     ///
     /// One intent rather than one per source set, because they land in one
-    /// `<plugin>`. A block per source set meant a full
+    /// `<plugin>`. A block per source set is a full
     /// `org.codehaus.mojo:build-helper-maven-plugin` declaration per set, and
-    /// a project with a main and a test root declared that plugin twice in one
-    /// `<plugins>`: Maven merges the executions, so both roots do compile, but
-    /// it warns `must be unique but found duplicate declaration` on every
+    /// a project with a main and a test root then declares that plugin twice
+    /// in one `<plugins>`: Maven merges the executions, so both roots compile,
+    /// but it warns `must be unique but found duplicate declaration` on every
     /// build. A warning that alarming on every build is how readers learn to
     /// stop reading warnings.
     EnsureMavenSourceRoots {
@@ -307,8 +302,8 @@ pub enum DocumentIntent {
     AdoptJava {
         source: ProjectPath,
         path: ProjectPath,
-        /// Exact bytes last rendered by the legacy generator. These are the
-        /// one-time BASE for moving live reader edits onto canonical output.
+        /// The exact bytes the source was last generated from: the one-time
+        /// BASE for moving live reader edits onto canonical output.
         base: Vec<u8>,
     },
 }

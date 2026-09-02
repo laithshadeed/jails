@@ -1,7 +1,7 @@
 //! What one operation kind means, per kind.
 //!
-//! Split from `operation.rs` by the boundary that file already had, made
-//! explicit. `semantics.rs` beside this resolves a *reference* -- a label to
+//! Split from `operation.rs` by what it knows. `semantics.rs` beside this
+//! resolves a *reference* -- a label to
 //! an entity, a name to a field, a string to a route. This says what a
 //! command, query, transition or event does with the references it was given.
 //! The two change for different reasons: a new reference form touches every
@@ -14,14 +14,12 @@ use super::*;
 ///
 /// One value rather than two parameters because they are always passed
 /// together and always derived from each other -- and because splitting `path`
-/// back apart to recover `label` is the re-derivation this crate spends its
-/// doc comments warning about.
+/// back apart to recover `label` would be a re-derivation.
 #[derive(Clone, Copy)]
 pub(super) struct Declaration<'a> {
     pub(super) label: &'a str,
     pub(super) path: &'a str,
-    /// The flat `METHOD /path` spelling, which is the *only* place a
-    /// `.jails/model.toml` project states its route.
+    /// The flat `METHOD /path` spelling.
     pub(super) route: Option<&'a str>,
 }
 
@@ -460,12 +458,10 @@ pub(super) fn link_event_semantics(
 /// The flat `METHOD /path` spelling, as the typed route the rest of the
 /// compiler reads.
 ///
-/// **`.jails/model.toml` has no rich route to link**, so this is the whole
-/// declaration for a project on the compatibility input -- and reading only
-/// the rich one turned a declared `GET /notes/search` into the derived
-/// `POST /queries/open-notes`, which is the "flat spelling folds into the rich
-/// one, here" rule this linker already applies to `sets`, `yields` and
-/// `fields`.
+/// **A source may carry the flat route alone**, and reading only the rich one
+/// would turn a declared `GET /notes/search` into the derived
+/// `POST /queries/open-notes`. The same fold this linker applies to `sets`,
+/// `yields` and `fields`.
 ///
 /// A malformed string yields `None` rather than a second diagnostic:
 /// `Linker::route` has already refused it by name.
@@ -480,22 +476,17 @@ fn flat_route(route: Option<&str>) -> Option<linked::OperationRoute> {
 
 /// The route an operation answers on when its author declared none.
 ///
-/// **The `api` capability's whole surface used to depend on a declaration.**
-/// `emit_http.rs` skips an operation whose `semantics.route` is `None`, so a
-/// model that named six operations and pinned two paths got two controllers,
-/// while the legacy generator derived the other four. That is not a stricter
-/// rule -- it is a silently smaller application, which is the failure mode
-/// `derived` exists to make impossible.
+/// **The `api` capability's surface must not depend on a declaration.** The
+/// HTTP emitter skips an operation whose `semantics.route` is `None`, so a
+/// model that names six operations and pins two paths would get two
+/// controllers -- not a stricter rule but a silently smaller application,
+/// which is the failure mode `derived` exists to make impossible.
 ///
-/// The shape is the legacy engine's, unchanged, so a project that crosses to
-/// the compiler keeps the URLs its callers already use: `/actions/<name>` for
-/// the two kinds that write and `/queries/<name>` for the one that reads.
-///
-/// The transition is the one departure, and it is forced rather than chosen.
-/// Legacy took the row's key out of the request *body* of a `PUT`, which is a
-/// key in two places at once; the canonical controller binds
-/// `@PathVariable("id")` and refuses a transition route without `{id}`. So the
-/// derived path carries it.
+/// `/actions/<name>` for the two kinds that write and `/queries/<name>` for
+/// the one that reads. The transition's path carries `{id}` because the
+/// controller binds `@PathVariable("id")` and refuses a transition route
+/// without it: a key in the request *body* of a `PUT` is a key in two places
+/// at once.
 ///
 /// A route derived here is **not** pinned: `derived::records` reads the
 /// author's declaration to decide that, so a convention that moves shows up as
@@ -508,19 +499,17 @@ fn derived_route(kind: RoutedKind, label: &str) -> linked::OperationRoute {
             path: format!("/actions/{name}"),
             consumes: None,
         },
-        // **GET, where the legacy engine derived POST.** That engine sent a
-        // query's filters as a JSON body, so it needed a verb with one; the
-        // canonical controller binds `@ModelAttribute`, which reads the query
-        // string and the URI template variables and never a body. A POST here
-        // would be a route only a form post could drive.
+        // **GET**: the controller binds `@ModelAttribute`, which reads the
+        // query string and the URI template variables and never a body, so a
+        // POST here would be a route only a form post could drive.
         RoutedKind::Query => linked::OperationRoute {
             method: crate::EndpointMethod::Get,
             path: format!("/queries/{name}"),
             consumes: None,
         },
-        // PUT rather than PATCH for the same reason the legacy recipe chose
-        // it: a compare-and-swap update against a version the caller states is
-        // idempotent, and PUT is the method that promises that.
+        // PUT rather than PATCH: a compare-and-swap update against a version
+        // the caller states is idempotent, and PUT is the method that promises
+        // that.
         RoutedKind::Transition => linked::OperationRoute {
             method: crate::EndpointMethod::Put,
             path: format!("/actions/{name}/{{id}}"),

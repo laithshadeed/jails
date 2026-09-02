@@ -1,11 +1,10 @@
 //! The two capability packs the storage axis materializes.
 //!
-//! Split out of `spring.rs` by the secret every pack here shares and no other
-//! pack does: **a reader never names one.** `cap db` and `cap h2` are not
-//! spellings JDL v1 accepts — `storage postgres` and `storage h2` are, and the
-//! linker materializes the capability from the axis. So these two are the only
-//! packs whose identity comes from the `app` block rather than from a
-//! declaration, which is also why their absence was invisible for so long.
+//! What every pack here shares and no other pack does: **a reader never names
+//! one.** `cap db` and `cap h2` are not spellings JDL v1 accepts — `storage
+//! postgres` and `storage h2` are, and the linker materializes the capability
+//! from the axis. So these two are the only packs whose identity comes from
+//! the `app` block rather than from a declaration.
 
 use super::spring::spring_property;
 use super::*;
@@ -96,17 +95,16 @@ const H2_PROPERTIES: &[PropertySpec] = &[
     },
 ];
 
-/// PostgreSQL's *test* half, which is the half that was missing.
+/// PostgreSQL's *test* half.
 ///
 /// The main half -- the JDBC starter, the driver and Flyway -- comes from
-/// `storage::storage_dependencies`, because the storage axis decides it. What
-/// did not exist was any of this, and its absence is the failure `CLAUDE.md`
-/// records at length: once `spring-boot-starter-jdbc` is present, JDBC
+/// `storage::storage_dependencies`, because the storage axis decides it. This
+/// half is not optional: once `spring-boot-starter-jdbc` is present, JDBC
 /// auto-configuration demands a `DataSource` for **every** `@SpringBootTest`,
-/// including the `contextLoads` test that shipped with the project. So a
-/// canonical project that declared `storage postgres` and touched nothing else
-/// failed `mvn verify` on a test nobody wrote, with "Failed to determine a
-/// suitable driver class".
+/// including the `contextLoads` test that ships with the project. Without it a
+/// project that declares `storage postgres` and touches nothing else fails
+/// `mvn verify` on a test nobody wrote, with "Failed to determine a suitable
+/// driver class".
 const DB_FILES: &[JavaFile] = &[JavaFile {
     suffix: "testcontainers_config",
     template: crate::template!("add/testcontainers_config_java.java"),

@@ -1,7 +1,7 @@
 //! `g migration <description>` on a canonical project.
 //!
 //! **This is deliberately not a model declaration**, and it is the one
-//! generator for which that is the answer rather than a gap. `jdl-sol.md` §2.1
+//! generator for which that is the answer rather than a gap. JDL v1 §2.1
 //! puts ordered migration files outside JDL -- "immutable, append-only
 //! history" -- §12's naming rules say "authors never name managed migrations
 //! in JDL", and §2 lists "writing an append-only migration" among the
@@ -45,7 +45,7 @@ pub(crate) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
         model_path,
         // The source is unchanged and so is the model: an empty batch is the
         // honest patch for an action that declares nothing. Writing one
-        // anyway -- a `migration` node -- is what §2.1 forbids.
+        // anyway -- a `migration` node -- is what JDL v1 §2.1 forbids.
         current_source: current_source.clone(),
         current_model,
         next_source: current_source,
@@ -68,7 +68,7 @@ pub(crate) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
     })
 }
 
-/// The Flyway description, checked against §12.6's shape.
+/// The Flyway description, checked against JDL v1 §12.6's shape.
 ///
 /// Lower snake case, because the allocated path is `V<n>__<description>.sql`
 /// and the materializer refuses anything else -- catching it here means the

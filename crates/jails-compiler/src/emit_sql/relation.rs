@@ -1,7 +1,6 @@
 //! Declared relations, as the constraints they are.
 //!
-//! Split out of `emit_sql.rs` by secret when the relation pass took that file
-//! past the largest-module target. Everything here answers one question --
+//! Everything here answers one question --
 //! what foreign key does this relation mean, and where in the migration does
 //! it go -- and the answer to the second half is *last*, which is the part a
 //! reader is most likely to get wrong.
@@ -72,7 +71,7 @@ pub(super) fn derive_into(
 /// One relation as the constraint it is.
 ///
 /// `on delete` and `on update` come from the declaration rather than being
-/// fixed at `no action` the way the legacy generator writes them: the model
+/// fixed at `no action`: the model
 /// carries the reader's answer, and emitting `no action` over a declared
 /// `cascade` would be a schema that disagrees with the model it was compiled
 /// from.
@@ -168,7 +167,8 @@ use repo for Author\nuse repo for Book\n";
     /// Linking `AppModel.relations` without emitting one leaves `sync`
     /// reporting success over a `book.author_id` that references no table. A
     /// declaration that reports success and produces no artifact is the same
-    /// silence `bugs.md` B59 describes, arriving from the other side.
+    /// silence as a wrong artifact reported as written, arriving from the
+    /// other side.
     #[test]
     fn a_declared_relation_becomes_a_foreign_key() {
         let sql = first_migration(MODEL);
@@ -181,10 +181,9 @@ use repo for Author\nuse repo for Book\n";
 
     /// The declared action is honoured, not replaced by a fixed one.
     ///
-    /// The legacy generator writes `on delete no action` always, because the
-    /// CLI has nowhere to say otherwise. The model does, and emitting the
-    /// fixed answer over a declared one would be a schema that disagrees with
-    /// what it was compiled from.
+    /// The model carries the reader's answer, and emitting a fixed `no
+    /// action` over a declared one would be a schema that disagrees with what
+    /// it was compiled from.
     #[test]
     fn the_declared_referential_action_reaches_the_constraint() {
         assert!(

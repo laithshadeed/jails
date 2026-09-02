@@ -2,9 +2,8 @@
 //!
 //! ## Why an advisory file lock and not a PID file
 //!
-//! plan.md §R4.1 rejects a PID lockfile outright, and the reason is not
-//! style: process ids are reused, so a stale file naming a dead process can
-//! name a live unrelated one — and cleaning up a stale file is itself a race
+//! Process ids are reused, so a stale PID file naming a dead process can
+//! name a live unrelated one -- and cleaning up a stale file is itself a race
 //! between the reader that decided it was stale and the writer that just
 //! took it. `flock` has neither problem: the kernel releases it when the
 //! holder exits, however it exits.
@@ -133,15 +132,14 @@ const SETTLE_STEP: std::time::Duration = std::time::Duration::from_millis(2);
 
 /// Take the lock, and say what happened in the caller's vocabulary.
 ///
-/// The distinction this draws is not pedantry. `flock` reports three
-/// different things through one `Err`: somebody else holds it (`EWOULDBLOCK`),
-/// the call was interrupted by a signal (`EINTR`), and something is wrong with
-/// the file or the filesystem. Reporting all three as "another jails mutation
-/// holds the lock" sends the reader looking for a process that does not exist
-/// — and `EINTR` is not hypothetical here, because jails spawns child
-/// processes and their `SIGCHLD` arrives on whichever thread the kernel picks.
-/// An interrupted attempt is retried, since nothing about it says the lock is
-/// taken.
+/// `flock` reports three different things through one `Err`: somebody else
+/// holds it (`EWOULDBLOCK`), the call was interrupted by a signal (`EINTR`),
+/// and something is wrong with the file or the filesystem. Reporting all
+/// three as "another jails mutation holds the lock" sends the reader looking
+/// for a process that does not exist -- and `EINTR` is real here, because
+/// jails spawns child processes and their `SIGCHLD` arrives on whichever
+/// thread the kernel picks. An interrupted attempt is retried, since nothing
+/// about it says the lock is taken.
 ///
 /// ## Why `EWOULDBLOCK` is not immediately believed either
 ///
@@ -149,32 +147,17 @@ const SETTLE_STEP: std::time::Duration = std::time::Duration::from_millis(2);
 /// one of them. So while jails is starting a child — a formatter, Maven, a
 /// compose command — the child briefly holds a copy of whatever the parent has
 /// open, until `exec` drops it through `O_CLOEXEC`. In that window a lock the
-/// holder has already released still reads as held.
+/// holder has already released still reads as held. The window is not
+/// bounded by one `fork`/`exec`: it is bounded by how long the child takes to
+/// *reach* `exec`, which on a loaded machine is a scheduling question, and
+/// one `fork` captures *every* lock the process holds at that instant, not
+/// just the one being released.
 ///
-/// This was measured, not deduced: the released-lock test failed roughly one
-/// run in eight under the full suite and never once when run alone, and single
-/// -threading the suite made it disappear entirely. The other thread was
-/// spawning processes.
-///
-/// **Fifty milliseconds was not far longer than a `fork`/`exec`, and the
-/// window is not bounded by one.** It is bounded by how long the child takes
-/// to *reach* `exec`, which on a loaded machine is a scheduling question. Held
-/// against a genuine `fork` with a child that delays before `exec`, the delay
-/// tracks it one-for-one -- 2.2 ms at no delay, 12.6 ms at 10 ms, 53.4 ms at
-/// 50 ms, 203.2 ms at 200 ms -- and one `fork` captures *every* lock the
-/// process holds at that instant, not just the one being released.
-///
-/// That is what the suite showed: five `tests/engine.rs` tests failing in the
-/// same run, each unable to re-acquire a lock it had already released, on a
-/// sixteen-CPU machine running sixteen test binaries at once. `bugs.md` B61
-/// has the reproduction.
-///
-/// Five hundred milliseconds covers the measured range with room for a child
-/// that waits for a CPU, and is still far shorter than anything a person reads
-/// as a hang, so it separates the two cases without reintroducing the
-/// invisible wait plan.md §R4.1 rejects. Real contention costs the caller half
-/// a second and then reports who holds it; it never waits for the holder to
-/// finish.
+/// `SETTLE` is measured against that window, with room for a child that waits
+/// for a CPU, and is still far shorter than anything a person reads as a hang,
+/// so it separates the two cases without reintroducing an invisible wait.
+/// Real contention costs the caller the settle window and then reports who
+/// holds it; it never waits for the holder to finish.
 ///
 /// It is a threshold rather than a decision because the two cases are not
 /// distinguishable portably. Linux can tell them apart -- `/proc/locks` names
@@ -344,9 +327,9 @@ mod tests {
     /// released; it must never turn into a queue. The holder here never lets
     /// go, so queuing would mean never answering.
     ///
-    /// Bounded against `SETTLE` rather than a constant of its own: this once
-    /// asserted a bare 500 ms, which silently became the exact value of
-    /// `SETTLE` when that moved and turned a property into a coin flip.
+    /// Bounded against `SETTLE` rather than a constant of its own: a bare
+    /// number silently becomes the exact value of `SETTLE` when that moves,
+    /// and turns a property into a coin flip.
     #[test]
     fn a_held_lock_is_refused_promptly_rather_than_queued_behind_its_holder() {
         let scratch = ScratchDir::in_temp("jails-lock-prompt").unwrap();

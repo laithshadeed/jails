@@ -9,10 +9,9 @@
 //! index. A fact that is missing is not a fact the compiler asks for later; it
 //! is a fact the compiler cannot use.
 //!
-//! That is why the type is wide and boring. Each field is a question somebody
-//! wanted to answer inside a pass and could not, answered at the boundary
-//! instead: `maven_wrapper` is the clearest example, and its own comment says
-//! what went wrong without it.
+//! That is why the type is wide and boring. Each field is a question a pass
+//! cannot answer for itself, answered at the boundary instead; `maven_wrapper`
+//! is the clearest example.
 //!
 //! `SnapshotPreconditions` is the other half — not what the compiler read, but
 //! what the executor must find unchanged. `ContentDigest` is how both halves
@@ -80,9 +79,9 @@ pub struct ProjectFacts {
     pub maven_wrapper: bool,
     /// The reader's layer renames, from `jails.toml`.
     ///
-    /// `#[serde(default)]` so a snapshot written before this field existed
-    /// still decodes, and so a project that renamed nothing serializes exactly
-    /// as it did -- the defaults are the names the compiler already used.
+    /// `#[serde(default)]` so a snapshot without the field decodes and a
+    /// project that renamed nothing serializes without it -- the defaults are
+    /// the names the compiler uses anyway.
     #[serde(default)]
     pub layout: Layout,
     /// The JUnit version this project declares, if it declares one.
@@ -217,9 +216,9 @@ pub struct WorkspaceSnapshot {
     /// history. Flyway refuses on the checksum until the file matches what
     /// ran, so `resource repair` needs the original and nothing else has it.
     ///
-    /// `#[serde(default)]` so a lock written before this field existed still
-    /// decodes; repair then reports that migration as unrecoverable rather
-    /// than claiming to have restored it.
+    /// `#[serde(default)]` so a lock without the field decodes; repair then
+    /// reports that migration as unrecoverable rather than claiming to have
+    /// restored it.
     #[serde(default)]
     pub accepted_migration_bytes: BTreeMap<ProjectPath, Vec<u8>>,
     pub project: ProjectFacts,
@@ -231,8 +230,8 @@ pub struct WorkspaceSnapshot {
     /// Reader-authored replacements for jails' own Java templates.
     ///
     /// Observed at the capture boundary because the compiler may not read the
-    /// filesystem, and `#[serde(default)]` because a snapshot written before
-    /// they were captured is a snapshot with none.
+    /// filesystem, and `#[serde(default)]` because a snapshot without the
+    /// field is a snapshot with none.
     #[serde(default)]
     pub template_overrides: crate::TemplateOverrides,
 }
