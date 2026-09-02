@@ -32,7 +32,7 @@ has not been done.
 | `docs/30-cutover.md` | workstream C: the workspace, the project crates, adoption | one agent |
 | `docs/40-gates-and-ci.md` | workstream D: the gates, the suite, and the CI budget | one agent |
 | `docs/50-simplify.md` | the simplification pass: brief, baseline, ownership for five agents | everyone, during the pass |
-| `docs/51-kernel.md` .. `docs/55-compiler.md` | the five plans of that pass | one agent each |
+| `docs/51-kernel.md` .. `docs/54-language.md` | the plans of that pass still open (`55`, the compiler's, closed and is gone) | one agent each |
 | `docs/60-abstraction.md` | the target shape the five plans converge on: five nouns, four verbs | everyone, during the pass |
 
 The split exists so several agents can work at once without reading each

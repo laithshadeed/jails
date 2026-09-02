@@ -8,8 +8,10 @@ Item numbers are stable and never reused.
 
 # 20 — The generated Java, and the IR
 
-**Read `docs/00-contracts.md` first.** During the simplification pass,
-`docs/55-compiler.md` is the active plan for these paths.
+**Read `docs/00-contracts.md` first.** The simplification pass's compiler
+plan (`docs/55-compiler.md`) closed every item it held and is gone;
+`git log -p -- docs/55-compiler.md` is its record. `docs/60-abstraction.md`
+S60.3 is the direction these paths move in now.
 
 ## What you own
 
@@ -57,9 +59,10 @@ grep -rc 'format!(' crates/jails-compiler/src | awk -F: '{s+=$2} END {print s}'
 ```
 
 **Exit:** the IR exists and the emitters build it instead of strings. It is a
-phase, not a fix. `docs/55-compiler.md` S55.2 takes its first rung, one
-`JavaUnit` for the package line, the import block and the class shell; `Pack`
-is the shape the rest is missing.
+phase, not a fix. Its first rung is landed: one `JavaUnit` for the package
+line, the import block and the class shell, and one `emit_mockmvc` for the
+MockMvc dialect; `Pack` (22 of 25 capabilities are rows) is the shape the
+rest is missing, and `docs/60-abstraction.md` S60.3 names it `Recipe`.
 
 ## A3.15 — §16.4's readable boundary path does not resolve
 

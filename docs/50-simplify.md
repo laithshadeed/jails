@@ -126,7 +126,7 @@ adds a new shape is not progress.
 | `docs/52-binary.md` | **2 -- binary** | `src/**` except `src/dispatch.rs`, `tests/cli/**` except `generate.rs`, `capabilities.rs`, `tooling.rs`, `examples.rs`, `reports.rs`, `docs/feature-inventory.tsv`, `README.md`'s command sections | the second decision of each mutation, `new`'s three seeds, the unread flags |
 | `docs/53-tool-crates.md` | **3 -- tool crates** | `crates/jails-{project,java,drive,report,workspace,support,codemod,contracts}/**` (minus plan 1's files), `tests/cli/{tooling,capabilities,reports,examples}.rs`, `tests/corpus/**`, `tests/baseline.rs`, `tests/architecture_allowances.rs` | the second project model, the two test-execution vocabularies |
 | `docs/54-language.md` | **4 -- language** | `crates/jails-model/**`, `docs/10-language.md` | the parser's repeated attribute handling |
-| `docs/55-compiler.md` | **5 -- compiler** | `crates/jails-compiler/**`, `templates/**`, `tests/golden/**`, `tests/golden.rs`, `tests/agreement.rs`, `tests/cli/generate.rs`, `docs/20-generated-java.md` | the remaining copies of the Java shell, the second proof renderer |
+| (closed) | **5 -- compiler** | `crates/jails-compiler/**`, `templates/**`, `tests/golden/**`, `tests/golden.rs`, `tests/agreement.rs`, `tests/cli/generate.rs`, `docs/20-generated-java.md` | every item closed; `docs/55-compiler.md` is retired and `git log -p` holds it |
 
 **A plan that lands fewer lines than it expected reports the number and why;
 it does not pad.**
