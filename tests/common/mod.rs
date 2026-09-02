@@ -1555,26 +1555,16 @@ fn test_profile_epoch() -> &'static Instant {
 ///
 /// `JAILS_TEST_MAX_TOOLCHAIN_PROCESSES` overrides it.
 fn default_max_toolchain_processes() -> usize {
-    let by_cores = std::thread::available_parallelism()
-        .map(|cores| (cores.get() * 3 / 4).clamp(6, 12))
-        .unwrap_or(6);
-    let by_memory = available_memory_bytes()
-        .map(|bytes| (bytes / (700 << 20)).clamp(2, 12) as usize)
+    let by_cores = (parallel::cgroup::cores() * 3 / 4).clamp(6, 12);
+    let by_memory = parallel::cgroup::memory_limit_bytes()
+        .into_iter()
+        .chain(parallel::cgroup::available_memory_bytes())
+        .map(|bytes| (bytes / parallel::cgroup::JVM_BYTES).clamp(2, 12) as usize)
+        .min()
         .unwrap_or(by_cores);
     by_cores.min(by_memory)
 }
 
-/// `MemAvailable` from `/proc/meminfo`, in bytes; `None` where the kernel
-/// does not say (macOS), which falls back to the core-derived budget.
-fn available_memory_bytes() -> Option<u64> {
-    let meminfo = fs::read_to_string("/proc/meminfo").ok()?;
-    meminfo
-        .lines()
-        .find_map(|line| line.strip_prefix("MemAvailable:"))
-        .and_then(|rest| rest.split_whitespace().next())
-        .and_then(|kib| kib.parse::<u64>().ok())
-        .map(|kib| kib * 1024)
-}
 const MAX_INFRASTRUCTURE_START_PROCESSES: usize = 2;
 static TOOLCHAIN_PROCESSES: PermitPool = PermitPool::new("toolchain");
 static INFRASTRUCTURE_START_PROCESSES: PermitPool = PermitPool::new("infrastructure");
@@ -1655,7 +1645,31 @@ impl PermitPool {
 
     fn acquire(&self, maximum: usize) -> ProcessPermit {
         let directory = self.directory();
+        // **A permit is a JVM's worth of memory as well as a slot.** The slot
+        // count is decided once; the memory is whatever the editor, the
+        // browser and a second `cargo` have left by now. A permit taken into
+        // no headroom is the run that swaps, so the pool waits for one JVM's
+        // worth -- bounded, and saying so, because a machine that never
+        // frees it would otherwise hang the suite rather than slow it.
+        let started = std::time::Instant::now();
+        let mut warned = false;
         loop {
+            if self.name == "toolchain"
+                && parallel::cgroup::headroom_bytes()
+                    .is_some_and(|bytes| bytes < parallel::cgroup::JVM_BYTES)
+            {
+                if started.elapsed() < std::time::Duration::from_secs(120) {
+                    std::thread::sleep(PERMIT_POLL * 8);
+                    continue;
+                }
+                if !warned {
+                    eprintln!(
+                        "jails tests: less than {} MB of memory headroom for two minutes; starting the toolchain process anyway",
+                        parallel::cgroup::JVM_BYTES >> 20
+                    );
+                    warned = true;
+                }
+            }
             for slot in 0..maximum {
                 let path = directory.join(format!("{slot}.lock"));
                 let Ok(file) = fs::OpenOptions::new()

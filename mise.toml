@@ -35,21 +35,22 @@ run = [
 # another; `tests/cli` dominates the run, so concurrency across binaries has
 # nothing to win and unbounded memory to lose.
 #
-# `RUST_TEST_THREADS` is libtest's thread count, scaled to the machine: a
-# real-toolchain test spends its life waiting on a Maven JVM the permit pool
-# admits, so with one thread per core the long tests near the end of the
-# alphabet start late and set the tail. Twice the cores lets every one of them
-# start early and queue on the pool, which is what bounds the JVM count and
-# the memory -- the threads themselves cost nothing.
+# `scripts/bounded.sh` runs the test phase in a cgroup with a memory cap and a
+# CPU quota (half the memory, three quarters of the cores by default), so the
+# suite cannot take the machine down whatever its pools believe; the harness
+# sizes its JVM permits and thread budget from that same cgroup. It also sets
+# `RUST_TEST_THREADS` to twice the quota: a real-toolchain test spends its life
+# waiting on a Maven JVM the permit pool admits, so with one thread per core
+# the long tests near the end of the alphabet start late and set the tail.
 [tasks.verify-rewrite]
 description = "Run the single mandatory rewrite verification gate"
 depends = ["lint"]
 run = [
   "RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps",
   "rm -rf target/jails-test-profile",
-  "RUST_TEST_THREADS=$(( $(nproc) * 2 )) JAILS_GIT_DIFF_ALGORITHM= JAILS_TOOLCHAIN=1 cargo test --workspace; status=$?; ./scripts/subprocess-summary.sh; exit $status",
+  "JAILS_GIT_DIFF_ALGORITHM= JAILS_TOOLCHAIN=1 ./scripts/bounded.sh cargo test --workspace; status=$?; ./scripts/subprocess-summary.sh; exit $status",
 ]
 
 [tasks.test]
 description = "The gate's test phase, without the toolchain tier (the inner-loop run)"
-run = "cargo test --workspace"
+run = "./scripts/bounded.sh cargo test --workspace"

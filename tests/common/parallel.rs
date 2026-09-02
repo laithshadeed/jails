@@ -49,12 +49,109 @@ pub fn budget() -> usize {
         {
             return configured;
         }
-        let cores = std::thread::available_parallelism().map_or(4, |value| value.get());
+        // The cores this process may use, which under `scripts/bounded.sh`
+        // is the scope's CPU quota rather than the machine's count.
+        let cores = cgroup::cores();
         // Four units per core, and capped: the gain is in covering process
         // start-up latency, and past a few dozen in-flight process trees the
         // memory and scheduler cost starts taking it back.
         (cores * 4).clamp(4, 32)
     })
+}
+
+/// What the cgroup this process runs in allows, when it is a bounded one.
+///
+/// `scripts/bounded.sh` puts the gate in a transient scope with `memory.max`
+/// and `cpu.max` set; the pools here size themselves from those rather than
+/// from the machine, so the kernel's answer and the harness's cannot
+/// disagree about how big the box is. Outside such a scope every reader
+/// returns the machine's own figures.
+pub mod cgroup {
+    use std::path::PathBuf;
+
+    /// What one Maven JVM running a generated project's tests costs at
+    /// rest, measured: 300-600 MB resident, so 700 MB with headroom.
+    pub const JVM_BYTES: u64 = 700 << 20;
+
+    fn own_directory() -> Option<PathBuf> {
+        let cgroup = std::fs::read_to_string("/proc/self/cgroup").ok()?;
+        let path = cgroup
+            .lines()
+            .find_map(|line| line.strip_prefix("0::"))?
+            .trim();
+        Some(PathBuf::from("/sys/fs/cgroup").join(path.trim_start_matches('/')))
+    }
+
+    /// The nearest ancestor's value of one cgroup file, walking up from the
+    /// process's own cgroup: a scope inherits any tighter limit above it.
+    fn limit(file: &str) -> Option<String> {
+        let mut directory = own_directory()?;
+        loop {
+            if let Ok(text) = std::fs::read_to_string(directory.join(file)) {
+                let text = text.trim().to_string();
+                if !text.is_empty() && !text.starts_with("max") {
+                    return Some(text);
+                }
+            }
+            if !directory.pop() || directory == std::path::Path::new("/sys/fs/cgroup") {
+                return None;
+            }
+        }
+    }
+
+    /// `memory.max` in bytes, when a cgroup above this process sets one.
+    pub fn memory_limit_bytes() -> Option<u64> {
+        limit("memory.max")?.parse().ok()
+    }
+
+    /// The cores this process may use: `cpu.max`'s quota over its period
+    /// when set, rounded up, else the machine's count.
+    pub fn cores() -> usize {
+        let machine = std::thread::available_parallelism().map_or(4, |value| value.get());
+        let Some(text) = limit("cpu.max") else {
+            return machine;
+        };
+        let mut parts = text.split_whitespace();
+        match (
+            parts.next().and_then(|quota| quota.parse::<u64>().ok()),
+            parts.next().and_then(|period| period.parse::<u64>().ok()),
+        ) {
+            (Some(quota), Some(period)) if period > 0 => {
+                (quota.div_ceil(period) as usize).clamp(1, machine)
+            }
+            _ => machine,
+        }
+    }
+
+    /// Bytes still free under the cgroup's cap, or the machine's
+    /// `MemAvailable` outside one.
+    pub fn headroom_bytes() -> Option<u64> {
+        match (memory_limit_bytes(), current_bytes()) {
+            (Some(limit), Some(current)) => Some(limit.saturating_sub(current)),
+            _ => available_memory_bytes(),
+        }
+    }
+
+    /// `MemAvailable` from `/proc/meminfo`, in bytes; `None` where the
+    /// kernel does not say (macOS).
+    pub fn available_memory_bytes() -> Option<u64> {
+        let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
+        meminfo
+            .lines()
+            .find_map(|line| line.strip_prefix("MemAvailable:"))
+            .and_then(|rest| rest.split_whitespace().next())
+            .and_then(|kib| kib.parse::<u64>().ok())
+            .map(|kib| kib * 1024)
+    }
+
+    fn current_bytes() -> Option<u64> {
+        let directory = own_directory()?;
+        std::fs::read_to_string(directory.join("memory.current"))
+            .ok()?
+            .trim()
+            .parse()
+            .ok()
+    }
 }
 
 /// The process-wide permit gate. See the module docs.
