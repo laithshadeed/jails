@@ -74,9 +74,11 @@ const RECIPE_WALKS: &[Pass] = &[
 /// comes off this list, and `docs/60-abstraction.md` S60.3 keeps the count;
 /// the test below holds the two together.
 const FUNCTIONS: &[Pass] = &[
-    // Entity facets (record, enum, factory, dto, repository, service, http,
-    // events, search, seed), units (class, interface, service, sealed,
-    // strategy, controller, test), use cases and the repository adapters.
+    // The one-file entity facets are `Recipe<Entity>` rows inside this pass
+    // (`emit_java::entity`); what keeps it a function is the rest: the
+    // multi-file facets (dto, http, seed), the units (class, interface,
+    // service, sealed, strategy, controller, test), the operation ports and
+    // the repository adapters.
     emit_java::emit,
     // command, query and transition.
     emit_operation::emit,

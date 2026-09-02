@@ -67,6 +67,15 @@ pub(crate) trait Node: 'static {
     /// Whether a test in this source set gets `@Import(TestcontainersConfig.class)`
     /// spliced in when the model declares `db`.
     fn splices_test_container(&self, source_set: SourceSet) -> bool;
+    /// Where one layer's package is for this node.
+    ///
+    /// The project's layout, unless the node pins one: an entity declared
+    /// with `pkg` collapses every layer of its slice into that package, and
+    /// a row placed in `Package::Repository` has to land there too, or the
+    /// slice's import of its own port names a package that is not there.
+    fn package_for(&self, model: &AppModel, package: Package) -> String {
+        model.project.package_for(package)
+    }
 }
 
 /// One declarative renderer: everything a node kind emits, as data.
@@ -150,6 +159,16 @@ pub(crate) enum Naming<N: Node> {
     /// A rule the closed forms above cannot spell.
     By(fn(&N) -> String),
 }
+
+impl<N: Node> Clone for Naming<N> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+/// By hand, because a derive would ask `N: Copy` of a node that is only ever
+/// borrowed.
+impl<N: Node> Copy for Naming<N> {}
 
 impl<N: Node> Naming<N> {
     pub(crate) fn resolve(&self, node: &N) -> String {
@@ -336,14 +355,40 @@ pub(crate) enum Fragment<N: Node> {
         capability: &'static str,
         body: &'static str,
     },
+    /// A block that belongs in the file only on a project whose captured
+    /// Boot version matches: the `@Component` a Spring bean carries and a
+    /// plain Maven class does not. The names it relies on join the import set
+    /// of every file that spells its key.
+    WhenBoot {
+        key: &'static str,
+        boot: BootCondition,
+        body: &'static str,
+        imports: &'static [&'static str],
+    },
     /// A structural block -- a list, a switch, a sample argument list --
     /// rendered by one named function of the node and the model. The names
     /// it spells join the import set of every file that spells its key, and
     /// no other's.
+    ///
+    /// **A fragment may spell a key.** Fragments are substituted before the
+    /// node's keys and the file's `{{class}}`, so a rendered block that names
+    /// the class it is part of spells `{{class}}` rather than being handed
+    /// the name -- one spelling of the class, on the row.
     Rendered {
         key: &'static str,
         render: fn(&AppModel, &N) -> Result<Rendered, CompileError>,
     },
+}
+
+impl<N: Node> Fragment<N> {
+    /// The key a template spells this fragment by.
+    pub(crate) fn key(&self) -> &'static str {
+        match self {
+            Self::WhenCapability { key, .. }
+            | Self::WhenBoot { key, .. }
+            | Self::Rendered { key, .. } => key,
+        }
+    }
 }
 
 /// What a rendered fragment is: text, and the fully-qualified names the text
@@ -484,7 +529,7 @@ pub(crate) fn package_of<N: Node>(
 ) -> String {
     match file.placement {
         Placement::Default => (recipe.default_package)(model, node),
-        Placement::Layer(package) => model.project.package_for(package),
+        Placement::Layer(package) => node.package_for(model, package),
     }
 }
 
@@ -536,12 +581,38 @@ pub(crate) fn render<N: Node>(
     let boot_major = crate::emit_capability::boot_major(snapshot.project.spring_boot.as_deref());
     let default_package = (recipe.default_package)(model, node);
     let keys = node_keys(model, node, recipe)?;
-    // Resolved once per node: a fragment whose capability the model does not
+    // The files this node gets, with their templates resolved first, because
+    // which fragments to render is decided by what those templates spell.
+    let files = recipe
+        .files
+        .iter()
+        .filter(|_| recipe.files_when.matches(boot_major))
+        .filter(|file| file.only_when.is_none_or(|applies| applies(model, node)))
+        .map(|file| {
+            let template = match file.before_boot {
+                Some((limit, template)) if boot_major.is_some_and(|major| major < limit) => {
+                    template
+                }
+                _ => file.template,
+            };
+            Ok((
+                file,
+                template.resolve(&snapshot.template_overrides)?.to_string(),
+            ))
+        })
+        .collect::<Result<Vec<_>, CompileError>>()?;
+    // Resolved once per node, and only where some file of this node spells
+    // the key: a primary key's type is asked of an entity with a repository
+    // port, not of every enum. A fragment whose capability the model does not
     // declare substitutes to nothing, rather than being left in the file as a
     // literal `{{key}}`.
     let fragments = recipe
         .fragments
         .iter()
+        .filter(|fragment| {
+            let placeholder = format!("{{{{{}}}}}", fragment.key());
+            files.iter().any(|(_, text)| text.contains(&placeholder))
+        })
         .map(|fragment| match fragment {
             Fragment::WhenCapability {
                 key,
@@ -554,23 +625,28 @@ pub(crate) fn render<N: Node>(
                 };
                 Ok((*key, Rendered::from(body)))
             }
+            Fragment::WhenBoot {
+                key,
+                boot,
+                body,
+                imports,
+            } => Ok((
+                *key,
+                match boot.matches(boot_major) {
+                    true => Rendered {
+                        text: (*body).to_string(),
+                        imports: imports.iter().map(|name| (*name).to_string()).collect(),
+                    },
+                    false => Rendered::from(String::new()),
+                },
+            )),
             Fragment::Rendered { key, render } => Ok((*key, render(model, node)?)),
         })
         .collect::<Result<Vec<_>, CompileError>>()?;
-    for file in recipe
-        .files
-        .iter()
-        .filter(|_| recipe.files_when.matches(boot_major))
-        .filter(|file| file.only_when.is_none_or(|applies| applies(model, node)))
-    {
+    for (file, mut text) in files {
         let package = package_of(model, node, recipe, file);
         let class = file.class.resolve(node);
         let template_class = file.template_class.resolve(node);
-        let template = match file.before_boot {
-            Some((limit, template)) if boot_major.is_some_and(|major| major < limit) => template,
-            _ => file.template,
-        };
-        let mut text = template.resolve(&snapshot.template_overrides)?.to_string();
         // Substitution only: what varies structurally is a fragment rendered
         // above, and an import the file needs is a name on its row that
         // `JavaUnit` adds to the one import block -- never a placeholder here,
@@ -619,11 +695,11 @@ pub(crate) fn render<N: Node>(
                     );
                 }
                 Import::From(package, class) => {
-                    unit.import_from(&model.project.package_for(*package), class);
+                    unit.import_from(&node.package_for(model, *package), class);
                 }
                 Import::Keyed(package, key) => {
                     let (_, class) = node.key(model, *key)?;
-                    unit.import_from(&model.project.package_for(*package), &class);
+                    unit.import_from(&node.package_for(model, *package), &class);
                 }
                 Import::Moved(moved) => unit.import(moved.resolve(boot_major)),
                 Import::ContainerSupport => {}

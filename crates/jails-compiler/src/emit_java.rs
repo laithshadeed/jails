@@ -1,7 +1,15 @@
 //! Lower semantic facets into deterministic Java source units.
+//!
+//! The one-file facets are [`crate::recipe::Recipe`] rows over the named
+//! fragment renderers in [`fragment`] (`entity` holds the rows); what is
+//! still a function here is several files from one facet (`dto`, `http`,
+//! `seed`), the operation ports, whose `Input` record is a fragment the
+//! request binding shapes, and the repository adapters, which choose their
+//! owner and their bean by what the captured build has on its classpath.
 
+mod entity;
 mod execution_context;
-mod facet;
+mod fragment;
 mod record_validation;
 mod repository;
 mod time_ordered_uuid;
@@ -9,8 +17,8 @@ mod time_ordered_uuid;
 use crate::CompileError;
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile, RenderedTree};
 use jails_model::{
-    AppModel, BuiltinType, Entity, EntityId, Facet, Field, FieldId, Operation, OperationKind,
-    OperationParameter, Package, ParameterSource, StableId, TypeRef,
+    AppModel, BuiltinType, Entity, EntityId, EnumConstant, Facet, Field, FieldId, Operation,
+    OperationKind, OperationParameter, Package, ParameterSource, StableId, TypeRef,
 };
 use std::collections::BTreeSet;
 
@@ -43,56 +51,52 @@ pub(crate) fn emit(
             .map_err(CompileError::new)?;
     }
     for entity in model.entities.values().filter(|entity| entity.active) {
+        // The one-file facets, the test-data builder and the enum converter:
+        // rows, each present when the entity declares its facet.
+        for recipe in entity::RECIPES {
+            crate::recipe::render(model, entity, recipe, snapshot, output)?;
+        }
         for facet in &entity.facets {
-            if *facet == Facet::Seed {
-                for (path, file) in crate::emit_seed::lower(model, entity, templates)? {
-                    output.insert(path, file).map_err(CompileError::new)?;
+            match facet {
+                Facet::Seed => {
+                    for (path, file) in crate::emit_seed::lower(model, entity, templates)? {
+                        output.insert(path, file).map_err(CompileError::new)?;
+                    }
                 }
-                continue;
-            }
-            // **The scaffold's HTTP surface, which is three files.** The
-            // single-file arm below emits only the port -- an interface with
-            // no implementation, no route and no caller -- so a scaffold
-            // would serve nothing.
-            if *facet == Facet::Http {
-                for unit in crate::emit_resource_http::lower(model, entity, spring_boot)? {
-                    output
-                        .insert(unit.path, unit.file)
-                        .map_err(CompileError::new)?;
+                // **The scaffold's HTTP surface, which is three files**: the
+                // port, the controller that serves the resource, and its
+                // test. A port alone -- an interface with no implementation,
+                // no route and no caller -- would serve nothing.
+                Facet::Http => {
+                    for unit in crate::emit_resource_http::lower(model, entity, spring_boot)? {
+                        output
+                            .insert(unit.path, unit.file)
+                            .map_err(CompileError::new)?;
+                    }
                 }
-                continue;
-            }
-            if *facet == Facet::Dto {
-                for unit in crate::emit_dto::lower(model, entity, spring_boot) {
-                    let unit = unit?;
-                    output
-                        .insert(unit.path, unit.file)
-                        .map_err(CompileError::new)?;
+                Facet::Dto => {
+                    for unit in crate::emit_dto::lower(model, entity, spring_boot) {
+                        let unit = unit?;
+                        output
+                            .insert(unit.path, unit.file)
+                            .map_err(CompileError::new)?;
+                    }
                 }
-                continue;
-            }
-            let unit = if *facet == Facet::Factory {
-                crate::emit_factory::lower(model, entity)?
-            } else {
-                facet::lower_facet(model, entity, *facet, spring_boot)?
-            };
-            output
-                .insert(unit.path, unit.file)
-                .map_err(CompileError::new)?;
-            // The companion test ships with the type, not as an opt-in: a
-            // generated class nobody asserts anything about leaves the suite
-            // green over it. See `emit_companion_test`.
-            if let Some(unit) = crate::emit_companion_test::lower(model, entity, *facet)? {
-                output
-                    .insert(unit.path, unit.file)
-                    .map_err(CompileError::new)?;
-            }
-            if spring_boot.is_some()
-                && *facet == Facet::Enum
-                && crate::emit_enum::has_wire_values(entity)
-            {
-                let (path, file) = crate::emit_enum::lower_converter(model, entity)?;
-                output.insert(path, file).map_err(CompileError::new)?;
+                // The companion test ships with the type, not as an opt-in:
+                // a generated class nobody asserts anything about leaves the
+                // suite green over it. See `emit_companion_test`.
+                Facet::Record | Facet::Enum => {
+                    if let Some(unit) = crate::emit_companion_test::lower(model, entity, *facet)? {
+                        output
+                            .insert(unit.path, unit.file)
+                            .map_err(CompileError::new)?;
+                    }
+                }
+                Facet::Factory
+                | Facet::Repository
+                | Facet::Service
+                | Facet::Events
+                | Facet::Search => {}
             }
         }
     }
@@ -371,21 +375,6 @@ fn operation_context(model: &AppModel, entity: &Entity, imports: &mut BTreeSet<S
         "ExecutionContext context, ".to_string()
     } else {
         String::new()
-    }
-}
-
-fn facet_name(facet: Facet) -> &'static str {
-    match facet {
-        Facet::Enum => "enum",
-        Facet::Record => "record",
-        Facet::Factory => "factory",
-        Facet::Dto => "dto",
-        Facet::Repository => "repository",
-        Facet::Service => "service",
-        Facet::Http => "http",
-        Facet::Events => "events",
-        Facet::Search => "search",
-        Facet::Seed => "seed",
     }
 }
 

@@ -95,8 +95,19 @@ pub(crate) fn record_shape(
     fields: &[&Field],
     imports: &mut BTreeSet<String>,
 ) -> String {
-    let components = fields
-        .iter()
+    let components = field_components(fields.iter().copied());
+    record_shape_from_components(type_name, &components, imports)
+}
+
+/// The components an entity's own record declares: every field, in order.
+pub(super) fn entity_components(entity: &Entity) -> Vec<RecordComponent<'_>> {
+    field_components(entity.fields.iter())
+}
+
+/// One record component per field, carrying the checks the compact
+/// constructor renders.
+fn field_components<'a>(fields: impl Iterator<Item = &'a Field>) -> Vec<RecordComponent<'a>> {
+    fields
         .map(|field| RecordComponent {
             name: field.names.java_member.clone(),
             ty: &field.ty,
@@ -106,8 +117,7 @@ pub(crate) fn record_shape(
             positive: field.semantics.positive,
             nonnegative: field.semantics.nonnegative,
         })
-        .collect::<Vec<_>>();
-    record_shape_from_components(type_name, &components, imports)
+        .collect()
 }
 
 /// Import a project type the model declares, when the record needs it.
@@ -337,7 +347,29 @@ pub(crate) fn record_shape_bound(
     imports: &mut BTreeSet<String>,
     binder: Option<Binder<'_>>,
 ) -> String {
-    let declarations = components
+    let declarations = record_declarations(components, imports, binder);
+    let constructor = record_constructor(type_name, components, imports);
+    // **An empty component list is `()`, not a blank line between parens.** A
+    // transition whose whole effect is a pinned constant carries nothing from
+    // the caller, and `record Input(\n\n)` is a record with one thing wrong
+    // with it that no reader would write.
+    if components.is_empty() {
+        return format!("public record {type_name}() {{{constructor}\n}}");
+    }
+    format!("public record {type_name}(\n{declarations}\n) {{{constructor}\n}}")
+}
+
+/// The component declarations, one per line, joined by `,\n`.
+///
+/// **The one column list of a record**: the entity's own record and every
+/// operation's `Input` spell their components through this, so a component
+/// is typed, boxed and bound the same way wherever it appears.
+pub(super) fn record_declarations(
+    components: &[RecordComponent<'_>],
+    imports: &mut BTreeSet<String>,
+    binder: Option<Binder<'_>>,
+) -> String {
+    components
         .iter()
         .map(|component| {
             let mut java = java_type_ref(component.ty, component.required, imports);
@@ -351,29 +383,29 @@ pub(crate) fn record_shape_bound(
             format!("    {bind}{java} {}", component.name)
         })
         .collect::<Vec<_>>()
-        .join(",\n");
+        .join(",\n")
+}
+
+/// The compact constructor, opening with the blank line that separates it
+/// from the components, or nothing when no component needs a check.
+pub(super) fn record_constructor(
+    type_name: &str,
+    components: &[RecordComponent<'_>],
+    imports: &mut BTreeSet<String>,
+) -> String {
     let statements = components
         .iter()
         .flat_map(|component| record_validation::record_checks(component, imports))
         .collect::<Vec<_>>();
-    let constructor = if statements.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "\n\n    public {type_name} {{\n{}\n    }}",
-            statements
-                .iter()
-                .map(|statement| format!("        {statement}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        )
-    };
-    // **An empty component list is `()`, not a blank line between parens.** A
-    // transition whose whole effect is a pinned constant carries nothing from
-    // the caller, and `record Input(\n\n)` is a record with one thing wrong
-    // with it that no reader would write.
-    if components.is_empty() {
-        return format!("public record {type_name}() {{{constructor}\n}}");
+    if statements.is_empty() {
+        return String::new();
     }
-    format!("public record {type_name}(\n{declarations}\n) {{{constructor}\n}}")
+    format!(
+        "\n\n    public {type_name} {{\n{}\n    }}",
+        statements
+            .iter()
+            .map(|statement| format!("        {statement}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    )
 }

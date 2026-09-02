@@ -16,8 +16,6 @@ mod emit_capability;
 mod emit_companion_test;
 mod emit_component;
 mod emit_dto;
-mod emit_enum;
-mod emit_factory;
 mod emit_http;
 mod emit_java;
 mod emit_messaging;
