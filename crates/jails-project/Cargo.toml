@@ -8,15 +8,12 @@ edition.workspace = true
 clap.workspace = true
 jails-codemod.workspace = true
 jails-support.workspace = true
+# `ProjectFacts`, `WorkspaceSnapshot` and the captured-file shapes this crate
+# produces. Capture and the document adapters sit here so that the one reader
+# of `pom.xml` is in the crate that answers "what is this project".
+jails-contracts.workspace = true
 jails-model.workspace = true
 jails-spec.workspace = true
-# The one reader of `pom.xml`, which lives with the document adapters that
-# write it. A second reader here is what this dependency exists to prevent.
-jails-workspace.workspace = true
-# Syntax and source spans only. PostgreSQL semantics stay bounded to migration
-# facts the catalog compiler can prove; unsupported DDL becomes an opaque
-# blocker instead of being guessed from a permissive parser.
-sqlparser.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true

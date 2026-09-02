@@ -13,8 +13,8 @@
 
 use super::wiring::property_value;
 use super::{Check, Status};
-use crate::model::Project;
-use crate::{pom, release};
+use crate::project::Project;
+use crate::release;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs as _};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -246,12 +246,8 @@ pub(super) fn parse_java_major(text: &str) -> Option<u32> {
 /// another: it also removes the datasource URL the module was contributing,
 /// so the app then dies on "no database URL" instead. Installing real Compose
 /// v2 is the fix that leaves nothing broken.
-pub(super) fn compose_provider_check(pom_text: &str) -> Option<Check> {
-    if !pom::has_dependency(
-        pom_text,
-        "org.springframework.boot",
-        "spring-boot-docker-compose",
-    ) {
+pub(super) fn compose_provider_check(project: &Project) -> Option<Check> {
+    if !project.has_dependency("org.springframework.boot", "spring-boot-docker-compose") {
         return None;
     }
     // Through the same resolver `compose.rs` runs with, so this reports the
@@ -507,13 +503,12 @@ pub(super) fn declared_services(yaml: &str) -> Vec<String> {
 /// "Could not find a valid Docker environment" -- the two look at different
 /// sockets, which is why `jails start` succeeding proves nothing about
 /// whether the test suite can start a container.
-pub(super) fn testcontainers_check(pom_text: &str) -> Check {
+pub(super) fn testcontainers_check(project: &Project) -> Check {
     // Matched on the groupId alone, not on artifact ids: Testcontainers 2.0
     // renamed every module (`postgresql` -> `testcontainers-postgresql`),
     // and a check that silently stops applying after a dependency bump is
     // worse than no check.
-    let uses = pom_text.contains("org.testcontainers");
-    if !uses {
+    if !project.declares_group("org.testcontainers") {
         return Check::new(Status::Skip, "testcontainers", "not in use");
     }
     if let Some(host) = std::env::var_os("DOCKER_HOST") {
@@ -564,8 +559,8 @@ pub(super) fn testcontainers_check(pom_text: &str) -> Check {
 /// machine flag honestly, and count what reuse has left behind -- a reused
 /// container is deliberately not registered with Ryuk, so nothing else will
 /// ever mention it.
-pub(super) fn container_reuse_check(pom_text: &str) -> Vec<Check> {
-    if !pom_text.contains("org.testcontainers") {
+pub(super) fn container_reuse_check(project: &Project) -> Vec<Check> {
+    if !project.declares_group("org.testcontainers") {
         return vec![Check::new(Status::Skip, "container reuse", "not in use")];
     }
     if !reuse_enabled() {

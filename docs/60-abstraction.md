@@ -51,10 +51,11 @@ Five specific shapes, each measured:
 3. **The compiler re-derives its external facts.** `emit::Observed` is a
    hand-picked subset of the snapshot, rebuilt in `Compiler::compile`; every
    emitter that needs one more fact widens it.
-4. **The tool crates keep a second project model.** `jails-project::Project`
-   and `ProjectContext` answer "what is at this path" for `drive` and
-   `report`, reading the disk again, while the snapshot's `ProjectFacts`
-   answers the same question for the compiler.
+4. **The tool crates keep a second project model.** Closed: `Project` is a
+   root plus the `ProjectFacts` capture observes, `jails-project` is the
+   reader that produces them for the snapshot and for `drive` and `report`
+   alike, and a fact a command needs that the snapshot lacks is added to
+   `ProjectFacts` by capture rather than read again beside it.
 5. **Entry points come in families.** Closed: `capture`, `materialize` and
    `finish_generation` are one function each, taking the intended model,
    the model update and the reader paths as arguments; the binary's `_at`
@@ -130,20 +131,6 @@ unregistered role fails to compile.
 
 **Exit:** `emit.rs` walks one table; `lower_and_emit` is gone; the
 `format!` count is the fragment renderers' and the SQL lowering's alone.
-
-### S60.4 — the snapshot is the only project model
-
-`emit::Observed` goes: the compiler reads `snapshot.project` directly, and a
-fact it needs that the snapshot lacks is added to `ProjectFacts` by capture.
-`jails-project::model::{Project, Slice, Layer, Layers, Artifact, Change}` and
-`ProjectContext` go: `jails-project` becomes the *reader* that produces
-`ProjectFacts` and captured files (today's `capture/observe.rs` and the
-document adapters), and `jails-drive`/`jails-report` take a snapshot -- or a
-`Project` that is nothing but a root plus a lazily captured snapshot. A
-command that starts a JVM has no reason to parse `pom.xml` its own way.
-
-**Exit:** one `struct` answers "what is this project"; no module outside
-capture reads the pom, and the board's Maven-scanner row reads one.
 
 ### S60.7 — managed output lives in `src/`, and the lock says what is managed
 
@@ -231,8 +218,7 @@ BASE/OURS/THEIRS rule; `PlanBundle`, `PlannedOperation` (six kinds is right),
 | item | plan | step |
 |---|---|---|
 | S60.3 `Recipe` | 55 | S55.2 (the shell) and S55.5 (packs as data) are its first two rungs |
-| S60.4 the snapshot | 53 | S53.2; the one Maven reader is `jails-workspace/src/documents/pom.rs`, which `jails-project` re-exports -- S60.4 flips that edge, so the reader sits in the crate that produces `ProjectFacts` |
-| S60.7 managed output in `src/` | none yet | after S60.4 (capture is the one reader); needs `jails model relocate` |
+| S60.7 managed output in `src/` | none yet | capture is the one reader (S60.4, closed); needs `jails model relocate` |
 
 A plan step that lands a deletion without moving toward one of these is
 still worth landing; a step that adds a *new* shape -- a fourth vocabulary, a

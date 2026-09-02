@@ -25,7 +25,7 @@ pub(crate) fn run(invocation: Invocation) -> Result<()> {
 
 fn run_as(invocation: Invocation) -> Result<()> {
     let root = invocation.root()?;
-    let project = jails_project::model::Project::load(&root)?;
+    let project = jails_project::project::Project::load(&root)?;
     let source = derive(&project)?;
     // **Deriving the same model twice is a no-op, not a collision.** Every
     // other canonical frontend is idempotent -- a second `g record` with the
@@ -50,14 +50,14 @@ fn run_as(invocation: Invocation) -> Result<()> {
     // executor locks, rechecks its preconditions and publishes an exact
     // after-image, which is what makes a half-finished `model init` impossible
     // rather than merely unlikely.
-    let snapshot = jails_workspace::capture(
+    let snapshot = jails_project::capture::capture(
         &root,
         model_path,
         source.as_bytes(),
         model,
         None,
         &[],
-        jails_workspace::ModelFile::Absent,
+        jails_project::capture::ModelFile::Absent,
     )
     .map_err(|error| Failure::Told(format!("could not capture this project: {error}")))?;
     let draft = jails_compiler::Compiler::compile(
@@ -122,7 +122,7 @@ pub(crate) fn refuse_if_modelled(root: &Path) -> Result<()> {
 }
 
 /// The app block this project already states.
-pub(crate) fn derive(project: &jails_project::model::Project) -> Result<String> {
+pub(crate) fn derive(project: &jails_project::project::Project) -> Result<String> {
     let root = project.root();
     let label = root
         .file_name()

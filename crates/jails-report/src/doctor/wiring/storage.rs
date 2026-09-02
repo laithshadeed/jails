@@ -16,18 +16,16 @@ use super::super::environment::tcp_reachable;
 use super::super::{Check, Status};
 use super::property_value;
 use crate::compose;
-use crate::model::Project;
-use crate::pom;
+use crate::project::Project;
 use std::path::Path;
 use std::time::Duration;
 
 pub(crate) fn database_checks(project: &Project) -> Vec<Check> {
     let root: &Path = project.root();
-    let pom_text: &str = project.pom();
     let mut checks = Vec::new();
     let yaml = compose::read(root).unwrap_or_default();
     let Some(conn) = compose::postgres_connect(&yaml) else {
-        if pom::has_dependency(pom_text, "org.postgresql", "postgresql") {
+        if project.has_dependency("org.postgresql", "postgresql") {
             checks.push(
                 Check::new(
                     Status::Fail,
@@ -75,15 +73,14 @@ pub(crate) fn database_checks(project: &Project) -> Vec<Check> {
                 .count()
         })
         .unwrap_or(0);
-    let has_flyway = pom::has_dependency(pom_text, "org.flywaydb", "flyway-core");
+    let has_flyway = project.has_dependency("org.flywaydb", "flyway-core");
     // Counting the files answers the wrong question. `flyway-core` alone runs
     // nothing on Boot 4 -- the auto-configuration lives in the separate
     // `spring-boot-flyway` module -- and the failure is silent: no error, no
     // warning, no Flyway log line, then `relation "..." does not exist`. So
     // the check is "will these run", not "do these exist".
-    let is_spring = pom::is_spring_boot(pom_text);
-    let has_boot_flyway =
-        pom::has_dependency(pom_text, "org.springframework.boot", "spring-boot-flyway");
+    let is_spring = project.is_spring_boot();
+    let has_boot_flyway = project.has_dependency("org.springframework.boot", "spring-boot-flyway");
     if is_spring && has_flyway && !has_boot_flyway {
         checks.push(
             Check::new(
@@ -123,7 +120,7 @@ pub(crate) fn database_checks(project: &Project) -> Vec<Check> {
     // The two pieces of test-side wiring `add db` installs on Spring. Both
     // are invisible until a @SpringBootTest fails with "Failed to determine
     // a suitable driver class", and both are easy to lose to a rebase.
-    if pom::is_spring_boot(pom_text) {
+    if project.is_spring_boot() {
         // What matters is that a container bean exists *and* that every
         // @SpringBootTest can see one. Checking the file alone would pass on
         // a project where a rebase dropped the @Import and every context test
@@ -303,12 +300,7 @@ pub(crate) fn test_container_wiring(root: &Path) -> (Option<String>, Vec<String>
 /// this check does.
 pub(crate) fn in_memory_adapter_check(project: &Project) -> Option<Check> {
     let root: &Path = project.root();
-    let pom_text: &str = project.pom();
-    if !pom::has_dependency(
-        pom_text,
-        "org.springframework.boot",
-        "spring-boot-starter-jdbc",
-    ) {
+    if !project.has_dependency("org.springframework.boot", "spring-boot-starter-jdbc") {
         return None;
     }
     let mut in_memory_beans = Vec::new();
@@ -446,14 +438,15 @@ pub(crate) fn sql_init_checks(project: &Project) -> Vec<Check> {
 /// that whether or not the dependency is wired -- the wiring has its own check
 /// two functions up.
 ///
-/// Through the resolved `Project` rather than a `&Path`, so it reads what the
-/// plan leaves rather than only what is on disk.
 fn flyway_migrations(project: &Project) -> Option<usize> {
-    let count = project
-        .projected_names_in("src/main/resources/db/migration")
-        .iter()
-        .filter(|name| name.ends_with(".sql"))
-        .count();
+    let count = std::fs::read_dir(project.root().join("src/main/resources/db/migration"))
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|entry| entry.path().extension().is_some_and(|x| x == "sql"))
+                .count()
+        })
+        .unwrap_or(0);
     (count > 0).then_some(count)
 }
 
@@ -554,7 +547,7 @@ mod tests {
         );
 
         // With no migrations there is one authority and nothing to report.
-        let project = crate::model::Project::load(&root).unwrap();
+        let project = crate::project::Project::load(&root).unwrap();
         let checks = sql_init_checks(&project);
         assert_eq!(checks.len(), 1);
         assert!(
@@ -568,7 +561,7 @@ mod tests {
             "src/main/resources/db/migration/V001__create.sql",
             "create table t ();\n",
         );
-        let project = crate::model::Project::load(&root).unwrap();
+        let project = crate::project::Project::load(&root).unwrap();
         let checks = sql_init_checks(&project);
         assert!(
             matches!(checks[0].status, Status::Fail),

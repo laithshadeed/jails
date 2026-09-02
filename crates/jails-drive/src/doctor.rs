@@ -4,7 +4,7 @@
 //! owns executable lookup and version processes, matching the tools the
 //! application gateways actually launch without installing or starting them.
 
-use crate::model::Project;
+use crate::project::Project;
 use jails_report::doctor::{Check, Status};
 use jails_support::Result;
 use std::ffi::{OsStr, OsString};

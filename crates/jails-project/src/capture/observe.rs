@@ -13,9 +13,183 @@
 //! it refuses to grow into a parser.
 
 use crate::documents::pom;
-use jails_contracts::BuildSystem;
+use jails_contracts::{BuildSystem, Layout, ProjectFacts, Reactor, ReactorModule};
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// Every fact about a project the build files state, read once.
+///
+/// **The one place a build file is asked what it says.** `capture` takes
+/// these and replaces the two the model is authority for -- the Java release
+/// and the base package -- and the layout, which it reads out of the captured
+/// `jails.toml` rather than off disk a second time; `Project` takes them as
+/// they are, because the commands that resolve one run on projects that may
+/// have no model at all. A `jails.toml` that names a layer that does not
+/// exist is refused here, as it is everywhere.
+pub fn facts(root: &Path) -> Result<ProjectFacts, String> {
+    let layout = match std::fs::read_to_string(root.join("jails.toml")) {
+        Ok(source) => Layout::parse(&source)?,
+        Err(_) => Layout::default(),
+    };
+    Ok(observed(root, layout))
+}
+
+/// [`facts`] with the layout already decided by the caller.
+pub(super) fn observed(root: &Path, layout: Layout) -> ProjectFacts {
+    let build_system = observe_build_system(root);
+    let reactor = reactor(root, build_system);
+    ProjectFacts {
+        build_system,
+        // A build that states no release is read as targeting the floor:
+        // generated code compiles on every release jails supports, and the
+        // model's own release replaces this in every capture.
+        java_release: reactor
+            .java_release
+            .unwrap_or(jails_model::JAVA_RELEASE_FLOOR),
+        spring_boot: spring_boot_version(root, build_system),
+        base_package: crate::spec::base_package(root).unwrap_or_default(),
+        dependencies: declared_dependencies(root, build_system),
+        maven_wrapper: root.join("mvnw").is_file(),
+        layout,
+        junit: junit_version(root, build_system),
+        artifact_id: build_artifact_id(root, build_system),
+        build_dependencies: build_dependencies(root, build_system),
+        reactor,
+        main_class: main_class(root, build_system),
+    }
+}
+
+/// The entry point the build names, in whichever dialect it is written.
+fn main_class(root: &Path, build_system: BuildSystem) -> Option<String> {
+    let source = std::fs::read_to_string(build_file(root, build_system)?).ok()?;
+    match build_system {
+        BuildSystem::Maven => pom::main_class(&source).map(str::to_string),
+        BuildSystem::Gradle => crate::gradle::main_class(&source),
+        BuildSystem::Unknown => None,
+    }
+}
+
+/// The reactor walk: which aggregator owns this module, what it inherits on
+/// the way up, and every module the aggregator declares.
+///
+/// Paths are canonicalized before they are compared, because `<module>`
+/// entries are written relative and a module is inside its reactor only once
+/// both are spelled absolutely. The walk stops at the filesystem root, and a
+/// pom it cannot read is a pom that aggregates nothing.
+fn reactor(root: &Path, build_system: BuildSystem) -> Reactor {
+    match build_system {
+        BuildSystem::Maven => maven_reactor(root),
+        BuildSystem::Gradle => {
+            let text = build_file(root, build_system)
+                .and_then(|path| std::fs::read_to_string(path).ok())
+                .unwrap_or_default();
+            Reactor {
+                root: String::new(),
+                artifact_id: build_artifact_id(root, build_system),
+                java_release: crate::gradle::release_level(&text)
+                    .and_then(|r| u16::try_from(r).ok()),
+                spring_boot: crate::gradle::is_spring_boot(&text),
+                modules: Vec::new(),
+            }
+        }
+        BuildSystem::Unknown => Reactor::default(),
+    }
+}
+
+fn maven_reactor(root: &Path) -> Reactor {
+    let module = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let read = |dir: &Path| std::fs::read_to_string(dir.join("pom.xml")).ok();
+    // The highest ancestor whose `<modules>` reaches this one.
+    let mut reactor = module.clone();
+    for ancestor in module.ancestors().skip(1) {
+        let Some(pom) = read(ancestor) else {
+            continue;
+        };
+        let aggregates = pom::module_paths(&pom).into_iter().any(|declared| {
+            std::fs::canonicalize(ancestor.join(declared))
+                .is_ok_and(|declared| module.starts_with(declared))
+        });
+        if aggregates {
+            reactor = ancestor.to_path_buf();
+        }
+    }
+    // What the module inherits: the nearest stated release, and Boot's
+    // dependency management from any pom between here and the reactor.
+    let mut java_release = None;
+    let mut spring_boot = false;
+    for dir in module
+        .ancestors()
+        .take_while(|dir| dir.starts_with(&reactor))
+    {
+        let Some(pom) = read(dir) else {
+            continue;
+        };
+        if java_release.is_none() {
+            java_release = pom::release_level(&pom).and_then(|r| u16::try_from(r).ok());
+        }
+        spring_boot |= pom::is_spring_boot(&pom);
+    }
+    let mut modules = Vec::new();
+    let mut seen = BTreeSet::new();
+    collect_modules(&reactor, &reactor, &mut seen, &mut modules);
+    let depth = module
+        .strip_prefix(&reactor)
+        .map(|relative| relative.components().count())
+        .unwrap_or(0);
+    Reactor {
+        root: vec![".."; depth].join("/"),
+        artifact_id: read(&reactor).and_then(|pom| pom::artifact_id(&pom)),
+        java_release,
+        spring_boot,
+        modules,
+    }
+}
+
+fn collect_modules(
+    reactor: &Path,
+    aggregator: &Path,
+    seen: &mut BTreeSet<PathBuf>,
+    modules: &mut Vec<ReactorModule>,
+) {
+    let Ok(pom) = std::fs::read_to_string(aggregator.join("pom.xml")) else {
+        return;
+    };
+    for declared in pom::module_paths(&pom) {
+        let Ok(dir) = std::fs::canonicalize(aggregator.join(&declared)) else {
+            continue;
+        };
+        let Ok(child) = std::fs::read_to_string(dir.join("pom.xml")) else {
+            continue;
+        };
+        if dir == reactor || !seen.insert(dir.clone()) {
+            continue;
+        }
+        modules.push(ReactorModule {
+            path: dir
+                .strip_prefix(reactor)
+                .unwrap_or(&dir)
+                .to_string_lossy()
+                .replace('\\', "/"),
+            artifact_id: pom::artifact_id(&child),
+        });
+        collect_modules(reactor, &dir, seen, modules);
+    }
+}
+
+/// Every coordinate the build file declares, jails' own block included.
+///
+/// [`declared_dependencies`] strips that block because the compiler must not
+/// read its own writing back as the reader's; `doctor` asks what is on the
+/// classpath, and jails' block is.
+fn build_dependencies(root: &Path, build_system: BuildSystem) -> BTreeSet<String> {
+    let Some(path) = build_file(root, build_system) else {
+        return BTreeSet::new();
+    };
+    let Ok(source) = std::fs::read_to_string(path) else {
+        return BTreeSet::new();
+    };
+    coordinates(&source, build_system)
+}
 
 /// Which build language this module uses, observed from its build files.
 ///
@@ -99,8 +273,13 @@ pub(super) fn declared_dependencies(root: &Path, build_system: BuildSystem) -> B
         }
         _ => source,
     };
+    coordinates(&source, build_system)
+}
+
+/// Every `group:artifact` a build script's text declares.
+fn coordinates(source: &str, build_system: BuildSystem) -> BTreeSet<String> {
     match build_system {
-        BuildSystem::Maven => pom::dependency_coordinates(&source),
+        BuildSystem::Maven => pom::dependency_coordinates(source),
         // A Gradle script states each one as a quoted coordinate on its own
         // line, with or without a version.
         BuildSystem::Gradle => source

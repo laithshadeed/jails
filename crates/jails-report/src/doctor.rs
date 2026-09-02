@@ -14,7 +14,7 @@
 //! reader has to translate into an action has only moved the work.
 
 pub use crate::diagnostic::{Check, Status};
-use crate::model::Project;
+use crate::project::Project;
 use std::fmt::Write as _;
 use std::path::Path;
 mod environment;
@@ -105,7 +105,6 @@ fn report_json(checks: &[Check]) -> Result<()> {
 
 fn run_checks(project: &Project) -> Vec<Check> {
     let root = project.root();
-    let pom_text = project.pom();
     let mut checks = Vec::new();
 
     checks.push(project_check(project));
@@ -126,11 +125,11 @@ fn run_checks(project: &Project) -> Vec<Check> {
     checks.push(jdk_check(project));
     checks.push(git_merge_check());
     checks.extend(compose_checks(project));
-    checks.extend(compose_provider_check(pom_text));
+    checks.extend(compose_provider_check(project));
     checks.extend(database_checks(project));
     checks.extend(in_memory_adapter_check(project));
-    checks.push(testcontainers_check(pom_text));
-    checks.extend(container_reuse_check(pom_text));
+    checks.push(testcontainers_check(project));
+    checks.extend(container_reuse_check(project));
     checks.push(kafka_check(project));
     checks.push(jackson_check(project));
     checks.push(duplicate_key_check(project));
@@ -193,7 +192,7 @@ fn capability_drift_checks() -> Vec<Check> {
 
 fn project_check(project: &Project) -> Check {
     let root: &Path = project.root();
-    let pom_text: &str = project.pom();
+    let build_file_text: &str = project.build_file();
     // Not optional: a confident wrong report is worse than a
     // refusal, so the first thing doctor says about a foreign project is that
     // it is one -- and what that costs, since every check below reads a pom
@@ -215,7 +214,7 @@ fn project_check(project: &Project) -> Check {
         true => jails_project::gradle::FILE,
         false => "pom.xml",
     };
-    if pom_text.is_empty() {
+    if build_file_text.is_empty() {
         return Check::new(
             Status::Fail,
             "project",
@@ -242,7 +241,7 @@ fn project_check(project: &Project) -> Check {
         );
     }
     // Before anything else about the project: can Maven open this pom at
-    // all? `pom::read` falls back to an empty string, so without this every
+    // all? `inspect` tolerates an empty build file, so without this every
     // check below would happily report on a project no goal can run against
     // -- a column of greens over a build that cannot start.
     // `pom::problems` is an XML reader. Handing it Groovy would report
@@ -251,7 +250,7 @@ fn project_check(project: &Project) -> Check {
     // answer.
     if let Some((problem, fix)) = match gradle {
         true => None,
-        false => pom::problems(pom_text).into_iter().next(),
+        false => pom::problems(build_file_text).into_iter().next(),
     } {
         return Check::new(
             Status::Fail,
@@ -269,7 +268,6 @@ fn project_check(project: &Project) -> Check {
 
 fn compose_checks(project: &Project) -> Vec<Check> {
     let root: &Path = project.root();
-    let _pom_text: &str = project.pom();
     let mut checks = Vec::new();
     if !compose::exists(root) {
         checks.push(Check::new(
@@ -520,7 +518,7 @@ mod tests {
         .unwrap();
         let checks = cors_checks(&project_with_pom(
             &root,
-            "<artifactId>spring-boot-starter-webmvc</artifactId>",
+            "<project><dependencies><dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-webmvc</artifactId></dependency></dependencies></project>",
         ));
         assert_eq!(checks.len(), 2);
         assert!(checks.iter().all(|check| check.status == Status::Warn));
@@ -857,11 +855,20 @@ volumes:
 
     #[test]
     fn testcontainers_is_detected_under_both_module_naming_schemes() {
-        let v1 = "<groupId>org.testcontainers</groupId><artifactId>postgresql</artifactId>";
-        let v2 = "<groupId>org.testcontainers</groupId><artifactId>testcontainers-postgresql</artifactId>";
-        assert_ne!(testcontainers_check(v1).status, Status::Skip);
-        assert_ne!(testcontainers_check(v2).status, Status::Skip);
-        assert_eq!(testcontainers_check("<project/>").status, Status::Skip);
+        let root = jails_support::scratch::ScratchDir::in_temp("jails-doctor-testcontainers")
+            .unwrap()
+            .keep();
+        let declaring = |artifact: &str| {
+            format!(
+                "<project><dependencies><dependency><groupId>org.testcontainers</groupId><artifactId>{artifact}</artifactId></dependency></dependencies></project>"
+            )
+        };
+        let v1 = project_with_pom(&root.join("v1"), &declaring("postgresql"));
+        let v2 = project_with_pom(&root.join("v2"), &declaring("testcontainers-postgresql"));
+        let none = project_with_pom(&root.join("none"), "<project/>");
+        assert_ne!(testcontainers_check(&v1).status, Status::Skip);
+        assert_ne!(testcontainers_check(&v2).status, Status::Skip);
+        assert_eq!(testcontainers_check(&none).status, Status::Skip);
     }
 
     #[test]

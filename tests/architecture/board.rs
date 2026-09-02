@@ -44,7 +44,11 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // 81 -> 80: `jails-project::pom` was deleted, and the one
                 // reader that replaced it takes a root in one function rather
                 // than two.
-                ceiling: 80,
+                //
+                // 80 -> 78: S60.4 deleted the second project model, and with
+                // it the two `root: &Path` constructors that re-derived the
+                // pom's facts beside the capture that already had them.
+                ceiling: 78,
                 // Withdrawn, not reached: the count includes modules whose
                 // subject *is* a path, so a target under the ceiling reads as
                 // a demand to stop writing modules. The row below is the
@@ -220,7 +224,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 name: "production files parsing Maven XML with their own scanner",
                 rung: "one document backend",
                 // Reached. `jails-project/src/pom.rs` is gone and
-                // `jails-workspace/src/documents/pom.rs` is the one reader:
+                // `jails-project/src/documents/pom.rs` is the one reader:
                 // capture, the dependency and build-feature adapters, `new`
                 // and `modernize` all ask it. What the row buys from here is
                 // that a second scanner cannot appear -- a scanner matching a
@@ -352,7 +356,12 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // `Project::is_modelled` does not do. Raise it once, with the
                 // reason, when a check is added: a ceiling quietly absorbing a
                 // rise is how a ratchet becomes decoration.
-                ceiling: 1505,
+                //
+                // 1505 -> 1474: S60.4. Every check that read the pom's text
+                // asks the resolved `Project` instead, and a question that is
+                // one method call is shorter than one that is a reader call
+                // with three arguments.
+                ceiling: 1474,
                 // Withdrawn, not reached: none of the hand-written checks is a
                 // re-encoded dependency fact, so a lower target measures a
                 // saving that is not there. Ratchet against growth.

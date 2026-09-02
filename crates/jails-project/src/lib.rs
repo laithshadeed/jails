@@ -1,16 +1,20 @@
-//! One resolved project, and everything jails records about it.
+//! The reader: what a project is, captured once.
 //!
-//! [`model::Project`] is the parameter object the generators take: it caches
-//! the pom once, applies the project's `[layout]` renames, and answers where a
-//! class goes -- so a renderer never re-derives a fact from a `&Path`.
+//! [`capture`] is the one place jails looks at a project. It fills a
+//! `WorkspaceSnapshot` for the compiler, and its `observe` half produces the
+//! `ProjectFacts` every command reads -- so [`project::Project`], the
+//! parameter object the commands take, is a root plus those facts and
+//! nothing a renderer could re-derive from a `&Path`.
 //!
 //! The files jails writes *about* a project live here too, and they divide by
 //! who owns them. [`config`] and [`compose`] are the reader's, edited by
-//! byte-preserving splice.
+//! byte-preserving splice; [`documents`] holds the adapters that reconcile a
+//! plan into the reader's build file, properties and compose file, and
+//! [`pom`], the one reader of what a POM says; [`merge`] is the three-way
+//! merge the adapters and the workspace above share.
 //!
 //! [`maven`] is how to invoke this project's Maven, deliberately separate from
-//! `jails_spec::build`, which recognises a build file and never runs one, and
-//! from [`pom`], which is the workspace crate's one reader of what a POM says.
+//! `jails_spec::build`, which recognises a build file and never runs one.
 //!
 //! [`inspect`] reads the project's source to report routes and beans. It is
 //! here rather than with the commands because `add`'s HTTP capability derives
@@ -31,15 +35,17 @@
 /// answers to what `remove db` deletes. Module code says `crate::codemod`.
 pub use jails_codemod as codemod;
 pub mod capability;
+pub mod capture;
 pub mod classfile;
 pub mod compose;
 pub mod config;
+pub mod documents;
 pub mod feature;
 pub mod gradle;
 pub mod inspect;
 pub mod java;
 pub mod maven;
-pub mod model;
+pub mod merge;
 pub mod modernize;
 pub mod project;
 pub mod properties;
@@ -49,9 +55,9 @@ pub mod template;
 // The lower crates, re-exported so every module in this one keeps saying
 // `crate::…` wherever it ships. Only this block knows which crate a module
 // actually lives in, which is what makes moving one a one-line change.
-/// The one reader of `pom.xml`, from the crate that also writes it.
+/// The one reader of `pom.xml`, beside the document adapters that write it.
 /// Module code says `crate::pom`.
-pub use jails_workspace::pom;
+pub use documents::pom;
 
 /// The eleven layers, from the crate that owns every closed vocabulary.
 /// Module code says `crate::layout`.

@@ -80,7 +80,7 @@ crate a module belongs to.
 | `jails-model` | closed source schema, stable IDs, linking, semantic diagnostics, `AppModel` and `Evolution` |
 | `jails-contracts` | portable `WorkspaceSnapshot`, `PlanDraft`, exact `Plan`, operations, trees and blobs |
 | `jails-compiler` | pure semantic lowering to a desired artifact tree; no filesystem, environment or subprocess access |
-| `jails-workspace` | capture, exact materialization, verification and the single executor |
+| `jails-workspace` | exact materialization, verification and the single executor, over what `jails-project` captured |
 
 ### Shared leaves
 
@@ -95,7 +95,7 @@ crate a module belongs to.
 
 | crate | contract |
 |---|---|
-| `jails-project` | one resolved `Project`, every reader-owned file jails reads or edits (`jails.toml`, `compose.yaml`, `pom.xml`, `build.gradle`), and reading Java: the small Java reader, the class-file constant-pool reader, template rendering |
+| `jails-project` | the reader: capture into `ProjectFacts` and a `WorkspaceSnapshot`, one resolved `Project` (a root plus its facts), the document adapters and the one Maven reader, every reader-owned file jails edits (`jails.toml`, `compose.yaml`, `pom.xml`, `build.gradle`), and reading Java: the small Java reader, the class-file constant-pool reader, template rendering |
 | `jails-drive` | commands that start something: `run`, `test`, `testd`, `migrate`, `kafka`, `console`, `bench`, `lint` |
 | `jails-report` | commands that answer a question: `doctor`, `why`, `explain`, `src`, `commands`; read-only by construction, since the crate sits below `jails-drive` |
 | `jails` (root) | the binary: the clap definition in `src/cli.rs`, the dispatch in `src/main.rs`, and the `src/model_*.rs` frontends that edit the model and run the pipeline |

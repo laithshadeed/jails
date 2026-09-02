@@ -22,7 +22,7 @@
 //!   in this module produces a capability name.
 
 use crate::Invocation;
-use jails_project::model::Project;
+use jails_project::project::Project;
 use jails_project::synonyms::Reading;
 use jails_support::{Failure, Result};
 use std::collections::BTreeSet;

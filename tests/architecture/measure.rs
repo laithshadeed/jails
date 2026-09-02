@@ -398,6 +398,9 @@ pub(crate) const A_FRESH_READ_IS_CORRECT: &[(&str, &str)] = &[
 pub(crate) const DERIVATION_IS_THE_JOB: &[&str] = &[
     "load",
     "inspect",
+    // The one reader: `capture::observe::observed` is what turns a root into
+    // `ProjectFacts`, for the snapshot and for `Project` alike.
+    "observed",
     "base_package",
     "project_with_pom",
     "verify_requested_deps",
@@ -686,7 +689,7 @@ pub(crate) fn no_bare_apply_verb_imports() {
 ///
 /// The count is deliberately **not** at one yet. Two of these are the
 /// strangler migration itself -- `jails-project/src/pom.rs` is the path being
-/// replaced, `jails-workspace/src/documents.rs` the backend replacing it --
+/// replaced, `jails-project/src/documents.rs` the backend replacing it --
 /// so both exist on purpose until the cutover. What this row is for is that a
 /// *third* answer cannot appear while that is happening, which is the failure
 /// a migration invites: during one, every file has a reason to be special.
@@ -802,7 +805,7 @@ pub(crate) fn largest_builtin_table(src: &[Source]) -> usize {
 /// is not a violation of having one owner.
 pub(crate) const BUILTIN_RS: &str = "jails-model/src/builtin.rs";
 
-/// One: `jails-workspace/src/documents/pom.rs`, the surviving backend.
+/// One: `jails-project/src/documents/pom.rs`, the surviving backend.
 ///
 /// `documents.rs`, `documents/build_feature.rs` and `capture/observe.rs` each
 /// answered Maven questions of their own and now ask it, and
@@ -911,7 +914,12 @@ pub(crate) const SCRATCH_RS: &str = "jails-support/src/scratch.rs";
 /// 110 -> 88: `docs/51-kernel.md` S51.4 deleted the codec, and most of what it
 /// took with it were exactly the refusals with no next step to name -- a
 /// corrupt tag, a length over its cap, a set whose keys did not arrive sorted.
-pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 88;
+///
+/// 88 -> 82: S60.4 deleted the second project model. `Change::merge`'s six
+/// conflict refusals went with it, and the reactor walk that read every
+/// parent pom with a `?` now reads through the capture boundary, where an
+/// unreadable pom is a pom that aggregates nothing.
+pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 82;
 
 /// A refusal that builds a message and does not say what to do next.
 ///
@@ -961,10 +969,15 @@ pub(crate) fn refusals_without_a_fix(src: &[Source]) -> usize {
     count
 }
 
+/// The capture/apply boundary: the executor's crate, and the reader half of
+/// it that lives in `jails-project` -- capture, the document adapters and the
+/// three-way merge -- whose subject is deliberately a filesystem root.
 fn is_canonical_workspace(path: &Path) -> bool {
-    path.to_string_lossy()
-        .replace('\\', "/")
-        .contains("/crates/jails-workspace/src/")
+    let path = path.to_string_lossy().replace('\\', "/");
+    path.contains("/crates/jails-workspace/src/")
+        || path.contains("/crates/jails-project/src/capture")
+        || path.contains("/crates/jails-project/src/documents")
+        || path.ends_with("/crates/jails-project/src/merge.rs")
 }
 
 fn is_canonical_new_world(path: &Path) -> bool {
@@ -972,7 +985,7 @@ fn is_canonical_new_world(path: &Path) -> bool {
     path.contains("/crates/jails-model/src/")
         || path.contains("/crates/jails-contracts/src/")
         || path.contains("/crates/jails-compiler/src/")
-        || path.contains("/crates/jails-workspace/src/")
+        || is_canonical_workspace(Path::new(&path))
         || path.ends_with("/src/model_command.rs")
         || path.ends_with("/src/model_eject.rs")
         // The module *and its children*: `model_generate/render.rs` is the

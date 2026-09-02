@@ -8,7 +8,7 @@ const INTEGRATION_TESTS_MARKER: &str = "jails:integration-tests";
 const COVERAGE_MARKER: &str = "jails:coverage";
 const FORMATTING_MARKER: &str = "jails:formatting";
 
-pub(crate) fn reconcile_maven_build_features(
+pub fn reconcile_maven_build_features(
     text: &str,
     features: &BTreeSet<BuildFeature>,
     managed_versions: bool,
@@ -22,7 +22,7 @@ pub(crate) fn reconcile_maven_build_features(
     reconcile_maven_formatting(&text, features.contains(&BuildFeature::Formatting))
 }
 
-pub(crate) fn reconcile_gradle_build_features(
+pub fn reconcile_gradle_build_features(
     text: &str,
     features: &BTreeSet<BuildFeature>,
     kotlin: bool,

@@ -25,7 +25,7 @@ pub use plan::{
 };
 pub use snapshot::{
     CapturedFile, ContentDigest, DirectoryPrecondition, ExternalType, ExternalTypeIndex,
-    FilePrecondition, MigrationHistory, MigrationRecord, OwnedPatchState, ProjectFacts,
-    SnapshotPreconditions, VersionedModel, WorkspaceSnapshot,
+    FilePrecondition, MigrationHistory, MigrationRecord, OwnedPatchState, ProjectFacts, Reactor,
+    ReactorModule, SnapshotPreconditions, VersionedModel, WorkspaceSnapshot,
 };
 pub use templates::{TemplateOverride, TemplateOverrides};

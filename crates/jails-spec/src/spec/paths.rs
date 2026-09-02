@@ -2,7 +2,7 @@
 //!
 //! None of this is generation; it is the answer to "which directory am I in
 //! and what is it called", which the generators then use. It sits below them
-//! because `model::Project`, `config`, `compose` and `inspect` all ask, and a
+//! because `project::Project`, `config`, `compose` and `inspect` all ask, and a
 //! back-edge from any of them into the generators is a cycle.
 
 use jails_support::Result;

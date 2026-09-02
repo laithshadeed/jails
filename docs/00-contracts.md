@@ -62,7 +62,7 @@ is left:
 |---|---|---|
 | **A — language** | `docs/10-language.md` | `crates/jails-model/**`, the JDL front ends in `src/model_generate_jdl*` and `src/model_jdl_edit.rs`, `src/model_explain.rs` |
 | **B — generated Java** | `docs/20-generated-java.md` | `crates/jails-compiler/**`, `templates/**` |
-| **C — workspace and project** | `docs/30-cutover.md` | `crates/jails-workspace/**`, `crates/jails-project/**`, `crates/jails-{drive,report,java}/**`, `src/new.rs`, `src/app.rs`, `src/dispatch.rs` |
+| **C — workspace and project** | `docs/30-cutover.md` | `crates/jails-workspace/**`, `crates/jails-project/**`, `crates/jails-{drive,report}/**`, `src/new.rs`, `src/app.rs`, `src/dispatch.rs` |
 | **D — gates and CI** | `docs/40-gates-and-ci.md` | `.github/**`, `.githooks/**`, `mise.toml`, `scripts/**`, `tests/common/**`, `tests/architecture/**`, `tests/corpus/**` |
 
 ### The files everyone touches
@@ -182,11 +182,14 @@ authority on which crate a module belongs to.
 | `jails-model` | closed source schema, stable IDs, linking, semantic diagnostics, `AppModel` and `Evolution` |
 | `jails-contracts` | portable `WorkspaceSnapshot`, `PlanDraft`, exact `Plan`, operations, trees and blobs |
 | `jails-compiler` | pure semantic lowering to a desired artifact tree; no filesystem, environment or subprocess access |
-| `jails-workspace` | capture, exact materialization, verification and the single executor |
+| `jails-workspace` | exact materialization, verification and the single executor |
 
 `jails-codemod` (the marked block, no dependencies) and `jails-support` (write,
-run, encode, name) are the leaves beside them; `jails-project`, `jails-drive`
-and `jails-report` are the tool crates above; the binary is the root package.
+run, encode, name) are the leaves beside them; `jails-project` is the reader
+below the workspace -- capture, the document adapters, the one Maven reader
+and the `Project` every command takes, a root plus the `ProjectFacts` capture
+observed; `jails-drive` and `jails-report` are the tool crates above; the
+binary is the root package.
 
 ## 1.6 Managed output, ejection, and what stays irreproducible
 
@@ -216,7 +219,6 @@ against this list.
 |---|---|---|
 | `jails-spec::Field` plus protocol `FieldSpec` | one field-syntax parser producing model fields; `BuiltinSemantics` as the one type table | the derivation tables |
 | generated Java/SQL reparsing | `AppModel` and the snapshot | source-as-database paths |
-| `Project`/`ProjectContext`/snapshot overlap | a snapshot-backed project view | post-capture disk reads |
 
 The largest deletion does not come from shorter render functions. It comes
 from making six questions disappear: which representation is authoritative;

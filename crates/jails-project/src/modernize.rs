@@ -24,18 +24,24 @@
 //! what lets `--pretend` and the committed transition come from one function
 //! rather than two that drift.
 
-use crate::model::Project;
+use crate::project::Project;
 use jails_support::Result;
 
-/// One file this upgrade rewrites, and the reasons.
+/// One file this upgrade rewrites, with its bytes already rendered.
 ///
-/// The bytes travel in `model::Artifact` rather than in a field of their own:
-/// there is one shape for "a file to write", and a second invented here would
-/// be a second one to keep in step. `Artifact::path` is **project-relative**
-/// here, because every consumer of this plan wants a `ProjectPath`.
+/// `path` is **project-relative**, because every consumer of this plan wants
+/// a `ProjectPath`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Artifact {
+    pub kind: &'static str,
+    pub path: std::path::PathBuf,
+    pub contents: String,
+}
+
+/// One file this upgrade rewrites, and the reasons.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Step {
-    pub artifact: crate::model::Artifact,
+    pub artifact: Artifact,
     /// One line per change made to this file, in the order they were applied.
     pub what: Vec<String>,
 }
@@ -112,7 +118,7 @@ pub fn plan(project: &Project, sources: &Sources) -> Result<Upgrade> {
 fn gradle(sources: &Sources, upgrade: &mut Upgrade) {
     if let Some((path, text)) = &sources.build {
         let mut edit = Step {
-            artifact: crate::model::Artifact {
+            artifact: Artifact {
                 kind: "build file",
                 path: path.into(),
                 contents: text.clone(),
@@ -190,7 +196,7 @@ fn gradle(sources: &Sources, upgrade: &mut Upgrade) {
             Some(found) => {
                 if let Some(contents) = crate::gradle::with_wrapper_version(text, target) {
                     upgrade.edits.push(Step {
-                        artifact: crate::model::Artifact {
+                        artifact: Artifact {
                             kind: "gradle wrapper",
                             path: path.into(),
                             contents,
@@ -216,7 +222,7 @@ fn maven(sources: &Sources, upgrade: &mut Upgrade) {
         return;
     };
     let mut edit = Step {
-        artifact: crate::model::Artifact {
+        artifact: Artifact {
             kind: "build file",
             path: path.into(),
             contents: text.clone(),
@@ -302,7 +308,7 @@ fn h2_types(project: &Project, sources: &Sources, upgrade: &mut Upgrade) {
             continue;
         }
         upgrade.edits.push(Step {
-            artifact: crate::model::Artifact {
+            artifact: Artifact {
                 kind: "schema",
                 path: path.into(),
                 contents: rewritten(text),
@@ -388,7 +394,7 @@ fn source_breaks(sources: &Sources, upgrade: &mut Upgrade) {
             match JACKSON_3_CHANGED.iter().any(|name| blanked.contains(name)) {
                 true => jackson.push(path.clone()),
                 false => upgrade.edits.push(Step {
-                    artifact: crate::model::Artifact {
+                    artifact: Artifact {
                         kind: "jackson package",
                         path: path.into(),
                         contents: text.replace("com.fasterxml.jackson", "tools.jackson"),

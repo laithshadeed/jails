@@ -690,10 +690,14 @@ pub(super) fn build_tool_run(
         return gradlew::tasks(&root, &borrowed, debug);
     }
     let root = maven_root("run")?;
-    let pom = fs::read_to_string(root.join("pom.xml"))
-        .map_err(|e| format!("failed to read pom.xml: {e}"))?;
+    let project = crate::project::Project::inspect(&root)?;
 
-    if pom.contains("org.springframework.boot") {
+    // Any mention of Boot, not only its dependency management: the question
+    // is which goal Maven can run, and a pom that names Boot anywhere is one
+    // `spring-boot:run` was written for. `is_spring_boot` answers a narrower
+    // question -- whether versionless starters resolve -- which is the
+    // compiler's, not the launcher's.
+    if project.build_file().contains("org.springframework.boot") {
         if no_build {
             let jar = find_built_jar(&root)?;
             let mut run = Command::new(crate::process::java_program());
@@ -719,8 +723,8 @@ pub(super) fn build_tool_run(
     // fallback for a POM that declares none -- it cannot be the primary,
     // because a project with two dispatchers has two `main` methods and a walk
     // picks whichever it reaches first.
-    let fqcn = match crate::pom::main_class(&pom) {
-        Some(declared) => declared.to_string(),
+    let fqcn = match project.facts().main_class.clone() {
+        Some(declared) => declared,
         None => {
             let (pkg, class_name) = find_main_class(&root)?;
             if pkg.is_empty() {

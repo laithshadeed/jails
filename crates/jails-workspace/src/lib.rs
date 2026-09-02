@@ -1,24 +1,20 @@
 //! Workspace capture and exact-plan materialization.
 //!
-//! The compiler cannot read the filesystem. This crate captures it once and
-//! turns semantic desired bytes into one content-addressed `PlanBundle`.
+//! The compiler cannot read the filesystem. `jails_project::capture` reads
+//! it once; this crate turns semantic desired bytes into one
+//! content-addressed `PlanBundle`, verifies it and executes it.
 
-mod capture;
-mod documents;
 mod execute;
 pub mod fault;
 mod materialize;
-mod merge;
 mod reader_facet;
 mod reconcile;
 mod verify;
 
-pub use capture::{ModelFile, capture, observe_build_system, observe_spring_boot};
-pub use documents::maven_dependency_block;
-/// The one reader of `pom.xml`. Every question about a Maven build a
-/// command asks outside capture is asked here, so a second scanner cannot
-/// answer it differently.
-pub use documents::pom;
+// The reader half lives in `jails-project`: capture, the document adapters
+// and the three-way merge produce what this crate materializes and executes.
+// Module code says `crate::capture`, `crate::documents` and `crate::merge`.
 pub use execute::{Execution, execute};
+pub(crate) use jails_project::{capture, documents, merge};
 pub use materialize::{Restore, digest, materialize};
 pub use verify::verify_bundle;

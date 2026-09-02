@@ -14,7 +14,7 @@ mod protocol;
 use crate::affected;
 use crate::build;
 use crate::launcher;
-use crate::model::Project;
+use crate::project::Project;
 use crate::testing::TestReport;
 use jails_support::Result;
 

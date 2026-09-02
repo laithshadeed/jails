@@ -1,7 +1,7 @@
 //! Read-only editor protocol projections derived from ordinary project facts.
 
 use crate::cli::{EditorCommand, EditorDiagnosticScopeArg, EditorSymbolKindArg, Output};
-use crate::{Cli, inspect, model, pom};
+use crate::{Cli, inspect, pom, project};
 use clap::CommandFactory;
 use jails_support::Result;
 use jails_support::domain_hash;
@@ -219,7 +219,7 @@ fn symbols(kind: EditorSymbolKindArg, query: Option<&str>, start: Option<&Path>)
     Ok(())
 }
 
-fn source_symbols(project: &model::Project, tests: bool) -> Vec<Symbol> {
+fn source_symbols(project: &project::Project, tests: bool) -> Vec<Symbol> {
     let source_root = project.root().join(if tests {
         "src/test/java"
     } else {
@@ -328,7 +328,7 @@ fn diagnostic_json(
     )
 }
 
-fn project_containing(start: Option<&Path>) -> Result<model::Project> {
+fn project_containing(start: Option<&Path>) -> Result<project::Project> {
     let start = match start {
         Some(path) => path.to_path_buf(),
         None => std::env::current_dir()
@@ -344,7 +344,7 @@ fn project_containing(start: Option<&Path>) -> Result<model::Project> {
             || current.join("build.gradle").is_file()
             || current.join("build.gradle.kts").is_file()
         {
-            return model::Project::load(&current);
+            return project::Project::load(&current);
         }
         if !current.pop() {
             return Err("not inside a Maven or Gradle project.\n       fix: pass `--path` beneath a project build file.".into());
@@ -352,7 +352,7 @@ fn project_containing(start: Option<&Path>) -> Result<model::Project> {
     }
 }
 
-fn root_digest(project: &model::Project) -> Result<ObjectId> {
+fn root_digest(project: &project::Project) -> Result<ObjectId> {
     let mut files = BTreeMap::new();
     for name in [
         "pom.xml",
@@ -386,7 +386,7 @@ fn root_digest(project: &model::Project) -> Result<ObjectId> {
 }
 
 fn collect_files(
-    project: &model::Project,
+    project: &project::Project,
     dir: &Path,
     output: &mut BTreeMap<String, Vec<u8>>,
 ) -> Result<()> {

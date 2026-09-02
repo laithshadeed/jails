@@ -2,7 +2,7 @@
 
 mod classpath;
 
-use crate::model::Project;
+use crate::project::Project;
 use jails_support::Result;
 use std::collections::BTreeSet;
 use std::ffi::OsString;

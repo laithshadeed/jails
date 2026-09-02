@@ -25,8 +25,7 @@
 
 use jails_contracts::{
     CapturedFile, ContentDigest, DirectoryPrecondition, FilePrecondition, Layout, MigrationHistory,
-    MigrationRecord, ProjectFacts, ProjectPath, RenderedTree, SnapshotPreconditions,
-    WorkspaceSnapshot,
+    MigrationRecord, ProjectPath, RenderedTree, SnapshotPreconditions, WorkspaceSnapshot,
 };
 use jails_model::AppModel;
 use jails_support::{hex, sha256};
@@ -36,17 +35,14 @@ use std::path::Path;
 
 mod observe;
 
-use observe::{
-    build_artifact_id, declared_dependencies, junit_version, spring_boot_version,
-    template_overrides,
-};
-pub use observe::{observe_build_system, observe_spring_boot};
+use observe::template_overrides;
+pub use observe::{facts, observe_build_system, observe_spring_boot};
 
 const MANAGED_ROOT: &str = ".jails/generated";
-pub(crate) const MIGRATION_ROOT: &str = "src/main/resources/db/migration";
+pub const MIGRATION_ROOT: &str = "src/main/resources/db/migration";
 const READER_MAIN_ROOT: &str = "src/main/java";
 const READER_TEST_ROOT: &str = "src/test/java";
-pub(crate) const COMPILER_LOCK: &str = ".jails/compiler.lock.json";
+pub const COMPILER_LOCK: &str = ".jails/compiler.lock.json";
 const COMPILER_LOCK_SCHEMA_V1: &str = "jails.compiler-lock.v1";
 const COMPILER_LOCK_SCHEMA_V2: &str = "jails.compiler-lock.v2";
 const COMPILER_LOCK_SCHEMA_V3: &str = "jails.compiler-lock.v3";
@@ -311,7 +307,6 @@ fn capture_model_state(
     for reader_path in reader_paths {
         capture_optional_file(root, reader_path.as_str(), &mut files, &mut preconditions)?;
     }
-    let build_system = observe_build_system(root);
     // Read from the capture, not from disk a second time: the whole point of
     // the snapshot is that an external fact is observed once, and a layout read
     // separately could disagree with the precondition recorded above.
@@ -319,17 +314,12 @@ fn capture_model_state(
         Some(captured) => Layout::parse(&String::from_utf8_lossy(&captured.bytes))?,
         None => Layout::default(),
     };
-    let project = ProjectFacts {
-        build_system,
-        java_release: model.project.java_release,
-        spring_boot: spring_boot_version(root, build_system),
-        base_package: model.project.base_package.clone(),
-        dependencies: declared_dependencies(root, build_system),
-        maven_wrapper: root.join("mvnw").is_file(),
-        layout,
-        junit: junit_version(root, build_system),
-        artifact_id: build_artifact_id(root, build_system),
-    };
+    // **The model is desired-state authority** for the two facts it states:
+    // the build file's release and the source tree's package are what the
+    // reader has, the model's are what the compiler emits for.
+    let mut project = observe::observed(root, layout);
+    project.java_release = model.project.java_release;
+    project.base_package = model.project.base_package.clone();
     let accepted_reader_paths = accepted
         .as_ref()
         .and_then(|state| state.projection.as_ref())
@@ -513,16 +503,6 @@ fn accepted_compiler_state(
         .transpose()
 }
 
-/// The decoder, reachable from a test in a sibling module.
-///
-/// An *older* lock must still decode, and the v1 arm is where that is
-/// asserted -- a schema branch nothing exercises is one that has already
-/// rotted without saying so.
-#[cfg(test)]
-pub(crate) fn decode_compiler_lock_for_test(bytes: &[u8]) -> Result<(), String> {
-    decode_compiler_lock(bytes).map(|_| ())
-}
-
 fn decode_compiler_lock(bytes: &[u8]) -> Result<AcceptedCompilerState, String> {
     let header: serde_json::Value = serde_json::from_slice(bytes)
         .map_err(|error| format!("could not decode `{COMPILER_LOCK}`: {error}"))?;
@@ -601,10 +581,7 @@ fn verify_model(model: &AppModel, expected: &ContentDigest) -> Result<(), String
     Ok(())
 }
 
-pub(crate) fn observe_directory(
-    root: &Path,
-    path: &ProjectPath,
-) -> Result<DirectoryPrecondition, String> {
+pub fn observe_directory(root: &Path, path: &ProjectPath) -> Result<DirectoryPrecondition, String> {
     let absolute = root.join(path.as_str());
     let metadata = match std::fs::symlink_metadata(&absolute) {
         Ok(metadata) => metadata,
@@ -771,6 +748,15 @@ mod tests {
         let accepted = decode_compiler_lock(&bytes).unwrap();
         assert!(accepted.projection.is_none());
         assert!(accepted.compiler.is_none());
+
+        // ... and a lock whose model does not match its digest is refused
+        // rather than trusted, which is the property the digest is for.
+        let mut tampered: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        tampered["model_digest"] =
+            json!("sha256:0000000000000000000000000000000000000000000000000000000000000000");
+        let error = decode_compiler_lock(&serde_json::to_vec(&tampered).unwrap())
+            .expect_err("a lock that disagrees with its own digest must refuse");
+        assert!(error.contains("compiler.lock"), "{error}");
     }
 
     #[test]

@@ -1036,35 +1036,6 @@ mod tests {
         );
     }
 
-    /// A lock written by an older jails still decodes.
-    ///
-    /// Old fixtures must decode, and the v1 envelope is the oldest there is:
-    /// no `compiler`, no `projection`. `capture` still has the arm,
-    /// and this is what proves the arm works rather than merely existing --
-    /// a schema branch nothing exercises is a branch that has already rotted.
-    #[test]
-    fn a_v1_compiler_lock_still_decodes() {
-        let model = jails_model::parse_jdl(EVERY_SHAPE).unwrap();
-        let bytes = model.canonical_json().unwrap();
-        let v1 = serde_json::json!({
-            "schema": "jails.compiler-lock.v1",
-            "model_digest": digest(&bytes).unwrap(),
-            "model": serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
-        });
-        crate::capture::decode_compiler_lock_for_test(&serde_json::to_vec(&v1).unwrap())
-            .expect("a v1 lock decodes");
-
-        // ... and a lock whose model does not match its digest is refused
-        // rather than trusted, which is the property the digest is for.
-        let mut tampered = v1.clone();
-        tampered["model_digest"] = serde_json::json!(
-            "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-        );
-        let error =
-            crate::capture::decode_compiler_lock_for_test(&serde_json::to_vec(&tampered).unwrap())
-                .expect_err("a lock that disagrees with its own digest must refuse");
-        assert!(error.contains("compiler.lock"), "{error}");
-    }
     #[test]
     fn a_partially_published_tree_converges_before_lock_acceptance() {
         let model = jails_model::parse_jdl(MODEL).unwrap();

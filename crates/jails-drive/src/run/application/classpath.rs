@@ -1,7 +1,7 @@
 //! Content-addressed Maven/Gradle runtime classpath resolution.
 
 use super::super::RunCompile;
-use crate::model::Project;
+use crate::project::Project;
 use jails_support::Result;
 use jails_support::{domain_hash, hex};
 use std::collections::BTreeSet;
@@ -303,12 +303,8 @@ fn canonical_classpath(outputs: Vec<PathBuf>, dependencies: Vec<PathBuf>) -> Res
 }
 
 fn main_class(project: &Project) -> Result<String> {
-    if project.build() == crate::build::Build::Maven {
-        let pom = fs::read_to_string(project.root().join("pom.xml"))
-            .map_err(|error| format!("failed to read pom.xml: {error}"))?;
-        if let Some(main) = crate::pom::main_class(&pom) {
-            return Ok(main.to_string());
-        }
+    if let Some(main) = &project.facts().main_class {
+        return Ok(main.clone());
     }
     let (package, class) = super::super::find_main_class(project.root())?;
     Ok(if package.is_empty() {

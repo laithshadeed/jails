@@ -282,6 +282,30 @@ pub(crate) fn artifact_id(pom: &str) -> Option<String> {
     element_text(&outside, "artifactId").map(|name| name.trim().to_string())
 }
 
+/// Every `<module>` this pom aggregates, in declaration order.
+///
+/// Paths as written, relative to the pom's own directory; the caller decides
+/// which of them exist. Commented-out modules are not modules.
+pub(crate) fn module_paths(pom: &str) -> Vec<String> {
+    let Some(block) = between(pom, "<modules>", "</modules>") else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    let mut from = 0;
+    while let Some(rel) = block[from..].find("<module>") {
+        let start = from + rel;
+        let text_start = start + "<module>".len();
+        let Some(end) = block[text_start..].find("</module>") else {
+            break;
+        };
+        if !inside_comment(block, start) {
+            found.push(block[text_start..text_start + end].trim().to_string());
+        }
+        from = text_start + end + "</module>".len();
+    }
+    found
+}
+
 /// The Spring Boot version this pom's `<parent>` pins, when it pins one.
 ///
 /// **The `<parent>` element specifically.** A project inheriting Boot through

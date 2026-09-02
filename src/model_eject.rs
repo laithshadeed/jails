@@ -25,8 +25,8 @@ pub(crate) fn run(semantic_id: String, invocation: Invocation) -> Result<()> {
             "semantic target `{semantic_id}` is already reader-owned.\n       fix: edit its source under `src/main/java`; Jails will not reclaim it"
         )));
     }
-    let build_system = jails_workspace::observe_build_system(&root);
-    let spring_boot = jails_workspace::observe_spring_boot(&root, build_system);
+    let build_system = jails_project::capture::observe_build_system(&root);
+    let spring_boot = jails_project::capture::observe_spring_boot(&root, build_system);
     let reader_paths = jails_compiler::implementation_paths(
         &current.model,
         &semantic_id,

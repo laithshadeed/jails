@@ -60,7 +60,7 @@ fn property<'a>(properties: &'a str, key: &str) -> Option<&'a str> {
         })
 }
 
-fn application_properties(project: &crate::model::Project) -> String {
+fn application_properties(project: &crate::project::Project) -> String {
     std::fs::read_to_string(
         project
             .root()
@@ -75,7 +75,7 @@ fn application_properties(project: &crate::model::Project) -> String {
 /// where a reader would look. A URL assembled at run time from an environment
 /// variable is invisible here, which is the same limit `jails routes` states
 /// about a path built at run time.
-pub(crate) fn declared_url(project: &crate::model::Project) -> Option<String> {
+pub(crate) fn declared_url(project: &crate::project::Project) -> Option<String> {
     let properties = application_properties(project);
     let url = property(&properties, "spring.datasource.url")?;
     url.starts_with("jdbc:h2:").then(|| url.to_string())
@@ -83,7 +83,7 @@ pub(crate) fn declared_url(project: &crate::model::Project) -> Option<String> {
 
 /// Open the requested client against the project's declared H2 database.
 pub fn open(
-    project: &crate::model::Project,
+    project: &crate::project::Project,
     url: &str,
     client: Client,
     args: &[String],

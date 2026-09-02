@@ -51,7 +51,7 @@ pub fn binary(root: &Path) -> PathBuf {
 /// The wrapper and the override still win -- a project that ships `mvnw`
 /// pins its own Maven, and an explicit `JAILS_MAVEN` is a choice somebody
 /// made. What this skips is only the mvnd preference.
-pub fn plain(project: &crate::model::Project) -> PathBuf {
+pub fn plain(project: &crate::project::Project) -> PathBuf {
     if let Some(chosen) = std::env::var_os(MAVEN_OVERRIDE)
         && !chosen.is_empty()
     {
@@ -153,19 +153,5 @@ mod tests {
         assert_eq!(binary(&dir), wrapper);
 
         std::fs::remove_dir_all(&dir).ok();
-    }
-
-    /// `about` must report the command that will actually be executed.
-    #[test]
-    fn about_and_run_resolve_the_same_maven() {
-        // `an_explicit_maven_command_wins` temporarily mutates JAILS_MAVEN.
-        // Hold the same process-global-state lock so the two resolver calls
-        // below observe one environment snapshot when tests run in parallel.
-        let _guard = jails_testkit::hold_cwd();
-        let root = std::env::temp_dir();
-        assert_eq!(
-            crate::project::maven_command_for_tests(&root),
-            binary(&root)
-        );
     }
 }

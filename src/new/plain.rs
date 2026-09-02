@@ -246,7 +246,7 @@ pub(super) fn pom_xml(artifact: &str, group: &str, package: &str, java: &str) ->
     // block differ in whitespace or an omitted `<scope>` long before anyone
     // notices, and the difference surfaces as a surprise diff in a file the
     // reader believes jails has not touched since it created the project.
-    let dependencies = jails_workspace::maven_dependency_block(&seed_dependencies())
+    let dependencies = jails_project::documents::maven_dependency_block(&seed_dependencies())
         .map(|block| {
             block
                 .lines()

@@ -7,6 +7,9 @@ edition.workspace = true
 jails-codemod.workspace = true
 jails-contracts.workspace = true
 jails-model.workspace = true
+# Capture, the document adapters and the three-way merge: the reader half of
+# the workspace, which the executor below consumes and never re-derives.
+jails-project.workspace = true
 jails-support.workspace = true
 fs2.workspace = true
 serde.workspace = true

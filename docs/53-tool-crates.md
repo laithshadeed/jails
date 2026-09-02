@@ -59,6 +59,10 @@ Every step is closed. The Traps below outlive them.
   comments stripped, and read what comes back at one.
 - **`inspect` is not dead.** `routes` and `beans` reach it through the root
   facade. `project::about` too.
+- **`Project` is a root plus `ProjectFacts`, and the facts come from
+  `capture::observe`.** A command that wants a fact the snapshot lacks adds
+  it to `ProjectFacts` there; a second reader beside the capture is the
+  second project model coming back.
 - **`gradle.rs`'s bar is answer exactly or refuse.** Nothing here may make it
   guess. A Gradle question the canonical adapter cannot answer is a refusal
   with a `fix:`, not a heuristic.
@@ -66,11 +70,6 @@ Every step is closed. The Traps below outlive them.
   you delete or fold lowers the count; if a gate's floor was set near it, the
   gate reports the tree as lost. Lower the floor in the same change and say
   why.
-
-## Items you close elsewhere
-
-`docs/00-contracts.md` §1.7 row *`Project`/`ProjectContext`/snapshot
-overlap*.
 
 ## Green
 

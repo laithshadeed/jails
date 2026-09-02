@@ -39,7 +39,7 @@ pub fn db(
         }
         return sqlite3(&root, path, args, debug);
     }
-    let project = crate::model::Project::discover()?;
+    let project = crate::project::Project::discover()?;
     if let Some(url) = h2::declared_url(&project) {
         let client = match web {
             true => H2Client::Web,
@@ -159,7 +159,7 @@ pub fn spring_console(
     args: &[String],
     debug: bool,
 ) -> Result<()> {
-    let project = crate::model::Project::discover()?;
+    let project = crate::project::Project::discover()?;
     let root = project.root();
     let jshell = selected_jshell(&project, debug)?;
     let main = main
@@ -207,7 +207,7 @@ pub fn runner(
     yes: bool,
     debug: bool,
 ) -> Result<()> {
-    let project = crate::model::Project::discover()?;
+    let project = crate::project::Project::discover()?;
     let root = project.root();
     let jshell = selected_jshell(&project, debug)?;
     let main = main
@@ -326,7 +326,7 @@ fn spring_startup(main: &str, profiles: &[String], web: WebMode) -> String {
 }
 
 fn confirm_boot(
-    project: &crate::model::Project,
+    project: &crate::project::Project,
     main: &str,
     profiles: &[String],
     web: WebMode,
@@ -383,7 +383,7 @@ fn confirm_boot(
     )
 }
 
-fn datasource_sources(project: &crate::model::Project) -> String {
+fn datasource_sources(project: &crate::project::Project) -> String {
     let root = project.root();
     let resources = root.join("src/main/resources");
     let mut sources = fs::read_dir(&resources)
@@ -453,7 +453,7 @@ fn write_private(path: &Path, body: &[u8]) -> Result<()> {
     jails_support::apply::put_in_scratch(path, body)
 }
 
-fn selected_jshell(project: &crate::model::Project, debug: bool) -> Result<PathBuf> {
+fn selected_jshell(project: &crate::project::Project, debug: bool) -> Result<PathBuf> {
     let java = run::selected_java(project, debug)?;
     let jshell = java.with_file_name(if cfg!(windows) {
         "jshell.exe"

@@ -401,20 +401,25 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-compiler", "plan_effects", 4),
     ("jails-compiler", "storage", 4),
     ("jails-compiler", "emit_unit", 4),
-    // The only canonical filesystem capture/materialization/execution owner.
-    ("jails-workspace", "capture", 5),
-    ("jails-workspace", "documents", 5),
-    ("jails-workspace", "execute", 5),
-    ("jails-workspace", "fault", 5),
-    ("jails-workspace", "materialize", 5),
-    ("jails-workspace", "merge", 5),
-    ("jails-workspace", "reader_facet", 5),
-    ("jails-workspace", "reconcile", 5),
-    ("jails-workspace", "verify", 5),
+    // The only canonical materialization/execution owner. It sits above
+    // `jails-project`, which captures what it materializes.
+    ("jails-workspace", "execute", 6),
+    ("jails-workspace", "fault", 6),
+    ("jails-workspace", "materialize", 6),
+    ("jails-workspace", "reader_facet", 6),
+    ("jails-workspace", "reconcile", 6),
+    ("jails-workspace", "verify", 6),
     // jails-protocol: the validated values every closed format is built from.
     // jails-state: `.jails/` and what a directory holds. Below the Java
     // project on purpose -- `jails-commit` needs both and neither is about Java.
-    // jails-project: the resolved project and everything jails records about it.
+    // jails-project: the reader. It captures every external fact once
+    // (`capture` produces `ProjectFacts` and the captured files, `documents`
+    // holds the adapters over the reader's own files and the one Maven
+    // reader, `merge` is the three-way merge they share) and resolves the
+    // `Project` every command above reads its facts from.
+    ("jails-project", "capture", 5),
+    ("jails-project", "documents", 5),
+    ("jails-project", "merge", 5),
     ("jails-project", "gradle", 5),
     ("jails-project", "maven", 5),
     ("jails-project", "capability", 5),
@@ -422,7 +427,6 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-project", "synonyms", 5),
     ("jails-project", "compose", 5),
     ("jails-project", "feature", 5),
-    ("jails-project", "model", 5),
     ("jails-project", "modernize", 5),
     ("jails-project", "project", 5),
     ("jails-project", "properties", 5),
@@ -823,20 +827,12 @@ const DEFAULT_BRANCH_IS_EXECUTED: &[(&str, &str)] = &[
         "crates/jails-project/src/gradle.rs",
         "the_boot_version_is_read_from_the_modern_plugins_block",
     ),
-    (
-        "crates/jails-project/src/model/mod.rs",
-        "generate_scaffold_produces_a_project_that_compiles_and_passes_tests",
-    ),
-    (
-        "crates/jails-project/src/project.rs",
-        "the_boot_version_is_read_from_the_modern_plugins_block",
-    ),
     // The one reader of `pom.xml`: `spring_boot_major_of` answers 3 for a pom
     // with no readable Boot parent, and every package name that moved in Boot
     // 4 is chosen from it. The named test compiles a scaffold on the Boot 4
     // fixture with real Maven, so the default branch is the one that resolves.
     (
-        "crates/jails-workspace/src/documents/pom.rs",
+        "crates/jails-project/src/documents/pom.rs",
         "generate_scaffold_produces_a_project_that_compiles_and_passes_tests",
     ),
     (

@@ -102,6 +102,70 @@ pub struct ProjectFacts {
     /// build states neither, and the caller falls back to the model.
     #[serde(default)]
     pub artifact_id: Option<String>,
+    /// Every coordinate the build file declares, jails' own block included.
+    ///
+    /// `dependencies` is the *reader's* set: capture strips the marked block
+    /// jails writes before reading, because a compiler that saw its own
+    /// block would decline to declare what it had declared and empty it.
+    /// That is the right question for reconciliation and the wrong one for
+    /// `doctor`, which asks what is on the classpath -- and a starter `add
+    /// db` put in jails' block is on the classpath. One reader, two sets.
+    #[serde(default)]
+    pub build_dependencies: BTreeSet<String>,
+    /// The Maven reactor this project belongs to, and what it inherits.
+    #[serde(default)]
+    pub reactor: Reactor,
+    /// The class the packaged artifact starts, when the build names one:
+    /// `<mainClass>` on Maven, `bootJar { mainClass }` on Gradle.
+    ///
+    /// `None` when it names none. A Boot project leaves the plugin to find
+    /// the entry point, and `g cli` retargets only a stub jails wrote; `jails
+    /// run` starts this class first because a project with two dispatchers
+    /// has two `main` methods and a source walk picks whichever it reaches.
+    #[serde(default)]
+    pub main_class: Option<String>,
+}
+
+/// The Maven reactor a project belongs to, as the build files state it.
+///
+/// A module three directories below its aggregator inherits the reactor's
+/// Java release and Boot management without stating either, so the facts a
+/// reader is told about a module are the facts of the walk up to the reactor,
+/// not of one file. A standalone project is its own reactor. On Gradle the
+/// reactor is the project itself and `modules` is empty: Gradle's
+/// multi-project model is `settings.gradle`'s `include` lines, a different
+/// shape that is not read, and an empty list means *not read* rather than
+/// *none*.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct Reactor {
+    /// The reactor root relative to the project root: empty for a standalone
+    /// project, `..` for a module one level below its aggregator. Relative,
+    /// so a snapshot carries no machine path.
+    pub root: String,
+    /// The reactor's own `<artifactId>`.
+    pub artifact_id: Option<String>,
+    /// The nearest Java release stated between the project and its reactor,
+    /// and `None` when no build file on that path states one.
+    ///
+    /// **The build's answer, not the model's.** [`ProjectFacts::java_release`]
+    /// is what the compiler emits for and comes from the model; this is what
+    /// `doctor` compares the JDK against and what a seed model adopts.
+    pub java_release: Option<u16>,
+    /// Whether Spring Boot's dependency management reaches this project: a
+    /// Boot parent or an imported Boot BOM in any build file between it and
+    /// its reactor, or the Boot plugin on Gradle.
+    pub spring_boot: bool,
+    /// Every module the reactor aggregates, transitively, in declaration
+    /// order and without the reactor itself.
+    pub modules: Vec<ReactorModule>,
+}
+
+/// One module a reactor aggregates.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ReactorModule {
+    /// Relative to the reactor root.
+    pub path: String,
+    pub artifact_id: Option<String>,
 }
 
 impl ProjectFacts {
@@ -116,6 +180,9 @@ impl ProjectFacts {
             layout: Layout::default(),
             junit: None,
             artifact_id: None,
+            build_dependencies: BTreeSet::new(),
+            reactor: Reactor::default(),
+            main_class: None,
         }
     }
 }

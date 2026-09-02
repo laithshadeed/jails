@@ -1,7 +1,7 @@
 //! Read-only, source-bounded `jails why <subject> <name>` reports.
 
 use jails_project::inspect;
-use jails_project::model::Project;
+use jails_project::project::Project;
 use jails_support::Result;
 
 const LIMITATION: &str = "profiles, conditions, post-processors, proxies, programmatic beans, and runtime database state are not evaluated";

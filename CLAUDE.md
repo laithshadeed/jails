@@ -110,6 +110,19 @@ commands and then reads the tree does not catch a frontend that forgot this --
 the second command repairs the first one's omission -- so assert after each
 command.
 
+**The snapshot is the only project model.** `ProjectFacts` is the one answer
+to "what is this project", and `jails_project::capture::observe` is the one
+reader that produces it, for the snapshot the compiler reads and for the
+`Project` every command above the compiler takes (`jails_project::project`):
+a root, the facts, and the captured text of the build file for the questions
+`gradle.rs` answers exactly or refuses. A fact a command needs that the
+snapshot lacks is added to `ProjectFacts` by capture -- `main_class`,
+`build_dependencies` (jails' own block included, because `doctor` asks what
+is on the classpath and the compiler asks what the reader declared) and the
+`reactor` walk `jails about` prints are the three added this way -- never
+read again beside it. No module outside `capture` reads the pom, and the
+board's Maven-scanner row holds the count at one.
+
 **Every advertised generator and capability has a compiler backend: 39 of 39
 and 25 of 25**, held by `canonical_support::registry_classifies_every_advertised_word`.
 `scaffold` is one typed entity profile over four facets. `migration` is
@@ -176,12 +189,12 @@ to** -- this is the prose, and prose goes stale.
 | `jails-model` | closed source schema, stable IDs, linking, semantic diagnostics, `AppModel`, `Evolution`, the removal guards, **and every closed vocabulary** -- `Layer`, `CapabilityKind`, `ArtifactKind`, `EndpointMethod`, `RequestFormat`, `Precondition`, `BuildSystem` and the compact field syntax |
 | `jails-contracts` | portable `WorkspaceSnapshot`, `PlanDraft`, exact `Plan`, operations, trees and blobs |
 | `jails-compiler` | pure semantic lowering; no filesystem, environment or subprocess access |
-| `jails-workspace` | capture, exact materialization, verification and the single executor |
+| `jails-workspace` | exact materialization, verification and the single executor, over what `jails-project` captured |
 | `jails-codemod` | the marked block, the `@Import` splice, `blanked`; **no dependencies at all**, so both `jails-compiler` and `jails-project` can reach it |
 | `jails-support` | write, run, hash and name: `apply` (the only module that writes), `process`, `hermetic`, `scratch`, `git`, `unified`, `lock`, `digest` (SHA-256, domain separation and hex, re-exported at the root), the validating newtypes, `Result` and `Failure` |
 | `jails-spec` | where a project is and what builds it: `find_project_root`, `build`, plus `policy`, `coordinate`, `constant`, `suffix` and `release` (the three version pins a generated project carries). No vocabulary of its own and no clap |
 | `jails-testkit` | `hold_cwd()`, taken as a `[dev-dependency]`; not `#[cfg(test)]`, because a dependent crate's tests cannot see one |
-| `jails-project` | one resolved `Project`, every reader-owned file jails reads or edits: `config` (`jails.toml`), `compose`, `gradle`, `inspect`; and reading Java: `java` (the small reader), `classfile` (the constant-pool reader), `template` (rendering into it). `pom` is re-exported from `jails-workspace`, which owns the one Maven reader |
+| `jails-project` | **the reader**: `capture` (the one place jails looks at a project; its `observe` half produces the `ProjectFacts` the snapshot and every command read), `documents` (the adapters over the reader's build file, properties and compose file, and `pom`, the one Maven reader), `merge` (the three-way merge), `project::Project` (a root plus its `ProjectFacts`), every reader-owned file jails edits: `config` (`jails.toml`), `compose`, `gradle`, `inspect`; and reading Java: `java` (the small reader), `classfile` (the constant-pool reader), `template` (rendering into it) |
 | `jails-drive` | commands that **start something**: `run`, `test`, `testd`, `affected`, `migrate`, `kafka`, `console`, `bench`, `lint`; the one edge back down is `run` to `report::why` |
 | `jails-report` | commands that **answer a question**: `doctor`, `why`, `explain`, `src`, `commands`; read-only because the crate sits below `jails-drive` |
 | `jails` (root) | the binary: `main`, `cli`, `dispatch`, `new`, `app`, the `model_*` frontends, and `tests/` |
@@ -400,12 +413,12 @@ would be the second copy.
   unrecognised directory is reported, not guessed; two candidates for one layer
   writes neither; it never touches `[project] capabilities`. `core` is
   deliberately not a synonym for `domain`.
-- **`crates/jails-workspace/src/documents/pom.rs`** -- **the one reader of
+- **`crates/jails-project/src/documents/pom.rs`** -- **the one reader of
   `pom.xml`, and the one thing that splices into it.** Capture asks it what
   the build declares, the dependency and build-feature adapters beside it ask
   where a block goes, and `new` and `modernize` ask it for the two edits they
-  make before a model exists; `jails-project` re-exports it as `crate::pom` so
-  `doctor`, `why` and `run` ask the same reader. The board row *production
+  make before a model exists; `doctor`, `why` and `run` ask the resolved
+  `Project`, whose facts came from the same reader. The board row *production
   files parsing Maven XML with their own scanner* is what keeps it the only
   one. `plugin_nest` is written once and read twice -- inserted, and compared
   against what is on disk to tell a reader's edit from jails' own writing. The

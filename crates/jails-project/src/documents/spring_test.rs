@@ -29,7 +29,7 @@ const READER_MAIN_ROOT: &str = "src/main/java/";
 /// once the project already agrees, so a converged plan writes nothing.
 ///
 /// Ordered by path, so a plan built twice from one snapshot is one plan.
-pub(crate) fn spring_boot_test_targets(
+pub fn spring_boot_test_targets(
     snapshot: &WorkspaceSnapshot,
     class: &str,
     wanted: bool,
@@ -57,7 +57,7 @@ pub(crate) fn spring_boot_test_targets(
 /// Returns the source unchanged when there is no `@SpringBootTest` to anchor
 /// to, which `spring_boot_test_targets` has already ruled out — the fallback
 /// exists so a race between capture and materialize cannot corrupt a file.
-pub(crate) fn ensure_spring_test_import(text: &str, class: &str, package: &str) -> String {
+pub fn ensure_spring_test_import(text: &str, class: &str, package: &str) -> String {
     let extra = if text.starts_with(&format!("package {package};"))
         || text.contains(&format!("\npackage {package};"))
     {
@@ -75,7 +75,7 @@ pub(crate) fn ensure_spring_test_import(text: &str, class: &str, package: &str) 
 /// reason: the annotation names the class, so nothing has to be remembered
 /// between the two calls. Unchanged source when the annotation is not there,
 /// which `spring_boot_test_targets` has already ruled out.
-pub(crate) fn remove_spring_test_import(text: &str, class: &str, package: &str) -> String {
+pub fn remove_spring_test_import(text: &str, class: &str, package: &str) -> String {
     let extra = format!("import {package}.{class};");
     jails_codemod::annotate::unsplice_import(text, class, &extra)
         .unwrap_or_else(|| text.to_string())
@@ -91,7 +91,7 @@ pub(crate) fn remove_spring_test_import(text: &str, class: &str, package: &str) 
 /// `None` for "several" is deliberate. A project with two dispatchers has two
 /// answers, and picking one silently is how a jar and `jails run` start
 /// different classes.
-pub(crate) fn command_dispatcher(snapshot: &WorkspaceSnapshot) -> Option<ProjectPath> {
+pub fn command_dispatcher(snapshot: &WorkspaceSnapshot) -> Option<ProjectPath> {
     let mut found = snapshot
         .files
         .iter()
@@ -117,7 +117,7 @@ pub(crate) fn command_dispatcher(snapshot: &WorkspaceSnapshot) -> Option<Project
 /// point out from under a dispatcher it believed was in use. Blanking
 /// replaces comments with spaces of the same length, so the example cannot be
 /// mistaken for code.
-pub(crate) fn ensure_command_registration(text: &str, class: &str, package: &str) -> String {
+pub fn ensure_command_registration(text: &str, class: &str, package: &str) -> String {
     if jails_codemod::text::blanked(text).contains(&format!("commands.put({class}.NAME")) {
         return text.to_string();
     }
@@ -136,7 +136,7 @@ pub(crate) fn ensure_command_registration(text: &str, class: &str, package: &str
 ///
 /// Unchanged when the POM declares no main class -- a Spring Boot project,
 /// where the plugin finds `@SpringBootApplication` itself.
-pub(crate) fn set_maven_main_class(pom: &str, class: &str) -> String {
+pub fn set_maven_main_class(pom: &str, class: &str) -> String {
     const OPEN: &str = "<mainClass>";
     let Some(start) = pom.find(OPEN).map(|at| at + OPEN.len()) else {
         return pom.to_string();

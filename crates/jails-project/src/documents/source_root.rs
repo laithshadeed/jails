@@ -38,7 +38,7 @@ const MANAGED_SOURCE_PREFIX: &str = ".jails/generated/";
 /// only jails' to remove if every path it declares is under the managed root:
 /// anything else means a reader put it there, and the refusal below says so
 /// instead of discarding it.
-pub(crate) fn ensure_maven_source_roots(
+pub fn ensure_maven_source_roots(
     text: &str,
     roots: &[jails_contracts::MavenSourceRoot],
 ) -> Result<String, String> {
@@ -204,7 +204,7 @@ fn declared_paths(block: &str) -> impl Iterator<Item = &str> {
         })
 }
 
-pub(crate) fn ensure_gradle_source_root(
+pub fn ensure_gradle_source_root(
     text: &str,
     source: &str,
     source_set: jails_contracts::JavaSourceSet,

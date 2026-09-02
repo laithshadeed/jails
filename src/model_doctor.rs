@@ -52,14 +52,14 @@ fn collect() -> Result<Vec<Check>> {
     let manifest = crate::model_command::resolve_manifest(None)?;
     let root = crate::model_command::root()?;
     let (source, model) = crate::model_command::load_model(&root, &manifest, crate::Output::Human)?;
-    let snapshot = jails_workspace::capture(
+    let snapshot = jails_project::capture::capture(
         &root,
         &manifest,
         source.as_bytes(),
         model,
         None,
         &[],
-        jails_workspace::ModelFile::Observed,
+        jails_project::capture::ModelFile::Observed,
     )
     .map_err(|error| jails_support::Failure::Told(error.to_string()))?;
 

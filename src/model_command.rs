@@ -81,7 +81,7 @@ pub(crate) fn read_source(root: &Path, model_path: &Path) -> Result<String> {
         // `jdl 1` by construction, so putting it through the dialect test
         // would only be able to fail on a bug in the deriver.
         Err(error) if error.kind() == std::io::ErrorKind::NotFound && !owns(root) => {
-            return jails_project::model::Project::load(root)
+            return jails_project::project::Project::load(root)
                 .and_then(|project| crate::model_init::derive(&project));
         }
         Err(error) => {
@@ -204,7 +204,7 @@ pub(crate) fn ensure_owned(invocation: Invocation) -> Result<()> {
     // so a directory that is not one has no model to derive and no mutation to
     // apply, and saying so before planning is what turns a report about a
     // missing `.jails/model.jdl` into the answer the reader needs.
-    jails_project::model::Project::load(&root).map(|_| ())
+    jails_project::project::Project::load(&root).map(|_| ())
 }
 
 /// `jails sync`: recompile the model as it stands and make the tree match.
@@ -667,14 +667,14 @@ fn compile(
     notice: Notice,
 ) -> Result<jails_contracts::PlanBundle> {
     let reader_paths = jails_compiler::external_project_paths(&model);
-    let snapshot = jails_workspace::capture(
+    let snapshot = jails_project::capture::capture(
         root,
         manifest,
         source,
         model,
         None,
         &reader_paths,
-        jails_workspace::ModelFile::Observed,
+        jails_project::capture::ModelFile::Observed,
     )
     .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
     let draft = jails_compiler::Compiler::compile(
@@ -806,7 +806,7 @@ pub(crate) fn load_model(
             // honest answer there is still that the model is missing --
             // reporting why the *derivation* failed would answer a question
             // the reader did not ask.
-            let derived = jails_project::model::Project::load(root)
+            let derived = jails_project::project::Project::load(root)
                 .and_then(|project| crate::model_init::derive(&project));
             match derived {
                 Ok(source) => source,

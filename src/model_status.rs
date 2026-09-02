@@ -111,14 +111,14 @@ pub(crate) fn run(selector: &str, live: Option<Live>, invocation: Invocation) ->
     let (source, model) =
         crate::model_command::load_model(&invocation.root()?, &manifest, invocation.output)?;
     let root = crate::model_command::root()?;
-    let snapshot = jails_workspace::capture(
+    let snapshot = jails_project::capture::capture(
         &root,
         &manifest,
         source.as_bytes(),
         model,
         None,
         &[],
-        jails_workspace::ModelFile::Observed,
+        jails_project::capture::ModelFile::Observed,
     )
     .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
     let report = inspect(&snapshot, selector, live.as_ref());

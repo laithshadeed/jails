@@ -7,12 +7,12 @@ use jails_support::scratch::ScratchDir;
 use jails_support::{hex, sha256};
 use std::time::Duration;
 
-pub(crate) enum Merged {
+pub enum Merged {
     Clean(Vec<u8>),
     Conflicted { hunks: usize },
 }
 
-pub(crate) fn three_way(
+pub fn three_way(
     path: &ProjectPath,
     base: &[u8],
     current: &[u8],

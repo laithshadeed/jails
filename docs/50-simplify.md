@@ -71,9 +71,10 @@ plan carries the command that re-checks it.
    20 call sites and by `emit_capability::render` at one; 19 `format!` sites
    still write an `import` line by hand. Plan `55`.
 
-3. **The tool crates still carry a second project model** beside the
-   snapshot (the second Maven parser is gone: one element walk in
-   `jails-workspace/src/documents/pom.rs`). Plan `53`.
+3. **There is no second project model.** `Project` is a root plus the
+   `ProjectFacts` capture observes, `jails-project` is the reader that
+   produces them, and the one Maven parser is one element walk in
+   `jails-project/src/documents/pom.rs` (S60.4, closed).
 
 4. **There is no second wire format.** The test-execution stacks became one
    vocabulary over a `serde` daemon protocol, and the codec and its derive

@@ -14,8 +14,8 @@
 //! through the compiler -- there is no declaration here for a model to hold.
 
 use crate::Invocation;
-use jails_project::model::Project;
 use jails_project::modernize::Sources;
+use jails_project::project::Project;
 use jails_support::{Failure, Result};
 
 pub(crate) fn run(invocation: Invocation) -> Result<()> {

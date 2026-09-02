@@ -13,8 +13,7 @@
 
 use super::{Check, Status};
 use crate::compose;
-use crate::model::Project;
-use crate::pom;
+use crate::project::Project;
 use std::path::Path;
 
 mod storage;
@@ -22,13 +21,8 @@ mod storage;
 pub(super) use storage::{database_checks, in_memory_adapter_check, sql_init_checks};
 pub(super) fn kafka_check(project: &Project) -> Check {
     let root: &Path = project.root();
-    let pom_text: &str = project.pom();
-    let has_client = pom::has_dependency(pom_text, "org.apache.kafka", "kafka-clients")
-        || pom::has_dependency(
-            pom_text,
-            "org.springframework.boot",
-            "spring-boot-starter-kafka",
-        );
+    let has_client = project.has_dependency("org.apache.kafka", "kafka-clients")
+        || project.has_dependency("org.springframework.boot", "spring-boot-starter-kafka");
     let yaml = compose::read(root).unwrap_or_default();
     let has_broker = compose::declares(&yaml, "kafka") || yaml.contains("\n  kafka:");
     match (has_client, has_broker) {
@@ -179,7 +173,7 @@ pub(super) fn duplicate_key_check(project: &Project) -> Check {
 
 /// Where `add api` put the advice, honouring a `jails.toml` layer rename.
 fn api_advice(project: &Project) -> Option<std::path::PathBuf> {
-    let package = project.package_named(crate::layout::Layer::Api.package(), None);
+    let package = project.package(crate::layout::Layer::Api);
     let path = project
         .root()
         .join("src/main/java")
@@ -193,12 +187,7 @@ fn api_advice(project: &Project) -> Option<std::path::PathBuf> {
 /// which is exactly why they belong in `doctor`.
 pub(super) fn management_checks(project: &Project) -> Vec<Check> {
     let root: &Path = project.root();
-    let pom_text: &str = project.pom();
-    if !pom::has_dependency(
-        pom_text,
-        "org.springframework.boot",
-        "spring-boot-starter-actuator",
-    ) {
+    if !project.has_dependency("org.springframework.boot", "spring-boot-starter-actuator") {
         return Vec::new();
     }
     let path = root.join("src/main/resources/application.properties");
@@ -276,15 +265,14 @@ pub(super) fn management_checks(project: &Project) -> Vec<Check> {
 
 pub(super) fn cors_checks(project: &Project) -> Vec<Check> {
     let root: &Path = project.root();
-    let pom_text: &str = project.pom();
     // Either spelling. Boot 4 renamed the starter and deprecated the old
     // name, but `spring-boot-starter-web` is what every project written
     // before that says -- and those are exactly the projects being adopted.
     // Matching only the new name would report nothing on an adopted project
     // whose `@EnableWebMvc` is silently discarding every `spring.jackson.*`
     // property it has.
-    if !pom_text.contains("spring-boot-starter-webmvc")
-        && !pom_text.contains("spring-boot-starter-web")
+    if !project.has_dependency("org.springframework.boot", "spring-boot-starter-webmvc")
+        && !project.has_dependency("org.springframework.boot", "spring-boot-starter-web")
     {
         return Vec::new();
     }
@@ -425,22 +413,15 @@ pub(super) fn virtual_thread_checks(root: &Path) -> Vec<Check> {
 /// nothing, which reads as "hot reload doesn't work here" rather than as a
 /// setting somebody chose.
 pub(super) fn hot_reload_checks(project: &Project) -> Vec<Check> {
-    let pom_text = project.pom();
-    if !pom::has_dependency(
-        pom_text,
-        "org.springframework.boot",
-        "spring-boot-starter-parent",
-    ) && !pom::has_dependency(
-        pom_text,
-        "org.springframework.boot",
-        "spring-boot-starter-web",
-    ) {
+    if !project.is_spring_boot()
+        && !project.has_dependency("org.springframework.boot", "spring-boot-starter-web")
+    {
         return Vec::new();
     }
     let root = project.root();
     let mut checks = Vec::new();
 
-    if !pom::has_dependency(pom_text, "org.springframework.boot", "spring-boot-devtools") {
+    if !project.has_dependency("org.springframework.boot", "spring-boot-devtools") {
         checks.push(
             Check::new(
                 Status::Warn,

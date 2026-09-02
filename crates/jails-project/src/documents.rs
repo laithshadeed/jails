@@ -13,19 +13,19 @@ pub mod pom;
 mod source_root;
 mod spring_test;
 
-pub(crate) use build_feature::{reconcile_gradle_build_features, reconcile_maven_build_features};
+pub use build_feature::{reconcile_gradle_build_features, reconcile_maven_build_features};
 // The one walk of a Maven POM, so the adapters here and the capture beside
 // them agree about where an element begins and ends.
 pub(crate) use pom::direct_child_close;
-pub(crate) use source_root::{ensure_gradle_source_root, ensure_maven_source_roots};
-pub(crate) use spring_test::{
+pub use source_root::{ensure_gradle_source_root, ensure_maven_source_roots};
+pub use spring_test::{
     command_dispatcher, ensure_command_registration, ensure_spring_test_import,
     remove_spring_test_import, set_maven_main_class, spring_boot_test_targets,
 };
 
 pub(crate) const DEPENDENCY_MARKER: &str = "jails:dependencies";
 
-pub(crate) fn reconcile_properties(
+pub fn reconcile_properties(
     text: &str,
     previous: &[jails_contracts::PropertyEntry],
     desired: &[jails_contracts::PropertyEntry],
@@ -122,7 +122,7 @@ const COMPOSE_HEADER: &str = "# Local development services. `jails add` / `jails
 /// live reader document, and `desired` is the next compiler block. The block
 /// itself therefore has normal BASE/OURS/THEIRS behavior while every byte
 /// outside it is copied verbatim.
-pub(crate) fn reconcile_compose_service(
+pub fn reconcile_compose_service(
     path: &jails_contracts::ProjectPath,
     text: &str,
     service: &str,
@@ -369,7 +369,7 @@ fn escape_property_value(value: &str) -> String {
     output
 }
 
-pub(crate) fn reconcile_maven_dependencies(
+pub fn reconcile_maven_dependencies(
     text: &str,
     dependencies: &[jails_contracts::BuildDependency],
 ) -> Result<String, String> {
@@ -401,7 +401,7 @@ pub(crate) fn reconcile_maven_dependencies(
     Ok(insert_at_line(text, at, &section))
 }
 
-pub(crate) fn reconcile_gradle_dependencies(
+pub fn reconcile_gradle_dependencies(
     text: &str,
     dependencies: &[jails_contracts::BuildDependency],
     kotlin: bool,

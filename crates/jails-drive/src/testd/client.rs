@@ -5,8 +5,8 @@
 //! that vocabulary, and nothing above it knows the frames.
 
 use crate::launcher;
-use crate::model::Project;
 use crate::process::CommandSpec;
+use crate::project::Project;
 use crate::testing::{TestCaseResult, TestEngine, TestReport, TestScope};
 use jails_support::Result;
 use jails_support::identity::ObjectId;
@@ -208,7 +208,7 @@ impl Client {
             .map_err(|error| format!("failed to join daemon classpath: {error}"))?;
         let outputs = std::env::join_paths(&classpath.outputs)
             .map_err(|error| format!("failed to join test outputs: {error}"))?;
-        if !project.pom().contains("junit-platform-console") {
+        if !project.has_dependency("org.junit.platform", "junit-platform-console") {
             return Err("testd needs junit-platform-console on the test classpath\n       fix: run `jails test --fast` once to install the matching launcher".into());
         }
         let cookie = secret()?;

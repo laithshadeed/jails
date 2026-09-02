@@ -1,7 +1,7 @@
 //! Read-only portable HTTP contract projection and compatibility checks.
 
 use crate::cli::{ContractCommand, ContractFormatArg, ContractScopeArg};
-use crate::{inspect, model};
+use crate::{inspect, project};
 use jails_support::Result;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
@@ -10,7 +10,7 @@ use std::path::Path;
 pub(crate) fn run(command: ContractCommand, invocation: crate::Invocation) -> Result<()> {
     match command {
         ContractCommand::Emit { format, out } => {
-            let project = model::Project::discover()?;
+            let project = project::Project::discover()?;
             let mut document = emit(&project, format, ContractScopeArg::Source);
             document.push('\n');
             match out {
@@ -27,7 +27,7 @@ pub(crate) fn run(command: ContractCommand, invocation: crate::Invocation) -> Re
                     // contract document is a projection of the source that
                     // already exists: nothing declares it, nothing reconciles
                     // it, and re-running is how it is refreshed.
-                    let root = model::Project::discover()?.root().to_path_buf();
+                    let root = project::Project::discover()?.root().to_path_buf();
                     let target = root.join(out);
                     if invocation.pretend {
                         println!("--pretend: would write {out}");
@@ -40,7 +40,7 @@ pub(crate) fn run(command: ContractCommand, invocation: crate::Invocation) -> Re
             }
         }
         ContractCommand::Check { against, scope } => {
-            let project = model::Project::discover()?;
+            let project = project::Project::discover()?;
             let current = emit(&project, ContractFormatArg::Openapi, scope);
             let baseline = baseline(&project, &against)?;
             let breaking = compatibility_breaks(&baseline, &current)?;
@@ -78,7 +78,7 @@ pub(crate) fn run(command: ContractCommand, invocation: crate::Invocation) -> Re
     }
 }
 
-fn emit(project: &model::Project, format: ContractFormatArg, scope: ContractScopeArg) -> String {
+fn emit(project: &project::Project, format: ContractFormatArg, scope: ContractScopeArg) -> String {
     let routes = inspect::collect_routes(project.root());
     match format {
         ContractFormatArg::Openapi => {
@@ -120,7 +120,7 @@ fn emit(project: &model::Project, format: ContractFormatArg, scope: ContractScop
     }
 }
 
-fn baseline(project: &model::Project, against: &str) -> Result<String> {
+fn baseline(project: &project::Project, against: &str) -> Result<String> {
     let file = Path::new(against);
     if file.is_file() {
         return std::fs::read_to_string(file).map_err(|error| {

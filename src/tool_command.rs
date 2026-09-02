@@ -1,7 +1,7 @@
 //! Transparent adapters for curl, database clients, JShell, and Compose logs.
 
 use crate::cli::{DatabaseClientArg, Output, WebModeArg};
-use crate::{console, inspect, model};
+use crate::{console, inspect, project};
 use jails_support::Result;
 use jails_support::process::{CommandSpec, Diagnostics, OutputMode};
 use std::collections::{BTreeMap, BTreeSet};
@@ -31,7 +31,7 @@ pub(crate) fn request(request: HttpRequest, invocation: crate::Invocation) -> Re
                 .into(),
         );
     }
-    let project = model::Project::discover()?;
+    let project = project::Project::discover()?;
     let method = request.method.to_ascii_uppercase();
     if !matches!(
         method.as_str(),
@@ -287,7 +287,7 @@ pub(crate) fn logs(
     if let Some(since) = since {
         validate_duration(since)?;
     }
-    let project = model::Project::discover()?;
+    let project = project::Project::discover()?;
     let yaml = jails_project::compose::read(project.root())?;
     let declared = declared_services(&yaml);
     let selected = if services.is_empty() {
