@@ -202,7 +202,8 @@ Migrations, model revisions and explicit reader-file patches are
 **irreproducible** operations and stay visible in the plan rather than being
 smuggled into rendering.
 
-`model eject <artifact-id>` transfers one ejectable adapter implementation into
+`model eject <boundary>` -- a readable path the boundary registry resolves, or
+an artifact id -- transfers one ejectable adapter implementation into
 reader source, records the transfer, and excludes that artifact from later
 managed trees. Records and ports remain managed ABI. Capture includes every
 prospective reader destination, collision refuses, and ejection never infers

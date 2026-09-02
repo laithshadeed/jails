@@ -78,7 +78,8 @@ model renders BASE, capture supplies OURS, the next model renders THEIRS. Clean
 merges are frozen into the plan; conflicts refuse without writes; the lock
 advances to THEIRS so hand edits remain deltas. Migrations, model revisions and
 explicit reader-file patches are irreproducible and stay visible in the plan.
-`model eject <artifact-id>` transfers one ejectable implementation into reader
+`model eject <boundary>` -- a readable path such as `Note.repo.fake`, or an
+artifact id -- transfers one ejectable implementation into reader
 source with a `Missing` before-image -- transfer is creation, never
 reconciliation -- and excludes it from later managed trees. Records and ports
 remain managed ABI. Ejection never infers ownership from edited bytes.
@@ -141,12 +142,35 @@ and 25 of 25**, held by `canonical_support::registry_classifies_every_advertised
 **The declarative ones are `Recipe` rows and `emit.rs` walks two tables.**
 `crates/jails-compiler/src/recipe.rs` is the shape -- files, dependencies,
 properties, compose services, build features, placement -- over a `Node`
-(capability, component, operation), and `recipe::render` is the one loop;
-`emit.rs` holds `RECIPE_WALKS` and `FUNCTIONS`, and the second is the list
-of emitters that still build Java from the model's structure, which
+(capability, component, operation, entity), and `recipe::render` is the one
+loop; `emit.rs` holds `RECIPE_WALKS` and `FUNCTIONS`, and the second is the
+list of emitters that still build Java from the model's structure, which
 `docs/60-abstraction.md` S60.3 counts. A new kind that is substitution over a
 template is a row, not a module; a role appears in exactly one recipe and
-`Import::Role` resolves it by lookup.
+`Import::Role` resolves it by lookup. **What a template cannot say is a
+named fragment renderer**, rendered once per node and only when a selected
+file spells its key: `emit_java/fragment.rs` (a record's components and
+compact constructor, an enum's constants and wire members, a primary key's
+type, a builder's four lists) and `emit_java/operation.rs` (a port's route,
+answer, context, row selector, expected version and `Input` record). A
+fragment carries the imports its text needs and may spell `{{class}}`,
+because fragments are substituted before the file's keys. The entity's
+one-file facets are three `Recipe<Entity>` (`emit_java/entity.rs`, one per
+compiler pass) and the operation ports one `Recipe<Operation>`; `dto`,
+`http`, `seed` and the repository adapters stay functions, the adapters
+because their owner and their bean come from `emit::jdbc_on_classpath`.
+
+**Every emitted artifact is named from the boundary registry.**
+`jails_model::boundary` is one table of `(owner, path, role, scope)` rows:
+a readable path (`Task.repo.fake`, `Task.http.api`, `Audit.implementation`)
+resolves to the artifact id the compiler emits, the linker stores the
+resolved id on an `eject` line and `jails model eject` accepts the same
+paths, and every entity emitter names its output through the row
+(`Boundary::owned_by` / `stored_by`, or the row's `role` on a recipe). The
+exhaustiveness tests in `ejectable.rs` fail the build on a registered
+boundary nothing emits or an emitted entity artifact no row names. A role
+is the merge key of every project generated so far: add rows, never move
+one.
 `scaffold` is one typed entity profile over four facets. `migration` is
 deliberately not a declaration (JDL v1 §2.1, §12.6): it joins
 `PlanDraft.migrations` as an ordinary `AppendMigration`. Three of the last
@@ -850,7 +874,8 @@ the companion test is emitted whole and `@Disabled`, naming the component.
   `doctor` reports two Jackson majors as a FAIL. `JsonMapper.builder().build()`,
   `JacksonException extends RuntimeException`, `WRITE_DATES_AS_TIMESTAMPS`
   under `cfg.DateTimeFeature`. **The annotations are the exception and stayed
-  on the 2.x coordinates**: `emit_enum` importing
+  on the 2.x coordinates**: the enum's wire-members fragment
+  (`emit_java/fragment.rs`) importing
   `com.fasterxml.jackson.annotation.JsonValue` into a Jackson 3 project reads
   like the bug this bullet warns about and is not one --
   `deps/jackson-databind/pom.xml` says so in a comment beside its own

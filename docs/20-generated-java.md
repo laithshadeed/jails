@@ -59,14 +59,21 @@ grep -rc 'format!(' crates/jails-compiler/src | awk -F: '{s+=$2} END {print s}'
 ```
 
 **Exit:** the IR exists and the emitters build it instead of strings. It is a
-phase, not a fix. Two rungs are landed: one `JavaUnit` for the package line,
-the import block and the class shell, and one `emit_mockmvc` for the MockMvc
+phase, not a fix. Three rungs are landed: one `JavaUnit` for the package
+line, the import block and the class shell; one `emit_mockmvc` for the MockMvc
 dialect; and `Recipe<N>` (`docs/60-abstraction.md` S60.3), the declarative
-shape every capability pack, twelve component kinds, the event's Kafka slice
-and the outbox are rows of. What the rows do not yet carry is the structural
-Java -- a record's components, a repository's column list, a query's SQL --
-which the five remaining function passes still build with `format!`; S60.3
-names them and keeps the count.
+shape every capability pack, twelve component kinds, the entity's one-file
+facets, the operation ports, the event's Kafka slice and the outbox are rows
+of, with the structural Java a row cannot spell -- a record's components and
+compact constructor, an enum's constants, a port's `Input` record -- as named
+fragment renderers (`emit_java/fragment.rs`, `emit_java/operation.rs`). What
+is still `format!` is the repository adapters' column and bind lists, the
+operation adapters' SQL and the proofs; S60.3 names them and keeps the count.
+Output names are the boundary registry's (`jails_model::boundary`): a row's
+role is a registry entry and the function emitters name their artifacts
+through `Boundary::owned_by`, so §20.2's "emitters MUST NOT concatenate"
+holds for every entity artifact and the exhaustiveness tests in
+`ejectable.rs` keep it so.
 
 ## A1 — what coverage does not say
 
