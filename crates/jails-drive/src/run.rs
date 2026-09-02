@@ -396,7 +396,16 @@ fn test_report_once_with_fallback(
     let requested = execution_requested.as_slice();
     let compiled_outputs_current =
         build == crate::build::Build::Maven && crate::launcher::staleness(&root).is_none();
-    let plan = test_plan::plan(&root, build, requested, &options, compiled_outputs_current)?;
+    let warm_launcher_installed = build == crate::build::Build::Maven
+        && crate::pom::read(&root).is_ok_and(|pom| crate::testing::warm_launcher_declared(&pom));
+    let plan = test_plan::plan(
+        &root,
+        build,
+        requested,
+        &options,
+        compiled_outputs_current,
+        warm_launcher_installed,
+    )?;
     if options.explain_selection || options.fast {
         test_plan::explain(&plan);
     }

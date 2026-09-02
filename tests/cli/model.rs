@@ -4162,6 +4162,49 @@ fn canonical_fast_test_is_model_owned_and_never_journaled() {
 }
 
 #[test]
+fn a_junit_version_written_as_a_maven_property_installs_the_matching_launcher() {
+    // `<version>${junit.version}</version>` is the ordinary Maven spelling,
+    // and reading it literally answered "no version" -- which the compiler
+    // takes for "nothing declares one" and refuses over, on a pom that
+    // declares one two elements away.
+    let root = temp_dir("model-fast-test-property");
+    write_plain_fixture(&root);
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    fs::write(
+        root.join("pom.xml"),
+        pom.replace(
+            "<version>5.11.4</version>",
+            "<version>${junit.version}</version>",
+        )
+        .replace(
+            "<properties>",
+            "<properties>\n        <junit.version>5.11.4</junit.version>",
+        ),
+    )
+    .unwrap();
+    let fake_dir = temp_dir("model-fast-test-property-bin");
+    let log = fake_dir.join("log.txt");
+    write_fake_maven(&fake_dir, &["mvn"], &log);
+
+    let installed = jails_cmd(&root, Some(&fake_dir))
+        .args(["test", "--fast"])
+        .output()
+        .unwrap();
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&installed.stdout),
+        String::from_utf8_lossy(&installed.stderr)
+    );
+    assert!(installed.status.success(), "{report}");
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(pom.contains("junit-platform-console"), "{pom}");
+    // JUnit 5 paired jupiter `5.y.z` with platform `1.y.z`, so the resolved
+    // value still goes through the versioning scheme rather than being pinned
+    // as written.
+    assert!(pom.contains("<version>1.11.4</version>"), "{pom}");
+}
+
+#[test]
 fn jdl_fast_test_is_a_capability_in_the_authoring_source() {
     let root = jdl_project("model-jdl-fast-test", NOTES_JDL);
     write_spring_fixture(&root);

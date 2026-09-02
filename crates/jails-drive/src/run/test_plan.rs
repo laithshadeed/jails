@@ -13,6 +13,7 @@ pub(super) fn plan(
     requested: &[String],
     options: &TestOptions,
     compiled_outputs_current: bool,
+    warm_launcher_installed: bool,
 ) -> Result<TestExecutionPlanV1> {
     let mut selectors: Vec<TestSelector> = requested
         .iter()
@@ -52,6 +53,15 @@ pub(super) fn plan(
 
     let build_only_reason = if build_engine != TestEngine::Maven {
         Some("the warm engine is unavailable for this build system")
+    } else if !warm_launcher_installed {
+        // Ahead of the transient reasons below deliberately: a stale output
+        // repairs itself on the next build, while a project that has never
+        // installed the launcher widens on every run until somebody asks for
+        // the warm engine by name. That is the reason worth reporting when
+        // both are true.
+        Some(
+            "the warm engine's console launcher is not installed (`jails test --fast` installs it)",
+        )
     } else if options.compile == crate::testing::TestCompilePolicy::Build {
         Some("the build tool is the explicit compile owner")
     } else if !compiled_outputs_current {
@@ -354,6 +364,7 @@ mod tests {
             &["BetaTest".into(), "AlphaTest".into(), "AlphaTest".into()],
             &options(),
             false,
+            true,
         )
         .unwrap();
         assert_eq!(plan.requested.len(), 2);
@@ -375,6 +386,7 @@ mod tests {
             &["AlphaTest".into()],
             &options,
             true,
+            true,
         )
         .unwrap();
         assert_eq!(plan.partitions[0].engine, TestEngine::TestdV2);
@@ -392,6 +404,7 @@ mod tests {
             &["AlphaTest".into()],
             &options(),
             true,
+            true,
         )
         .unwrap();
         assert_eq!(current.partitions[0].engine, TestEngine::TestdV2);
@@ -406,6 +419,7 @@ mod tests {
             &["AlphaTest".into()],
             &options(),
             false,
+            true,
         )
         .unwrap();
         assert_eq!(stale.partitions[0].engine, TestEngine::Maven);
@@ -428,6 +442,7 @@ mod tests {
             crate::build::Build::Maven,
             &["PlainTest".into(), "ContextTest".into()],
             &options(),
+            true,
             true,
         )
         .unwrap();
@@ -453,9 +468,33 @@ mod tests {
                 &["AlphaTest".into()],
                 &no_compile,
                 false,
+                true,
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn automatic_selection_widens_when_the_warm_launcher_is_not_installed() {
+        let widened = plan(
+            project_with(&[(
+                "AlphaTest",
+                "class AlphaTest { @org.junit.Test void ok() {} }",
+            )])
+            .path(),
+            crate::build::Build::Maven,
+            &["AlphaTest".into()],
+            &options(),
+            true,
+            false,
+        )
+        .unwrap();
+        assert_eq!(widened.partitions.len(), 1);
+        assert_eq!(widened.partitions[0].engine, TestEngine::Maven);
+        assert!(widened.partitions[0].reasons.iter().any(|reason| matches!(
+            reason,
+            SelectionReason::Widened(text) if text.contains("console launcher")
+        )));
     }
 
     #[test]

@@ -699,6 +699,26 @@ Five things to know before touching it:
   And **`--fast` does not beat `mvnd`**: `plan.md` §19.1 has the numbers, it is
   the no-mvnd path and the substrate for `jails testd`, and it must not be
   described as faster than the default.
+
+  **The launcher is a precondition of the warm engine, and the plan asks about
+  it (`testing::warm_launcher_declared`).** It reaches a project through the
+  `fast-test` capability, which `main.rs` installs only when the reader names
+  the warm engine -- `--fast`, `--engine warm`, `--affected`. Automatic
+  selection names nothing and installs nothing, and it planned `TestdV2`
+  anyway: the daemon then refused, on a project it had itself chosen, with
+  *run a different command*. It is a `build_only_reason` in
+  `run::test_plan` now, ahead of the transient ones, because a stale output
+  repairs itself on the next build while a project that never opted in widens
+  on every run. The two decisions have to stay in step: widen wherever
+  `main.rs` does not install.
+
+  **A version written as `${junit.version}` is one the pom declares.**
+  `capture::observe::junit_version` read it literally, `console_version`
+  could not parse it, and `None` there means *something already manages this*
+  -- so `test --fast` refused with "this project declares no JUnit version"
+  about a pom stating one two elements away. `maven_property` resolves the
+  reference against the pom's own `<properties>`; a name it does not find is
+  still `None`, which stays the right answer for `${project.version}`.
 - `crates/jails-drive/src/testd.rs` + `templates/testd/JailsTestDaemon.java` — `jails testd`: a
   resident JVM over a unix socket. **0.06-0.10 s against `--fast`'s 0.62 s**
   for one test method, measured; §19.2 says why, and it is not the launcher --

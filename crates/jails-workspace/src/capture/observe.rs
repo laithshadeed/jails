@@ -295,9 +295,11 @@ pub(super) fn junit_version(root: &Path, build_system: BuildSystem) -> Option<St
         BuildSystem::Maven => {
             let at = source.find("<artifactId>junit-jupiter</artifactId>")?;
             let block_start = source[..at].rfind("<dependency>")?;
-            between(&source[block_start..], "<version>", "</version>")?
-                .trim()
-                .to_string()
+            let declared = between(&source[block_start..], "<version>", "</version>")?.trim();
+            match declared.starts_with("${") {
+                true => maven_property(&source, declared)?,
+                false => declared.to_string(),
+            }
         }
         // A Gradle project states it as a coordinate on one line.
         BuildSystem::Gradle => source
@@ -308,6 +310,25 @@ pub(super) fn junit_version(root: &Path, build_system: BuildSystem) -> Option<St
         BuildSystem::Unknown => return None,
     };
     console_version(&declared)
+}
+
+/// The value of `${name}`, read out of the pom's own `<properties>`.
+///
+/// **A version written as a property reference is the ordinary Maven
+/// spelling, and reading it as unparseable was indistinguishable from
+/// reading it as managed.** [`junit_version`] answers `None` for both, and
+/// every caller takes `None` to mean "something already manages this
+/// version" -- so a plain project pinning `<junit.version>6.0.0` in its
+/// properties and referring to it from the dependency was refused by
+/// `test --fast` with "this project declares no JUnit version", about a pom
+/// that declares one two elements away. A name this does not find is still
+/// `None`, which is the right answer for `${project.version}` and anything
+/// else inherited rather than stated here.
+fn maven_property(source: &str, reference: &str) -> Option<String> {
+    let name = reference.strip_prefix("${")?.strip_suffix('}')?;
+    let properties = between(source, "<properties>", "</properties>")?;
+    let value = between(properties, &format!("<{name}>"), &format!("</{name}>"))?.trim();
+    (!value.is_empty()).then(|| value.to_string())
 }
 
 /// JUnit's own versioning scheme, as one function.
@@ -381,4 +402,68 @@ fn quoted(source: &str) -> Option<String> {
     value
         .split_once(quote)
         .map(|(version, _)| version.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn maven_project(pom: &str) -> jails_support::scratch::ScratchDir {
+        let project = jails_support::scratch::ScratchDir::in_temp("observe-junit").unwrap();
+        std::fs::write(project.path().join("pom.xml"), pom).unwrap();
+        project
+    }
+
+    fn pom(properties: &str, version: &str) -> String {
+        format!(
+            "<project>\n    <properties>\n{properties}    </properties>\n    <dependencies>\n        \
+             <dependency>\n            <groupId>org.junit.jupiter</groupId>\n            \
+             <artifactId>junit-jupiter</artifactId>\n            <version>{version}</version>\n            \
+             <scope>test</scope>\n        </dependency>\n    </dependencies>\n</project>\n"
+        )
+    }
+
+    #[test]
+    fn a_junit_version_written_as_a_property_is_resolved_against_the_pom() {
+        // The ordinary Maven spelling. Read literally it parses as no version
+        // at all, which every caller takes for "something manages it" -- and
+        // `test --fast` then refuses on a project that pins one right there.
+        let project = maven_project(&pom(
+            "        <junit.version>6.0.0</junit.version>\n",
+            "${junit.version}",
+        ));
+        assert_eq!(
+            junit_version(project.path(), BuildSystem::Maven).as_deref(),
+            Some("6.0.0")
+        );
+    }
+
+    #[test]
+    fn a_resolved_property_still_goes_through_junits_versioning_scheme() {
+        let project = maven_project(&pom(
+            "        <junit.version>5.11.4</junit.version>\n",
+            "${junit.version}",
+        ));
+        assert_eq!(
+            junit_version(project.path(), BuildSystem::Maven).as_deref(),
+            Some("1.11.4")
+        );
+    }
+
+    #[test]
+    fn a_property_this_pom_does_not_state_stays_unanswered() {
+        // Inherited or built-in (`${project.version}`): jails does not resolve
+        // a build, so the honest answer is the one it gave before.
+        let project = maven_project(&pom("", "${junit.version}"));
+        assert_eq!(junit_version(project.path(), BuildSystem::Maven), None);
+    }
+
+    #[test]
+    fn a_literal_version_is_unchanged() {
+        let project = maven_project(&pom("", "5.11.4"));
+        assert_eq!(
+            junit_version(project.path(), BuildSystem::Maven).as_deref(),
+            Some("1.11.4")
+        );
+    }
 }

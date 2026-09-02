@@ -1091,6 +1091,13 @@ there the unit is a whole service block rather than a setting.)
   every later run. `jails remove fast-test` takes it back out. A dependency
   that appeared because of *how* somebody ran their tests, that nothing can
   name and nothing can remove, is what that ownership prevents.
+
+  So plain `jails test` never installs it, and the launcher is a precondition
+  of the warm engine exactly like a current compiled output is: until you have
+  asked for it by name once, automatic selection widens to the build tool and
+  `jails test --explain-selection` says so. Only a command that names the warm
+  engine — `--fast`, `--engine warm`, `--affected` — writes to your POM.
+
   Any command that writes an `*IT` also splices the Failsafe plugin, because
   it is *not* part of the Spring Boot parent's default build — without it
   `mvn verify` completes, reports success, and runs none of them.

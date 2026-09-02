@@ -215,7 +215,7 @@ impl Client {
             .map_err(|error| format!("failed to join daemon classpath: {error}"))?;
         let outputs = std::env::join_paths(&classpath.outputs)
             .map_err(|error| format!("failed to join test outputs: {error}"))?;
-        if !project.pom().contains("junit-platform-console") {
+        if !crate::testing::warm_launcher_declared(project.pom()) {
             return Err("testd needs junit-platform-console on the test classpath\n       fix: run `jails test --fast` once to install the matching launcher".into());
         }
         let cookie = secret()?;

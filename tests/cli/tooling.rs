@@ -304,6 +304,44 @@ fn test_command_explains_the_canonical_partition() {
 }
 
 #[test]
+fn automatic_selection_widens_to_the_build_tool_until_the_warm_launcher_is_installed() {
+    // The screenshot bug: automatic selection planned the warm engine on a
+    // project that had never installed its console launcher, and the daemon
+    // then refused -- telling the reader to run a *different* command. The
+    // launcher is a precondition of the warm engine like Maven-ness and a
+    // current output are, so it belongs in the same widening.
+    let root = temp_dir("mock-test-no-launcher");
+    write_plain_fixture(&root);
+    let fake_dir = temp_dir("mock-test-no-launcher-bin");
+    let log = fake_dir.join("log.txt");
+    write_fake_maven(&fake_dir, &["mvn"], &log);
+
+    let output = jails_cmd(&root, Some(&fake_dir))
+        .args(["test", "--explain-selection"])
+        .output()
+        .unwrap();
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "{report}");
+    assert!(report.contains("Maven: all tests in scope"), "{report}");
+    assert!(
+        report.contains("console launcher is not installed"),
+        "{report}"
+    );
+    assert!(
+        !read_log(&log).is_empty(),
+        "the build tool must own the run: {report}"
+    );
+    assert!(
+        !root.join(".jails/model.jdl").exists(),
+        "automatic selection must not install anything into the reader's project"
+    );
+}
+
+#[test]
 fn compile_none_never_compiles_ineligible_warm_tests_and_strict_warm_refuses() {
     let root = temp_dir("mock-test-isolation");
     write_plain_fixture(&root);

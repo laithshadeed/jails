@@ -334,6 +334,22 @@ fn unique_selectors(what: &str, selectors: &[TestSelector]) -> Result<()> {
     Ok(())
 }
 
+/// Whether the warm engine's console launcher is on this project's test
+/// classpath, read off the build file the project declares it in.
+///
+/// **The warm engine has a dependency, and the plan has to ask about it like
+/// it asks about anything else.** `junit-platform-console` is what
+/// `jails testd` runs; it reaches a project through the `fast-test`
+/// capability, which is installed by an ordinary transition when the reader
+/// asks for the warm engine by name (`--fast`, `--engine warm`,
+/// `--affected`). Automatic selection asks for nobody's pom to change, so on
+/// a project that never opted in this answers `false` and the plan widens to
+/// the build tool -- where it used to select the warm engine anyway and die
+/// inside the daemon, telling the reader to run a *different* command.
+pub(crate) fn warm_launcher_declared(build_file: &str) -> bool {
+    build_file.contains("junit-platform-console")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
