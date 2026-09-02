@@ -2,7 +2,7 @@
 //! frontends.
 //!
 //! Every function here is a CST edit and nothing else. The pre-v1 draft does
-//! not accept edits -- `model_command::read_source_at` refuses one and names
+//! not accept edits -- `model_command::read_source` refuses one and names
 //! `jails model upgrade --to 1` -- so there is no line-by-line scanner beside
 //! these, and no parameters for finding a line by hand: the CST is indexed by
 //! declaration rather than searched.

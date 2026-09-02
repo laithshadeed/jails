@@ -68,7 +68,7 @@ pub(crate) fn read_source(root: &Path, model_path: &Path) -> Result<String> {
         {
             return Err(refuse_retired_toml());
         }
-        // The same rule as `load_model_at`: a project with no model reads as
+        // The same rule as `load_model`: a project with no model reads as
         // the model `model init` would write, so the first mutation patches a
         // real seed rather than refusing over the file it is about to create.
         // **The derive's own refusal is what the reader needs**, not a report
@@ -125,7 +125,7 @@ fn starts_with_jdl_header(source: &str) -> bool {
 }
 
 /// The model a mutation starts from: the one editable source, read through
-/// [`read_source_at`], and the model it links to.
+/// [`read_source`], and the model it links to.
 ///
 /// **Every frontend begins here and nowhere else.** The read is anchored to
 /// the invocation's project -- the process directory's nearest model for a
@@ -192,7 +192,7 @@ pub(crate) fn ensure_owned(invocation: Invocation) -> Result<()> {
     // `jails add csv security` on a plain Maven project create the model,
     // splice the pom, and only *then* refuse `security` -- leaving a project
     // half-converted by a command that failed. The seed is derived in memory
-    // by `load_model_at`, and the mutation's own plan carries it as an
+    // by `load_model`, and the mutation's own plan carries it as an
     // ordinary `ReplaceModelFile` with no before-image, so a refusal anywhere
     // in that plan writes nothing at all and a success creates the model in
     // the same reviewed transition. What is left here is the one refusal that
@@ -624,7 +624,7 @@ pub(crate) fn materialize_seed(root: &Path) -> Result<()> {
 
 /// Whether this compilation is `jails resource repair`.
 ///
-/// It rides on `compile_at` rather than on a wrapper beside it: a second
+/// It rides on `compile` rather than on a wrapper beside it: a second
 /// root-taking entry point is one more place re-deriving what the existing
 /// one decides, and this is one more value it decides with.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
