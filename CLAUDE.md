@@ -743,7 +743,12 @@ the companion test is emitted whole and `@Disabled`, naming the component.
   nothing warns, and half the code lands on a mapper nobody configured.
   `doctor` reports two Jackson majors as a FAIL. `JsonMapper.builder().build()`,
   `JacksonException extends RuntimeException`, `WRITE_DATES_AS_TIMESTAMPS`
-  under `cfg.DateTimeFeature`.
+  under `cfg.DateTimeFeature`. **The annotations are the exception and stayed
+  on the 2.x coordinates**: `emit_enum` importing
+  `com.fasterxml.jackson.annotation.JsonValue` into a Jackson 3 project reads
+  like the bug this bullet warns about and is not one --
+  `deps/jackson-databind/pom.xml` says so in a comment beside its own
+  `jackson-annotations` dependency. Check there before "fixing" it.
 - **Boot 4 split the servlet test slice.** `@WebMvcTest` and
   `@AutoConfigureMockMvc` live in `spring-boot-webmvc-test`, so a generated
   test using either needs `spring-boot-starter-webmvc-test`, which the
