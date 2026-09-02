@@ -531,21 +531,6 @@ impl Project {
         &self.root
     }
 
-    /// Does this project hold an editable application model?
-    ///
-    /// A fact about the project rather than a path a caller re-derives.
-    /// `doctor`'s capability check needs it: it reads `jails.toml`, and a
-    /// modelled project records its capabilities in the model instead, so
-    /// without this it reports "records none -- nothing to reconcile" about a
-    /// project whose model declares them.
-    ///
-    /// Recognised by the file rather than by an import: this crate does not
-    /// depend on the compiler ladder, and which file holds a project's
-    /// declarations is the one fact about it a reader-facing report needs.
-    pub fn is_modelled(&self) -> bool {
-        self.root.join(".jails/model.jdl").is_file()
-    }
-
     /// What builds this project.
     pub fn build(&self) -> crate::build::Build {
         self.build
@@ -632,27 +617,6 @@ impl Project {
 
     /// True once `add db` has put the JDBC starter on the classpath, which is
     /// the fact that decides transaction boundaries and adapter shape.
-    /// Which SQL this project's generated DDL should be written in.
-    ///
-    /// Read off the **driver**, not off `jails.toml`: a manifest is a record
-    /// of what was asked for and a driver is a fact about what the schema will
-    /// actually meet. Postgres wins when both are present, because that is the
-    /// database `add db` migrates with Flyway and H2 is then the test double
-    /// somebody added beside it.
-    ///
-    /// Postgres is the answer when neither is there: it is the documented
-    /// default, and a DDL guessed toward the smaller dialect would be silently
-    /// narrower than the project the reader is building.
-    pub fn sql_dialect(&self) -> jails_spec::spec::kind::Dialect {
-        use jails_spec::spec::kind::Dialect;
-        match self.has_dependency("com.h2database", "h2")
-            && !self.has_dependency("org.postgresql", "postgresql")
-        {
-            true => Dialect::H2,
-            false => Dialect::Postgres,
-        }
-    }
-
     pub fn has_jdbc(&self) -> bool {
         // Either starter. `spring-boot-starter-data-jdbc` declares
         // `api(spring-boot-starter-jdbc)` -- verified in `deps/spring-boot` --
