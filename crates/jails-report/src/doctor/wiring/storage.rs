@@ -81,7 +81,7 @@ pub(crate) fn database_checks(project: &Project) -> Vec<Check> {
     // `spring-boot-flyway` module -- and the failure is silent: no error, no
     // warning, no Flyway log line, then `relation "..." does not exist`. So
     // the check is "will these run", not "do these exist".
-    let is_spring = matches!(pom::flavor(pom_text), pom::Flavor::SpringBoot);
+    let is_spring = pom::is_spring_boot(pom_text);
     let has_boot_flyway =
         pom::has_dependency(pom_text, "org.springframework.boot", "spring-boot-flyway");
     if is_spring && has_flyway && !has_boot_flyway {
@@ -123,7 +123,7 @@ pub(crate) fn database_checks(project: &Project) -> Vec<Check> {
     // The two pieces of test-side wiring `add db` installs on Spring. Both
     // are invisible until a @SpringBootTest fails with "Failed to determine
     // a suitable driver class", and both are easy to lose to a rebase.
-    if matches!(pom::flavor(pom_text), pom::Flavor::SpringBoot) {
+    if pom::is_spring_boot(pom_text) {
         // What matters is that a container bean exists *and* that every
         // @SpringBootTest can see one. Checking the file alone would pass on
         // a project where a rebase dropped the @Import and every context test

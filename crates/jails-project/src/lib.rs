@@ -9,7 +9,8 @@
 //! byte-preserving splice.
 //!
 //! [`maven`] is how to invoke this project's Maven, deliberately separate from
-//! `jails_spec::build`, which recognises a build file and never runs one.
+//! `jails_spec::build`, which recognises a build file and never runs one, and
+//! from [`pom`], which is the workspace crate's one reader of what a POM says.
 //!
 //! [`inspect`] reads the project's source to report routes and beans. It is
 //! here rather than with the commands because `add`'s HTTP capability derives
@@ -29,7 +30,6 @@ pub mod inspect;
 pub mod maven;
 pub mod model;
 pub mod modernize;
-pub mod pom;
 pub mod project;
 pub mod properties;
 pub mod synonyms;
@@ -37,6 +37,10 @@ pub mod synonyms;
 // The lower crates, re-exported so every module in this one keeps saying
 // `crate::…` wherever it ships. Only this block knows which crate a module
 // actually lives in, which is what makes moving one a one-line change.
+/// The one reader of `pom.xml`, from the crate that also writes it.
+/// Module code says `crate::pom`.
+pub use jails_workspace::pom;
+
 pub use jails_java::{java, template};
 pub use jails_spec::{build, release, spec};
 pub(crate) use jails_support::{json, process};

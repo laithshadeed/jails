@@ -227,11 +227,11 @@ fn project_check(project: &Project) -> Check {
     // `build.gradle` is a confident wrong answer about the one fact this check
     // exists to state, and every reader takes the first line of `doctor` as
     // the ground truth for the rest of it.
-    let flavor = match (project.flavor(), gradle) {
-        (pom::Flavor::SpringBoot, true) => "Spring Boot (Gradle)",
-        (pom::Flavor::SpringBoot, false) => "Spring Boot",
-        (pom::Flavor::PlainMaven, true) => "plain Gradle",
-        (pom::Flavor::PlainMaven, false) => "plain Maven",
+    let flavor = match (project.is_spring_boot(), gradle) {
+        (true, true) => "Spring Boot (Gradle)",
+        (true, false) => "Spring Boot",
+        (false, true) => "plain Gradle",
+        (false, false) => "plain Maven",
     };
     let sources = root.join("src/main/java");
     if !sources.is_dir() {

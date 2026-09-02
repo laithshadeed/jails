@@ -298,6 +298,7 @@ dependencies = [
  "jails-spec",
  "jails-support",
  "jails-testkit",
+ "jails-workspace",
  "serde",
  "serde_json",
  "sqlparser",

@@ -217,7 +217,6 @@ against this list.
 | generated Java/SQL reparsing | `AppModel` and the snapshot | source-as-database paths |
 | `#[derive(Codec)]` on the test-execution wire | one `serde` protocol (S60.6) | the codec and its derive crate |
 | `Project`/`ProjectContext`/snapshot overlap | a snapshot-backed project view | post-capture disk reads |
-| duplicate Maven XML scanners | one document backend in `jails-workspace` | `pom.rs`'s scanner |
 
 The largest deletion does not come from shorter render functions. It comes
 from making six questions disappear: which representation is authoritative;

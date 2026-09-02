@@ -613,7 +613,7 @@ fn add_jspecify_to_gradle(plan: &Plan<'_>, tree: &super::publish::Tree<'_>) -> R
     let path = plan.root.join(jails_project::gradle::FILE);
     let text = std::fs::read_to_string(&path)
         .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
-    let declaration = crate::pom::DependencyRef {
+    let declaration = jails_project::gradle::DependencyRef {
         group_id: "org.jspecify",
         artifact_id: "jspecify",
         version: Some("1.0.0"),

@@ -145,9 +145,9 @@ pub(crate) fn derive(project: &jails_project::model::Project) -> Result<String> 
     let java = project
         .java_release()
         .unwrap_or(u32::from(jails_model::JAVA_RELEASE_FLOOR));
-    let platform = match project.flavor() {
-        jails_project::pom::Flavor::SpringBoot => "spring",
-        jails_project::pom::Flavor::PlainMaven => "plain",
+    let platform = match project.is_spring_boot() {
+        true => "spring",
+        false => "plain",
     };
     // Named rather than defaulted: a model that says `maven` for a Gradle
     // project would render a pom nobody builds with.

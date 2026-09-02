@@ -46,7 +46,19 @@
 //! file from a model, because a model round-trip loses comments, ordering and
 //! whitespace that somebody chose.
 
-use crate::pom::{DependencyRef, Flavor};
+/// A dependency by borrowed parts, which is all the splice needs.
+///
+/// Here rather than beside a Maven reader because [`add_dependency_ref`] is
+/// the only thing that takes one: `new` writes a Gradle build before any model
+/// exists, and this is the shape it hands the splice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DependencyRef<'a> {
+    pub group_id: &'a str,
+    pub artifact_id: &'a str,
+    pub version: Option<&'a str>,
+    pub scope: Option<&'a str>,
+    pub optional: bool,
+}
 use jails_support::Result;
 
 /// The build file this module reads.
@@ -178,13 +190,10 @@ fn at_word(text: &str, at: usize, word: &str) -> bool {
 
 /// Spring Boot's dependency management, or its absence.
 ///
-/// The same question `pom::flavor` answers about a parent POM, and it decides
+/// The same question `pom::is_spring_boot` answers about a POM, and it decides
 /// the same thing: whether a spliced dependency may omit its version.
-pub(crate) fn flavor(text: &str) -> Flavor {
-    match spring_boot_major(text) {
-        Some(_) => Flavor::SpringBoot,
-        None => Flavor::PlainMaven,
-    }
+pub(crate) fn is_spring_boot(text: &str) -> bool {
+    spring_boot_major(text).is_some()
 }
 
 /// The Spring Boot major version, from either spelling of the plugin.
@@ -646,7 +655,7 @@ fn configuration_for(scope: Option<&str>, optional: bool) -> &'static str {
 /// Splice one dependency into the top-level `dependencies` block.
 ///
 /// `Ok(None)` means "already there, nothing to do", matching
-/// `pom::add_dependency_ref` so the projection can treat both build files the
+/// the Maven dependency adapter so the projection can treat both build files the
 /// same way. An unreadable dependency block is an `Err`, never a silent
 /// append: appending to a file jails does not understand is how a duplicate
 /// declaration with a different version gets in.
@@ -923,7 +932,7 @@ dependencies {
     fn the_boot_version_is_read_from_the_legacy_buildscript_spelling() {
         assert_eq!(boot_version(MINICOM).as_deref(), Some("2.7.18"));
         assert_eq!(spring_boot_major(MINICOM), Some(2));
-        assert_eq!(flavor(MINICOM), Flavor::SpringBoot);
+        assert!(is_spring_boot(MINICOM));
     }
 
     #[test]
@@ -938,7 +947,7 @@ dependencies {
     fn a_build_with_no_spring_boot_plugin_is_plain() {
         let plain = "plugins {\n    id 'java'\n}\ndependencies {\n}\n";
         assert_eq!(spring_boot_major(plain), None);
-        assert_eq!(flavor(plain), Flavor::PlainMaven);
+        assert!(!is_spring_boot(plain));
     }
 
     #[test]
@@ -1018,7 +1027,7 @@ dependencies {
         assert_eq!(add_dependency_ref(&once, assertj_ref()).unwrap(), None);
     }
 
-    /// Same contract as `pom::add_dependency_ref`, so the projection can treat
+    /// Same contract as the Maven dependency adapter, so the projection can treat
     /// the two build files identically.
     /// "There is no block" and "I cannot read the block" are different
     /// answers, and collapsing them costs in both directions: as `None` it

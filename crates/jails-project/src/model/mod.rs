@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use crate::build::Build;
 use crate::compose::Service as ComposeService;
 use crate::config::Config;
-use crate::pom::{self, Dependency, Flavor};
+use crate::pom;
 use jails_support::Result;
 
 /// One file a recipe intends to create, with its bytes already rendered.
@@ -51,7 +51,6 @@ impl SpringTestImport {}
 /// tails into the same value.
 #[derive(Clone, Debug, Default)]
 pub struct Change {
-    pub deps: Vec<Dependency>,
     /// The build features this change needs, each with its Maven rendering.
     ///
     /// Keyed by what the build has to *do* rather than by the Maven plugin
@@ -73,7 +72,6 @@ pub struct Change {
     /// reach for -- shadows the main file wholesale instead, which silently
     /// unsets everything the tests did not restate.
     pub test_properties: Vec<String>,
-    pub legacy_deps: Vec<Dependency>,
     pub spring_test_import: Option<SpringTestImport>,
     /// The dispatcher lines this change registers.
     ///
@@ -144,21 +142,6 @@ impl Change {
     /// the same identity are rejected before either reaches disk. This is the
     /// algebra used by multi-capability and whole-manifest planning.
     pub fn merge(mut self, other: Self) -> Result<Self> {
-        for dep in other.deps {
-            match self.deps.iter().find(|current| {
-                current.group_id == dep.group_id && current.artifact_id == dep.artifact_id
-            }) {
-                Some(current) if current != &dep => {
-                    return Err(format!(
-                        "conflicting dependency plans for {}:{}",
-                        dep.group_id, dep.artifact_id
-                    )
-                    .into());
-                }
-                Some(_) => {}
-                None => self.deps.push(dep),
-            }
-        }
         for (artifact_id, body) in other.plugins {
             match self
                 .plugins
@@ -203,13 +186,6 @@ impl Change {
         for property in other.properties {
             if !self.properties.contains(&property) {
                 self.properties.push(property);
-            }
-        }
-        for dep in other.legacy_deps {
-            if !self.legacy_deps.iter().any(|current| {
-                current.group_id == dep.group_id && current.artifact_id == dep.artifact_id
-            }) {
-                self.legacy_deps.push(dep);
             }
         }
         for registration in other.registrations {
@@ -354,7 +330,7 @@ const DEFAULT_BOOT_MAJOR: u32 = 3;
 pub struct Project {
     root: PathBuf,
     base: String,
-    flavor: Flavor,
+    spring_boot: bool,
     java_release: Option<u32>,
     layers: Layers,
     pom: String,
@@ -413,7 +389,7 @@ impl Project {
         Ok(Self {
             root: root.to_path_buf(),
             base: crate::spec::base_package(root)?,
-            flavor: build_flavor(build, &pom),
+            spring_boot: build_is_spring_boot(build, &pom),
             java_release: build_release_level(build, &pom),
             layers: Layers::from_config(&config),
             installed: config.capabilities().to_vec(),
@@ -473,7 +449,7 @@ impl Project {
             // writes renames the application class, and a manifest that did
             // would be describing a different project.
             base: live.base.clone(),
-            flavor: build_flavor(live.build, &pom),
+            spring_boot: build_is_spring_boot(live.build, &pom),
             java_release: build_release_level(live.build, &pom),
             layers,
             installed,
@@ -511,7 +487,7 @@ impl Project {
         Ok(Self {
             root: root.to_path_buf(),
             base: crate::spec::base_package(root).unwrap_or_default(),
-            flavor: build_flavor(build, &pom),
+            spring_boot: build_is_spring_boot(build, &pom),
             java_release: build_release_level(build, &pom),
             layers: Layers::from_config(&config),
             installed: config.capabilities().to_vec(),
@@ -545,8 +521,13 @@ impl Project {
         &self.base
     }
 
-    pub fn flavor(&self) -> Flavor {
-        self.flavor
+    /// Whether Spring Boot's dependency management is what this build uses.
+    ///
+    /// A `bool` rather than a two-variant enum, because that is all the
+    /// question ever was: capabilities wire themselves up one way under Boot
+    /// and another without it.
+    pub fn is_spring_boot(&self) -> bool {
+        self.spring_boot
     }
 
     pub fn java_release(&self) -> Option<u32> {
@@ -665,16 +646,6 @@ impl Project {
         }
     }
 
-    /// `@AutoConfigureMockMvc`'s package, moved in the same Boot 4 change.
-    pub fn mockmvc_autoconfigure_import(&self) -> &'static str {
-        crate::pom::mockmvc_autoconfigure_import_for(self.boot_major())
-    }
-
-    /// The `@WebMvcTest` import this project's Boot version has.
-    pub fn webmvc_test_import(&self) -> &'static str {
-        crate::pom::webmvc_test_import_for(self.boot_major())
-    }
-
     /// The source of a type this project owns, through the projection first.
     ///
     /// The one window, and it hands back the text rather than the components
@@ -788,10 +759,10 @@ fn read_build_file(build: Build, root: &Path) -> Result<String> {
 }
 
 /// Spring Boot's dependency management, whichever build file declares it.
-fn build_flavor(build: Build, text: &str) -> Flavor {
+fn build_is_spring_boot(build: Build, text: &str) -> bool {
     match build {
-        Build::Gradle => crate::gradle::flavor(text),
-        _ => pom::flavor(text),
+        Build::Gradle => crate::gradle::is_spring_boot(text),
+        _ => pom::is_spring_boot(text),
     }
 }
 
@@ -837,7 +808,7 @@ mod tests {
         let project = Project::load(&root).unwrap();
         assert_eq!(project.root(), root);
         assert_eq!(project.base(), "com.example.demo");
-        assert_eq!(project.flavor(), Flavor::PlainMaven);
+        assert!(!project.is_spring_boot());
         assert_eq!(project.java_release(), Some(21));
         assert_eq!(project.layers().get(Layer::Domain), "model");
         assert_eq!(project.capabilities(), &["json"]);

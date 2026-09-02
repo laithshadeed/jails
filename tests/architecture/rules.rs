@@ -417,7 +417,6 @@ const LAYERS: &[(&str, &str, usize)] = &[
     // project on purpose -- `jails-commit` needs both and neither is about Java.
     // jails-project: the resolved project and everything jails records about it.
     ("jails-project", "gradle", 5),
-    ("jails-project", "pom", 5),
     ("jails-project", "maven", 5),
     ("jails-project", "capability", 5),
     ("jails-project", "config", 5),
@@ -821,10 +820,6 @@ const DEFAULT_BRANCH_IS_EXECUTED: &[(&str, &str)] = &[
     ),
     (
         "crates/jails-project/src/model/mod.rs",
-        "generate_scaffold_produces_a_project_that_compiles_and_passes_tests",
-    ),
-    (
-        "crates/jails-project/src/pom.rs",
         "generate_scaffold_produces_a_project_that_compiles_and_passes_tests",
     ),
     (

@@ -21,6 +21,18 @@
 
 use super::{indent_block, insert_indented_block};
 use std::collections::BTreeSet;
+use std::path::Path;
+
+/// This project's `pom.xml`, as text.
+///
+/// The one place the filename is spelled for a read, so a command that asks
+/// what the build says and the capture that records it are looking at the
+/// same file.
+pub fn read(root: &Path) -> jails_support::Result<String> {
+    let path = root.join("pom.xml");
+    Ok(std::fs::read_to_string(&path)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?)
+}
 
 // ---------------------------------------------------------------------------
 // the walk
@@ -201,7 +213,7 @@ pub fn has_dependency(pom: &str, group_id: &str, artifact_id: &str) -> bool {
 ///
 /// No versions, no scopes, no resolution: jails does not understand a build,
 /// and reading one artifact name out of it is not understanding one.
-pub fn dependency_coordinates(pom: &str) -> BTreeSet<String> {
+pub(crate) fn dependency_coordinates(pom: &str) -> BTreeSet<String> {
     dependency_blocks(pom)
         .filter_map(|block| {
             let group = element_text(block, "groupId")?;
@@ -212,7 +224,7 @@ pub fn dependency_coordinates(pom: &str) -> BTreeSet<String> {
 }
 
 /// Whether `artifact_id` is already declared as a build plugin.
-pub fn has_plugin(pom: &str, artifact_id: &str) -> bool {
+pub(crate) fn has_plugin(pom: &str, artifact_id: &str) -> bool {
     let needle = format!("<artifactId>{artifact_id}</artifactId>");
     pom.match_indices(&needle)
         .any(|(at, _)| !inside_comment(pom, at))
@@ -262,7 +274,7 @@ pub fn main_class(pom: &str) -> Option<&str> {
 /// first: a Boot project's first `<artifactId>` belongs to
 /// `spring-boot-starter-parent`, and a consumer group named after it would be
 /// the same durable identity in every Boot project on the broker.
-pub fn artifact_id(pom: &str) -> Option<String> {
+pub(crate) fn artifact_id(pom: &str) -> Option<String> {
     let outside = match between(pom, "<parent>", "</parent>") {
         Some(parent) => pom.replacen(parent, "", 1),
         None => pom.to_string(),
@@ -277,7 +289,7 @@ pub fn artifact_id(pom: &str) -> Option<String> {
 /// somewhere this does not look, and the honest answer there is `None` rather
 /// than a version read out of an import scope -- which is a different fact
 /// from [`is_spring_boot`], and deliberately so.
-pub fn parent_spring_boot_version(pom: &str) -> Option<&str> {
+pub(crate) fn parent_spring_boot_version(pom: &str) -> Option<&str> {
     let parent = between(pom, "<parent>", "</parent>")?;
     if !parent.contains("<artifactId>spring-boot-starter-parent</artifactId>") {
         return None;
@@ -310,7 +322,7 @@ pub fn spring_boot_major_of(pom: &str) -> u32 {
 
 /// Whether this is a Spring Boot project at all.
 ///
-/// Deliberately looser than [`parent_spring_boot_version`]: a project that
+/// Deliberately looser than `parent_spring_boot_version`: a project that
 /// imports `spring-boot-dependencies` as a BOM is a Boot project whose
 /// capabilities wire up the Spring way, even though no `<parent>` states a
 /// version. Capabilities ask this; anything that has to *name* a version asks
@@ -325,7 +337,7 @@ pub fn is_spring_boot(pom: &str) -> bool {
 /// Under a Spring Boot parent or an imported `junit-bom` the version is
 /// managed and a pin here would be the wrong number to hand the console
 /// launcher, so a managed build answers `None` rather than a version.
-pub fn junit_jupiter_version(pom: &str) -> Option<&str> {
+pub(crate) fn junit_jupiter_version(pom: &str) -> Option<&str> {
     if pom.contains("junit-bom") {
         return None;
     }
@@ -447,7 +459,7 @@ pub fn add_plugin(
 /// fits, and a caller that owns a marked block compares the same three against
 /// what it finds on disk to tell a reader's edit from its own writing. Two
 /// lists of these shapes drift on exactly the case nobody has a pom for.
-pub fn plugin_nest(block: &str) -> [String; 3] {
+pub(crate) fn plugin_nest(block: &str) -> [String; 3] {
     [
         block.to_string(),
         format!("<plugins>\n{}</plugins>\n", indent_block(block, "    ")),
@@ -528,7 +540,7 @@ pub fn with_release_level(pom: &str, release: u32) -> Option<String> {
 mod tests {
     use super::*;
 
-    const BOOT: &str = "<project>\n  <parent>\n    \
+    const BOOT: &str = "<project>\n  <modelVersion>4.0.0</modelVersion>\n  <parent>\n    \
                         <groupId>org.springframework.boot</groupId>\n    \
                         <artifactId>spring-boot-starter-parent</artifactId>\n    \
                         <version>2.7.18</version>\n  </parent>\n  <artifactId>demo</artifactId>\n  \
@@ -625,5 +637,102 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+        assert!(
+            once.contains("    <build>\n        <plugins>\n"),
+            "the nest keeps the indentation of the element it went into: {once}"
+        );
+    }
+
+    /// `pluginManagement` nests an identically named `<plugins>`; landing in
+    /// it would declare a version without ever running the plugin.
+    #[test]
+    fn a_plugin_never_lands_in_the_plugin_management_block() {
+        let pom = "<project>\n    <build>\n        <pluginManagement>\n            \
+                   <plugins>\n                <plugin>\n                    \
+                   <artifactId>managed</artifactId>\n                </plugin>\n            \
+                   </plugins>\n        </pluginManagement>\n        <plugins>\n            \
+                   <plugin>\n                <artifactId>real</artifactId>\n            \
+                   </plugin>\n        </plugins>\n    </build>\n</project>\n";
+        let out = add_plugin(
+            pom,
+            "spotless-maven-plugin",
+            "<plugin>\n    <artifactId>spotless-maven-plugin</artifactId>\n</plugin>\n",
+        )
+        .unwrap()
+        .expect("spotless is not declared yet");
+        let managed_end = out.find("</pluginManagement>").expect("the block survives");
+        assert!(
+            out.find("spotless-maven-plugin").unwrap() > managed_end,
+            "{out}"
+        );
+        assert!(out.contains("<artifactId>real</artifactId>"), "{out}");
+    }
+
+    /// The three spellings of the release, and the one that is not a release
+    /// at all.
+    #[test]
+    fn the_release_is_read_from_whichever_property_states_it() {
+        for property in [
+            "maven.compiler.release",
+            "java.version",
+            "maven.compiler.source",
+        ] {
+            let pom =
+                format!("<project><properties><{property}>27</{property}></properties></project>");
+            assert_eq!(release_level(&pom), Some(27), "{pom}");
+        }
+        // `1.8` is the spelling Maven accepts for Java 8.
+        assert_eq!(
+            release_level(
+                "<project><properties><java.version>1.8</java.version></properties></project>"
+            ),
+            Some(8)
+        );
+        assert_eq!(release_level("<project></project>"), None);
+    }
+
+    /// Group and artifact have to agree inside one block: two groups ship an
+    /// artifact called `commons-csv`, and matching either half alone reports a
+    /// dependency the build does not have.
+    #[test]
+    fn a_dependency_is_matched_on_both_halves_of_its_coordinate() {
+        let pom = "<project><dependencies><dependency>\
+                   <groupId>org.apache.commons</groupId>\
+                   <artifactId>commons-csv</artifactId></dependency><dependency>\
+                   <groupId>com.other</groupId>\
+                   <artifactId>something</artifactId></dependency></dependencies></project>";
+        assert!(has_dependency(pom, "org.apache.commons", "commons-csv"));
+        assert!(!has_dependency(pom, "com.other", "commons-csv"));
+    }
+
+    /// What stops Maven reading a pom at all, named before `doctor` reports
+    /// fifteen checks over a project Maven cannot open.
+    #[test]
+    fn problems_name_what_stops_maven_reading_the_pom() {
+        // A Spring starter with no version and no BOM, on a plain project.
+        let broken = "<project>\n<groupId>com.example</groupId>\n<artifactId>demo</artifactId>\n\
+             <dependencies><dependency><groupId>org.springframework.boot</groupId>\
+             <artifactId>spring-boot-starter-validation</artifactId></dependency></dependencies>\
+             </project>";
+        let found = problems(broken);
+        let text = found
+            .iter()
+            .map(|(what, _)| what.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("modelVersion"), "{text}");
+        assert!(text.contains("<version> and no <parent>"), "{text}");
+        assert!(text.contains("spring-boot-starter-validation"), "{text}");
+        assert!(found.iter().all(|(_, fix)| !fix.is_empty()));
+        // Correct, and the normal case: the Boot parent manages the version.
+        assert!(problems(BOOT).is_empty(), "{:?}", problems(BOOT));
+    }
+
+    /// Not a pom at all, which is a different report from a broken one.
+    #[test]
+    fn a_document_with_no_project_element_is_not_a_pom() {
+        let found = problems("nonsense");
+        assert_eq!(found.len(), 1);
+        assert!(found[0].0.contains("no <project> element"), "{found:?}");
     }
 }

@@ -40,7 +40,11 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // sweep. None of those threads a root further down. The disease
                 // is a root threaded through a call graph so each level can
                 // re-derive facts, and the row below counts that on its own.
-                ceiling: 81,
+                //
+                // 81 -> 80: `jails-project::pom` was deleted, and the one
+                // reader that replaced it takes a root in one function rather
+                // than two.
+                ceiling: 80,
                 // Withdrawn, not reached: the count includes modules whose
                 // subject *is* a path, so a target under the ceiling reads as
                 // a demand to stop writing modules. The row below is the
@@ -215,15 +219,14 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
             Ratchet {
                 name: "production files parsing Maven XML with their own scanner",
                 rung: "one document backend",
-                // The target of one is the ask rather than a number reachable
-                // in one change: most of the count is `pom.rs` beside
-                // `jails-workspace/src/documents.rs`, which replaces it, so the
-                // duplication is deliberate until the cutover and the row is
-                // what makes that cutover measurable rather than asserted.
-                // Until then what it buys is that another scanner cannot
-                // appear: a scanner matching a raw substring is how `doctor`
-                // comes to name the wrong container config and then report
-                // every other test as missing an import of it.
+                // Reached. `jails-project/src/pom.rs` is gone and
+                // `jails-workspace/src/documents/pom.rs` is the one reader:
+                // capture, the dependency and build-feature adapters, `new`
+                // and `modernize` all ask it. What the row buys from here is
+                // that a second scanner cannot appear -- a scanner matching a
+                // raw substring is how `doctor` comes to name the wrong
+                // container config and then report every other test as
+                // missing an import of it.
                 ceiling: MAVEN_XML_PARSERS,
                 target: 1,
                 why: "A tool that half-understands a build file and reports a dependency the \

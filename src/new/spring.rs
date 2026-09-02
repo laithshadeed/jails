@@ -328,7 +328,6 @@ fn finish_spring_project(
 ) -> Result<()> {
     verify_requested_deps(tree, requested_deps);
     drop_initializr_help(tree);
-    add_jspecify(tree)?;
     // Read rather than assumed: the online path takes whatever Boot line
     // start.spring.io is currently serving, and which of the six defaults
     // apply is decided by that line rather than by the one this binary pins.
@@ -385,6 +384,15 @@ pub(super) fn seed_model(
         build,
     );
     source.push('\n');
+    // **JSpecify is a model declaration, not a splice.** `@NullMarked` is a
+    // package-level opt-in and every package jails generates carries one, so
+    // without this dependency the `package-info.java` files written beside the
+    // sources do not compile -- and Boot's dependency management does not pin
+    // it, hence the version. Declaring it here is what puts it in the
+    // `<!-- jails:dependencies -->` block the compiler owns, rather than
+    // beside it as a reader-owned coordinate the first `jails add` would have
+    // to refuse.
+    source.push_str("dep org.jspecify:jspecify @version(\"1.0.0\")\n");
     for (_, property, applies) in default_properties(boot_major) {
         if !applies {
             continue;
@@ -496,26 +504,6 @@ fn verify_requested_deps(tree: &publish::Tree<'_>, requested: &str) {
             missing.join(", ")
         );
     }
-}
-
-/// JSpecify, so the null-marked `package-info.java` every generator writes
-/// compiles. Boot's dependency management does not pin it, hence the version.
-pub(super) fn add_jspecify(tree: &publish::Tree<'_>) -> Result<()> {
-    let pom = crate::pom::read(tree.root())?;
-    if crate::pom::has_dependency(&pom, "org.jspecify", "jspecify") {
-        return Ok(());
-    }
-    let dep = crate::pom::Dependency {
-        group_id: "org.jspecify",
-        artifact_id: "jspecify",
-        version: Some("1.0.0"),
-        scope: None,
-        optional: false,
-    };
-    if let Some(updated) = crate::pom::add_dependency(&pom, &dep)? {
-        tree.put_named("pom.xml", updated, "pom.xml")?;
-    }
-    Ok(())
 }
 
 /// The six default settings, as one table.

@@ -42,16 +42,6 @@ mise run verify-rewrite
 
 # Open items
 
-**P13.2 Four production files parse Maven XML; the design asks for one.**
-`jails-project/src/pom.rs` is the reader being replaced;
-`jails-workspace/src/{capture,documents}.rs` and `documents/build_feature.rs`
-are the document backend. The ratchet exists so a fifth answer cannot
-appear. `jails-workspace/src/capture/observe.rs`'s `junit_version` is
-below the bar: it matches one element to read one artifact's version.
-
-**Exit:** the board's *production files parsing Maven XML with their own
-scanner* row reads one. `docs/53-tool-crates.md` S53.3 is the plan.
-
 ## P8.11a — the adoption half of P8.11
 
 - **`jails adopt resource <Name>`** registers an existing hand-written type

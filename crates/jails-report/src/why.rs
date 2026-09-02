@@ -756,13 +756,13 @@ fn run_and_capture(debug: bool) -> Result<String> {
     let root = find_project_root()?;
     let pom_text = pom::read(&root)?;
     let mut cmd = Command::new(crate::maven::binary(&root));
-    match pom::flavor(&pom_text) {
-        pom::Flavor::SpringBoot => {
+    match pom::is_spring_boot(&pom_text) {
+        true => {
             cmd.arg("spring-boot:run");
         }
         // A plain Maven project has no run goal; compiling and testing is
         // the failure surface it does have.
-        pom::Flavor::PlainMaven => {
+        false => {
             cmd.arg("verify");
         }
     }

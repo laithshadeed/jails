@@ -12,8 +12,8 @@ Item numbers `S53.n` are stable and never reused.
 **Read `docs/50-simplify.md` first.** You are agent 3. Your subject is the
 crates that outlive the cutover -- the reader-owned files, the Java reader,
 the commands that start something and the commands that answer a question --
-and the half of the strangler they still carry: a second Maven parser, a
-second project model, and two vocabularies for one test run.
+and the half of the strangler they still carry: a second project model and
+two vocabularies for one test run.
 
 ## What you own
 
@@ -29,8 +29,8 @@ The `CLAUDE.md` entries for these crates.
 `jails-spec` is agent 1's; when its closed vocabularies move into
 `jails-model` (`docs/60-abstraction.md` S60.2) what is left is yours to
 *shrink* under S53.4. `jails-model` and `jails-compiler` are not yours;
-where a deletion here needs a fact from the compiler (S53.3) you ask agent 5
-for the function and wait.
+where a deletion here needs a fact from the compiler you ask agent 5 for the
+function and wait.
 
 ## Baseline
 
@@ -46,19 +46,6 @@ for the function and wait.
 Re-measure with the method in `docs/50-simplify.md` before quoting.
 
 ## Steps
-
-**S53.3 -- One Maven document backend (P13.2).** `pom.rs` is a reader:
-`has_dependency`, `Flavor`, `read`, `flavor`, `release_level`, `problems`,
-`main_class`, `spring_boot_major_of`, and four constants. Every one of those
-questions is already a captured fact in `WorkspaceSnapshot.project` on the
-canonical path. Move the constants to `jails-spec`, route the questions
-through the snapshot where the caller has one, and give the callers that do
-not (`doctor`, `run`, `console`) one small reader in
-`jails-workspace/src/capture/observe.rs`, which is the surviving parser.
-Exit: the board's *production files parsing Maven XML with their own
-scanner* row reads **1** and its target is reached. `gradle.rs` is the same
-shape over one build system and answers `launches_on` and the wrapper
-version; leave it, it is the one Gradle reader.
 
 **S53.4 -- One field-syntax parser.** `src/model_field_parse.rs` is the one
 parser of `name:type[!?]` and `BuiltinType::from_alias` the one alias table.
@@ -84,7 +71,7 @@ precondition an argument if a second caller appears, not a fifth function.
 
 **S53.8 -- Fold the leaves.** `jails-spec` holds the closed CLI vocabularies
 and where a project is; `jails-java` is the Java reader and the template
-renderer, used by `jails-project` and the binary. When S53.3-S53.7 are done,
+renderer, used by `jails-project` and the binary. When S53.4-S53.7 are done,
 measure what each leaf still exports and fold `jails-java` into
 `jails-project` if nothing below `jails-project` needs it. `jails-codemod`
 stays separate whatever happens: it is dependency-free so both ladders can
@@ -113,8 +100,8 @@ whose reason is gone is.
 
 ## Items you close elsewhere
 
-`docs/30-cutover.md` P13.2; `docs/00-contracts.md` §1.7 rows *duplicate
-Maven XML scanners* and *`Project`/`ProjectContext`/snapshot overlap*.
+`docs/00-contracts.md` §1.7 row *`Project`/`ProjectContext`/snapshot
+overlap*.
 
 ## Green
 

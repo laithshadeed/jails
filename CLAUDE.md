@@ -167,10 +167,10 @@ to** -- this is the prose, and prose goes stale.
 | `jails-codemod` | the marked block, the `@Import` splice, `blanked`; **no dependencies at all**, so both `jails-compiler` and `jails-project` can reach it |
 | `jails-codec-derive` | `#[derive(Codec)]` for `jails-drive`'s test-execution wire; goes with its last user (`docs/51-kernel.md` S51.4) |
 | `jails-support` | write, run, encode and name: `apply` (the only module that writes), `process`, `hermetic`, `scratch`, `git`, `unified`, `lock`, the validating newtypes, `Result` and `Failure` |
-| `jails-spec` | the closed CLI vocabularies (`spec::kind`, `policy`, `coordinate`, `constant`, `suffix`), `find_project_root`, the eleven layers, and `build` -- which build tool a directory uses and nothing more |
+| `jails-spec` | the closed CLI vocabularies (`spec::kind`, `policy`, `coordinate`, `constant`, `suffix`), `find_project_root`, the eleven layers, `release` (the three version pins a generated project carries), and `build` -- which build tool a directory uses and nothing more |
 | `jails-java` | the small Java reader, the class-file constant-pool reader, template rendering |
 | `jails-testkit` | `hold_cwd()`, taken as a `[dev-dependency]`; not `#[cfg(test)]`, because a dependent crate's tests cannot see one |
-| `jails-project` | one resolved `Project`, and every reader-owned file jails reads or edits: `config` (`jails.toml`), `compose`, `pom`, `gradle`, `inspect` |
+| `jails-project` | one resolved `Project`, and every reader-owned file jails reads or edits: `config` (`jails.toml`), `compose`, `gradle`, `inspect`; `pom` is re-exported from `jails-workspace`, which owns the one Maven reader |
 | `jails-drive` | commands that **start something**: `run`, `test`, `testd`, `affected`, `migrate`, `kafka`, `console`, `bench`, `lint`; the one edge back down is `run` to `report::why` |
 | `jails-report` | commands that **answer a question**: `doctor`, `why`, `explain`, `src`, `commands`; read-only because the crate sits below `jails-drive` |
 | `jails` (root) | the binary: `main`, `cli`, `dispatch`, `new`, `app`, the `model_*` frontends, and `tests/` |
@@ -360,9 +360,18 @@ Five things to know before touching the workspace:
   unrecognised directory is reported, not guessed; two candidates for one layer
   writes neither; it never touches `[project] capabilities`. `core` is
   deliberately not a synonym for `domain`.
-- **`crates/jails-project/src/pom.rs`** -- flavor and release-level detection
-  and the comment-preserving splice. `TARGET_RELEASE` lives here. A build
-  plugin is claimed by what it *does*, not by its coordinate --
+- **`crates/jails-workspace/src/documents/pom.rs`** -- **the one reader of
+  `pom.xml`, and the one thing that splices into it.** Capture asks it what
+  the build declares, the dependency and build-feature adapters beside it ask
+  where a block goes, and `new` and `modernize` ask it for the two edits they
+  make before a model exists; `jails-project` re-exports it as `crate::pom` so
+  `doctor`, `why` and `run` ask the same reader. The board row *production
+  files parsing Maven XML with their own scanner* is what keeps it the only
+  one. `plugin_nest` is written once and read twice -- inserted, and compared
+  against what is on disk to tell a reader's edit from jails' own writing. The
+  three release pins (`TARGET_RELEASE`, `MIN_RELEASE`, `TARGET_BOOT`) are not
+  read off anything and live in `jails_spec::release`. A build plugin is
+  claimed by what it *does*, not by its coordinate --
   `BuildFeature::{IntegrationTests, Coverage, Formatting}` -- because
   `jacoco-maven-plugin` is not a name Gradle resolves; `gradle.rs`'s matches are
   exhaustive over the enum, so adding a feature is a compile error until the
@@ -677,7 +686,7 @@ the companion test is emitted whole and `@Disabled`, naming the component.
   capabilities out of `--help` and fails when one has no scenario. `format` is
   the documented exemption in `COVERED_ELSEWHERE`. A file `destroy`
   deliberately keeps goes in `ALLOWED_LEFTOVER` with its reason.
-- **Generated projects target Java 26** (`pom::TARGET_RELEASE`); adopted
+- **Generated projects target Java 26** (`release::TARGET_RELEASE`); adopted
   projects keep their release, with 21 as the floor. Tier-3 tests gate on
   `real_java_supports_target_release()`, not on a JDK being present.
 - **`base_package()` falls back to the shallowest `.java` file**, because

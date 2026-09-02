@@ -401,7 +401,6 @@ pub(crate) const DERIVATION_IS_THE_JOB: &[&str] = &[
     "base_package",
     "project_with_pom",
     "verify_requested_deps",
-    "add_jspecify",
     "write_agents",
     "ensure_enforcer",
 ];
@@ -835,15 +834,14 @@ pub(crate) fn largest_builtin_table(src: &[Source]) -> usize {
 /// is not a violation of having one owner.
 pub(crate) const BUILTIN_RS: &str = "jails-model/src/builtin.rs";
 
-/// Where the count stands: `jails-workspace/src/documents/pom.rs`, which is
-/// the surviving backend, and `jails-project/src/pom.rs`, the reader being
-/// replaced.
+/// One: `jails-workspace/src/documents/pom.rs`, the surviving backend.
 ///
-/// `documents.rs`, `documents/build_feature.rs` and `capture/observe.rs` used
-/// to answer Maven questions of their own and now ask `documents/pom.rs`, so
-/// the element walk exists once. What is left is the strangler itself, and it
-/// goes when the last caller of `jails-project/src/pom.rs` does.
-pub(crate) const MAVEN_XML_PARSERS: usize = 2;
+/// `documents.rs`, `documents/build_feature.rs` and `capture/observe.rs` each
+/// answered Maven questions of their own and now ask it, and
+/// `jails-project/src/pom.rs` -- the reader it replaced -- is gone. The row
+/// stays a ratchet because during the migration every file had a reason to be
+/// special, and that is exactly when a fifth answer appears.
+pub(crate) const MAVEN_XML_PARSERS: usize = 1;
 
 /// `# jails:` marker literals outside the crate that owns the format.
 ///
@@ -1008,7 +1006,7 @@ pub(crate) const SCRATCH_RS: &str = "jails-support/src/scratch.rs";
 /// carries its next step on the type (`#[codec(unknown_fix = "...")]`) rather
 /// than in the one place the message is built, so the wording cannot drift
 /// per type.
-pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 111;
+pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 110;
 
 /// A refusal that builds a message and does not say what to do next.
 ///
