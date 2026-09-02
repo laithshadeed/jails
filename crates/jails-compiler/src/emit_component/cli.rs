@@ -36,8 +36,11 @@ use jails_model::{AppModel, Component, ComponentKind, ComponentReference};
 ///
 /// `components` is a `BTreeMap`, so the order is the stable-ID order and the
 /// same model renders the same file.
-pub(super) fn registrations(model: &AppModel, cli: &Component) -> String {
-    model
+pub(super) fn registrations(
+    model: &AppModel,
+    cli: &Component,
+) -> Result<crate::recipe::Rendered, crate::CompileError> {
+    let text: String = model
         .components
         .values()
         .filter(|component| component.kind == ComponentKind::Command)
@@ -48,7 +51,8 @@ pub(super) fn registrations(model: &AppModel, cli: &Component) -> String {
                 command.name
             )
         })
-        .collect()
+        .collect();
+    Ok(text.into())
 }
 
 /// The entry point this model's `cli` components may claim, if any.

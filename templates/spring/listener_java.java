@@ -7,7 +7,7 @@ import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
 /**
- * Consumes {@link {{name}}Event} and hands it to every {@link {{name}}Handler}.
+ * Consumes {@link {{event}}} and hands it to every {@link {{name}}Handler}.
  *
  * <p>The listener is deliberately thin. Business logic inside a listener is
  * unreachable from any test that does not start a broker, and unreusable from
@@ -37,7 +37,7 @@ public class {{name}}Listener {
     }
 
     @KafkaListener(topics = "${topics.{{topic}}:{{topic}}}")
-    public void on({{name}}Event event) {
+    public void on({{event}} event) {
         if (handlers.isEmpty()) {
             // The whole record, not its id: an event is not required to carry
             // one, and a listener that names a component the payload may not

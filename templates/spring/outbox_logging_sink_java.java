@@ -27,7 +27,7 @@ public final class {{usecase}}LoggingOutboxSink implements {{usecase}}OutboxSink
     }
 
     @Override
-    public void deliver({{event}}Event event) {
+    public void deliver({{event}} event) {
         log.warn("no destination is configured for the {{usecase}} outbox; {} was written to the log only", event);
     }
 }

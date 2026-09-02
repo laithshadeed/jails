@@ -25,10 +25,10 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 
     @Test
     void everyRegisteredHandlerSeesTheEvent() {
-        List<{{name}}Event> first = new ArrayList<>();
-        List<{{name}}Event> second = new ArrayList<>();
+        List<{{event}}> first = new ArrayList<>();
+        List<{{event}}> second = new ArrayList<>();
         {{name}}Listener listener = new {{name}}Listener(List.of(first::add, second::add));
-        {{name}}Event event = new {{name}}Event({{event_args}});
+        {{event}} event = new {{event}}({{event_args}});
 
         listener.on(event);
 
@@ -40,7 +40,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
     void aRecordWithNoHandlerIsSurvivable() {
         {{name}}Listener listener = new {{name}}Listener(List.of());
 
-        assertThatCode(() -> listener.on(new {{name}}Event({{event_args}})))
+        assertThatCode(() -> listener.on(new {{event}}({{event_args}})))
                 .doesNotThrowAnyException();
     }
 }

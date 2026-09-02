@@ -1,7 +1,7 @@
 package {{pkg}};
 
 /**
- * What the application does when a {{name}}Event arrives.
+ * What the application does when a {{event}} arrives.
  *
  * <p>This is the seam the listener delegates across, and it exists so the
  * reaction is reachable without a broker. A handler is an ordinary bean: a
@@ -20,5 +20,5 @@ package {{pkg}};
 @FunctionalInterface
 public interface {{name}}Handler {
 
-    void handle({{name}}Event event);
+    void handle({{event}} event);
 }

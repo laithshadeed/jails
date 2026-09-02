@@ -1,10 +1,13 @@
 //! Executable JDBC adapters for canonical operations.
 
 mod command;
+mod node;
 pub(crate) mod outbox;
 pub(crate) mod proof;
 mod query;
 mod transition;
+
+pub(crate) use node::Key;
 
 use crate::CompileError;
 use crate::emit_java::{JAVA_ROOT, JavaUnit, entity};

@@ -60,6 +60,10 @@ const RECIPE_WALKS: &[Pass] = &[
     emit_capability::emit,
     // Twelve component kinds as rows; http-sink and durable-job as functions.
     emit_component::emit,
+    // event: the publisher, the handler port, the listener and their proofs.
+    crate::emit_messaging::emit,
+    // A command's outbox: store, sink, worker.
+    emit_operation::outbox::emit,
 ];
 
 /// The passes that are still functions: emitters that build Java from the
@@ -78,10 +82,6 @@ const FUNCTIONS: &[Pass] = &[
     emit_operation::emit,
     // association.
     crate::emit_relation::emit,
-    // event: the publisher, the handler port, the listener and their proofs.
-    crate::emit_messaging::emit,
-    // A command's outbox: store, sink, worker.
-    emit_operation::outbox::emit,
     // The HTTP proofs of every routed operation.
     emit_http::emit,
     // The architecture test.
@@ -254,8 +254,8 @@ mod tests {
     /// are still functions. A pass that becomes a recipe walk lowers this
     /// beside the doc; one that grows back raises it and says why.
     #[test]
-    fn seven_passes_are_still_functions() {
-        assert_eq!(super::FUNCTIONS.len(), 7);
-        assert_eq!(super::RECIPE_WALKS.len(), 2);
+    fn five_passes_are_still_functions() {
+        assert_eq!(super::FUNCTIONS.len(), 5);
+        assert_eq!(super::RECIPE_WALKS.len(), 4);
     }
 }

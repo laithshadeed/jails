@@ -55,8 +55,10 @@ pub(crate) trait Node: 'static {
     /// Keys every file of this node gets, given the file's package and the
     /// class its template is written against.
     fn file_keys(&self, package: &str, template_class: &str) -> Vec<(&'static str, String)>;
-    /// The provenance one of this node's files carries.
-    fn provenance(&self, artifact_id: String, ejectable: bool) -> Provenance;
+    /// The provenance one of this node's files carries; `pass` is the
+    /// recipe's [`Recipe::pass`], for a node kind more than one recipe
+    /// renders.
+    fn provenance(&self, artifact_id: String, ejectable: bool, pass: &'static str) -> Provenance;
     /// Whether the rendered file opens with the provenance header.
     ///
     /// A capability's Java carries none, because `remove` retires the whole
@@ -92,6 +94,9 @@ pub(crate) struct Recipe<N: Node> {
     pub(crate) build_features: &'static [BuildFeature],
     /// Where a file placed at [`Placement::Default`] goes.
     pub(crate) default_package: fn(&AppModel, &N) -> String,
+    /// The `compiler_pass` the provenance of this recipe's files names, where
+    /// the node kind does not decide it.
+    pub(crate) pass: &'static str,
     /// The Boot major this recipe's *main* source needs, and the type that
     /// needs it.
     ///
@@ -163,7 +168,10 @@ pub(crate) struct JavaFile<N: Node> {
     pub(crate) template: crate::Template,
     pub(crate) before_boot: Option<(u32, crate::Template)>,
     /// What this file imports that its template cannot state for itself.
-    pub(crate) imports: &'static [Import],
+    pub(crate) imports: &'static [Import<N>],
+    /// A file that belongs only to some nodes: a proof that needs an `id`
+    /// to match on, a sink that needs a broker declared.
+    pub(crate) only_when: Option<fn(&AppModel, &N) -> bool>,
     pub(crate) source_set: SourceSet,
     pub(crate) placement: Placement,
     /// Whether `model eject` may transfer this file into reader source. A
@@ -181,7 +189,7 @@ pub(crate) struct JavaFile<N: Node> {
 /// case below is conditional. Naming them on the row keeps the template a
 /// real Java file and keeps the decision beside the rest of the recipe's
 /// data, where the next reader looks.
-pub(crate) enum Import {
+pub(crate) enum Import<N: Node> {
     /// A class of the recipe's *default* package this file names. The
     /// statement is needed only when the file is placed somewhere else, which
     /// `JavaUnit::import_from` decides.
@@ -192,6 +200,9 @@ pub(crate) enum Import {
     /// A class of one layer's package: something shared by every node of
     /// this kind rather than a file of this node.
     From(Package, &'static str),
+    /// The class one of the node's keys names, in one layer's package: the
+    /// event record a publisher publishes, the publisher a sink delivers to.
+    Keyed(Package, N::Key),
     /// A type whose package the captured Boot version decides.
     Moved(MovedImport),
     /// What an integration test needs to reach the container config: either
@@ -325,12 +336,35 @@ pub(crate) enum Fragment<N: Node> {
         capability: &'static str,
         body: &'static str,
     },
-    /// A structural block -- a list, a switch -- rendered by one named
-    /// function of the node and the model.
+    /// A structural block -- a list, a switch, a sample argument list --
+    /// rendered by one named function of the node and the model. The names
+    /// it spells join the import set of every file that spells its key, and
+    /// no other's.
     Rendered {
         key: &'static str,
-        render: fn(&AppModel, &N) -> String,
+        render: fn(&AppModel, &N) -> Result<Rendered, CompileError>,
     },
+}
+
+/// What a rendered fragment is: text, and the fully-qualified names the text
+/// relies on.
+///
+/// **A literal is not import-free.** `UUID.fromString(..)` and
+/// `Instant.parse(..)` are types, and a test given only the record's own
+/// import compiles exactly as long as every component happens to be a
+/// `String`.
+pub(crate) struct Rendered {
+    pub(crate) text: String,
+    pub(crate) imports: BTreeSet<String>,
+}
+
+impl From<String> for Rendered {
+    fn from(text: String) -> Self {
+        Self {
+            text,
+            imports: BTreeSet::new(),
+        }
+    }
 }
 
 /// Something the model must declare before a recipe renders.
@@ -518,15 +552,16 @@ pub(crate) fn render<N: Node>(
                     true => (*body).to_string(),
                     false => String::new(),
                 };
-                (*key, body)
+                Ok((*key, Rendered::from(body)))
             }
-            Fragment::Rendered { key, render } => (*key, render(model, node)),
+            Fragment::Rendered { key, render } => Ok((*key, render(model, node)?)),
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, CompileError>>()?;
     for file in recipe
         .files
         .iter()
         .filter(|_| recipe.files_when.matches(boot_major))
+        .filter(|file| file.only_when.is_none_or(|applies| applies(model, node)))
     {
         let package = package_of(model, node, recipe, file);
         let class = file.class.resolve(node);
@@ -551,10 +586,19 @@ pub(crate) fn render<N: Node>(
                 .replace("{{container_annotation}}", support.annotation)
                 .replace("{{annotation}}", support.disabled);
         }
-        for (key, value) in fragments
+        let mut fragment_imports = BTreeSet::new();
+        for (key, fragment) in &fragments {
+            let placeholder = format!("{{{{{key}}}}}");
+            if !text.contains(&placeholder) {
+                continue;
+            }
+            text = text.replace(&placeholder, &fragment.text);
+            fragment_imports.extend(fragment.imports.iter().cloned());
+        }
+        for (key, value) in recipe
+            .substitutions
             .iter()
-            .map(|(key, value)| (*key, value.as_str()))
-            .chain(recipe.substitutions.iter().copied())
+            .copied()
             .chain(keys.iter().map(|(key, value)| (*key, value.as_str())))
         {
             text = text.replace(&format!("{{{{{key}}}}}"), value);
@@ -577,9 +621,16 @@ pub(crate) fn render<N: Node>(
                 Import::From(package, class) => {
                     unit.import_from(&model.project.package_for(*package), class);
                 }
+                Import::Keyed(package, key) => {
+                    let (_, class) = node.key(model, *key)?;
+                    unit.import_from(&model.project.package_for(*package), &class);
+                }
                 Import::Moved(moved) => unit.import(moved.resolve(boot_major)),
                 Import::ContainerSupport => {}
             }
+        }
+        for name in fragment_imports {
+            unit.import(name);
         }
         if let Some(support) = &support {
             support.declare(&mut unit);
@@ -605,7 +656,7 @@ pub(crate) fn render<N: Node>(
                     kind: file.source_set.kind(),
                     mode: FileMode::Regular,
                     bytes: bytes.into_bytes(),
-                    provenance: node.provenance(artifact_id, file.ejectable),
+                    provenance: node.provenance(artifact_id, file.ejectable, recipe.pass),
                 },
             )
             .map_err(CompileError::new)?;

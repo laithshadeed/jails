@@ -7,12 +7,12 @@ import org.springframework.stereotype.Component;
 @Component
 @Order(0)
 public final class {{usecase}}KafkaOutboxSink implements {{usecase}}OutboxSink {
-    private final {{event}}Publisher publisher;
+    private final {{publisher}} publisher;
 
-    public {{usecase}}KafkaOutboxSink({{event}}Publisher publisher) {
+    public {{usecase}}KafkaOutboxSink({{publisher}} publisher) {
         this.publisher = publisher;
     }
 
     @Override public String name() { return "kafka"; }
-    @Override public void deliver({{event}}Event event) { publisher.publish(event).join(); }
+    @Override public void deliver({{event}} event) { publisher.publish(event).join(); }
 }

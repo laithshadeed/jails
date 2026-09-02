@@ -9,6 +9,7 @@ const KAFKA_FILES: &[JavaFile<Capability>] = &[
         template: crate::template!("spring/kafka_config_java.java"),
         before_boot: None,
         imports: &[],
+        only_when: None,
         source_set: SourceSet::Main,
         placement: Placement::Default,
         ejectable: true,
@@ -20,6 +21,7 @@ const KAFKA_FILES: &[JavaFile<Capability>] = &[
         template: crate::template!("spring/non_retryable_exception_java.java"),
         before_boot: None,
         imports: &[],
+        only_when: None,
         source_set: SourceSet::Main,
         placement: Placement::Default,
         ejectable: true,
@@ -31,6 +33,7 @@ const KAFKA_FILES: &[JavaFile<Capability>] = &[
         template: crate::template!("spring/kafka_config_test_java.java"),
         before_boot: None,
         imports: &[],
+        only_when: None,
         source_set: SourceSet::Test,
         placement: Placement::Default,
         ejectable: true,
@@ -42,6 +45,7 @@ const KAFKA_FILES: &[JavaFile<Capability>] = &[
         template: crate::template!("spring/kafka_testcontainers_config_java.java"),
         before_boot: None,
         imports: &[],
+        only_when: None,
         source_set: SourceSet::Test,
         placement: Placement::Layer(Package::Base),
         ejectable: true,
@@ -56,6 +60,7 @@ const MAIL_FILES: &[JavaFile<Capability>] = &[
         template: crate::template!("spring/mailer_java.java"),
         before_boot: None,
         imports: &[],
+        only_when: None,
         source_set: SourceSet::Main,
         placement: Placement::Default,
         ejectable: true,
@@ -67,6 +72,7 @@ const MAIL_FILES: &[JavaFile<Capability>] = &[
         template: crate::template!("spring/mailer_it_java.java"),
         before_boot: None,
         imports: &[],
+        only_when: None,
         source_set: SourceSet::IntegrationTest,
         placement: Placement::Default,
         ejectable: true,
@@ -279,6 +285,7 @@ pub(super) const KAFKA_PACK: Recipe<Capability> = Recipe {
     build_features: NO_BUILD_FEATURES,
     default_package: messaging_package,
     minimum_boot: None,
+    pass: "",
 };
 
 pub(super) const MAIL_PACK: Recipe<Capability> = Recipe {
@@ -295,6 +302,7 @@ pub(super) const MAIL_PACK: Recipe<Capability> = Recipe {
     build_features: NO_BUILD_FEATURES,
     default_package: root_package,
     minimum_boot: None,
+    pass: "",
 };
 
 const fn dependency(

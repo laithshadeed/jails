@@ -43,7 +43,7 @@ class {{name}}MessagingIT {
 
     @Test
     void aPublishedEventIsConsumed() throws InterruptedException {
-        {{name}}Event event = new {{name}}Event({{event_args}});
+        {{event}} event = new {{event}}({{event_args}});
 
         publisher.publish(event);
 
@@ -63,7 +63,7 @@ class {{name}}MessagingIT {
      */
     static class Probe {
 
-        private final BlockingQueue<{{name}}Event> received = new LinkedBlockingQueue<>();
+        private final BlockingQueue<{{event}}> received = new LinkedBlockingQueue<>();
 
         /**
          * Its own consumer group, so it does not compete with the
@@ -71,7 +71,7 @@ class {{name}}MessagingIT {
          * partitions and each message reaches only one of them.
          */
         @KafkaListener(topics = "${topics.{{topic}}:{{topic}}}", groupId = "{{topic}}-it-probe")
-        void on({{name}}Event event) {
+        void on({{event}} event) {
             received.add(event);
         }
 
@@ -89,7 +89,7 @@ class {{name}}MessagingIT {
         boolean await(Object id, long seconds) throws InterruptedException {
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(seconds);
             for (long left = deadline - System.nanoTime(); left > 0; left = deadline - System.nanoTime()) {
-                {{name}}Event next = received.poll(left, TimeUnit.NANOSECONDS);
+                {{event}} next = received.poll(left, TimeUnit.NANOSECONDS);
                 if (next == null) {
                     return false;
                 }

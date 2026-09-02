@@ -71,6 +71,7 @@ const fn recipe(
         compose_services: &[],
         build_features: &[],
         default_package: base_package,
+        pass: "components",
         minimum_boot: None,
     }
 }
@@ -88,6 +89,7 @@ const fn main(
         template,
         before_boot: None,
         imports: &[],
+        only_when: None,
         source_set: SourceSet::Main,
         placement: Placement::Layer(layer),
         ejectable,
@@ -876,7 +878,7 @@ fn java(
                 FileKind::JavaMain
             },
             mode: FileMode::Regular,
-            provenance: component.provenance(artifact, ejectable),
+            provenance: component.provenance(artifact, ejectable, "components"),
         },
     })
 }

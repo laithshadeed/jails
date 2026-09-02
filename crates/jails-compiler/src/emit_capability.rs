@@ -107,7 +107,7 @@ impl Node for Capability {
         ]
     }
 
-    fn provenance(&self, artifact_id: String, _: bool) -> Provenance {
+    fn provenance(&self, artifact_id: String, _: bool, _: &'static str) -> Provenance {
         Provenance {
             artifact_id,
             ejection_id: Some(self.id.as_str().to_string()),
@@ -277,6 +277,7 @@ fn emit_resource(
                 provenance: capability.provenance(
                     format!("art_{}_{}", capability.id.as_str(), resource.suffix),
                     true,
+                    "",
                 ),
             },
         )

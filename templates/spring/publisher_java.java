@@ -7,7 +7,7 @@ import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Component;
 
 /**
- * Publishes {@link {{name}}Event}.
+ * Publishes {@link {{event}}}.
  *
  * <p>The topic is a property, not a constant: the same jar has to run against
  * a local broker, a shared staging one and production, and those rarely agree
@@ -17,18 +17,18 @@ import org.springframework.stereotype.Component;
 @Component
 public class {{name}}Publisher {
 
-    private final KafkaTemplate<String, {{name}}Event> kafka;
+    private final KafkaTemplate<String, {{event}}> kafka;
     private final String topic;
 
     public {{name}}Publisher(
-            KafkaTemplate<String, {{name}}Event> kafka,
+            KafkaTemplate<String, {{event}}> kafka,
             @Value("${topics.{{topic}}:{{topic}}}") String topic) {
         this.kafka = kafka;
         this.topic = topic;
     }
 
     /** The returned acknowledgement lets durable callers mark success only after Kafka accepts it. */
-    public CompletableFuture<SendResult<String, {{name}}Event>> publish({{name}}Event event) {
-        return kafka.send(topic, {{key}}, event);
+    public CompletableFuture<SendResult<String, {{event}}>> publish({{event}} event) {
+        return {{send}};
     }
 }

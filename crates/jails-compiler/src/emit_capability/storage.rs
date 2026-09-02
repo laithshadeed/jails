@@ -15,6 +15,7 @@ const H2_FILES: &[JavaFile<Capability>] = &[JavaFile {
     template: crate::template!("spring/h2_database_test_java.java"),
     before_boot: None,
     imports: &[],
+    only_when: None,
     source_set: SourceSet::Test,
     placement: Placement::Default,
     ejectable: true,
@@ -109,6 +110,7 @@ const DB_FILES: &[JavaFile<Capability>] = &[JavaFile {
     template: crate::template!("add/testcontainers_config_java.java"),
     before_boot: None,
     imports: &[],
+    only_when: None,
     source_set: SourceSet::Test,
     placement: Placement::Layer(Package::Base),
     ejectable: true,
@@ -239,6 +241,7 @@ pub(super) const DB_PACK: Recipe<Capability> = Recipe {
     build_features: NO_BUILD_FEATURES,
     default_package: adapters_package,
     minimum_boot: None,
+    pass: "",
 };
 
 pub(super) const H2_PACK: Recipe<Capability> = Recipe {
@@ -255,4 +258,5 @@ pub(super) const H2_PACK: Recipe<Capability> = Recipe {
     build_features: NO_BUILD_FEATURES,
     default_package: adapters_package,
     minimum_boot: None,
+    pass: "",
 };

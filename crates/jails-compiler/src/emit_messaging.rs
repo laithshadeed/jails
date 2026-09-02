@@ -10,224 +10,214 @@
 //! Nothing is emitted for a project that has not declared the capability: an
 //! `event` is a domain fact first, and a project with no broker still wants
 //! the record and the `publishEvent` the operation already makes.
+//!
+//! The slice is one [`Recipe`] over the event operation. What is structural
+//! -- the partition key and the Javadoc that tells the truth about it, the
+//! sample argument list the proofs construct the payload with -- is a
+//! [`Fragment`] named on the row.
 
 use crate::CompileError;
-use crate::emit_java::JavaUnit;
-use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile, RenderedTree};
-use jails_model::{AppModel, Operation, OperationKind, Package, StableId as _};
-use std::collections::BTreeSet;
-
-const MAIN_ROOT: &str = ".jails/generated/main/java";
-const TEST_ROOT: &str = ".jails/generated/test/java";
-
-const PUBLISHER: crate::Template = crate::template!("spring/publisher_java.java");
-const LISTENER: crate::Template = crate::template!("spring/listener_java.java");
-const HANDLER: crate::Template = crate::template!("spring/event_handler_java.java");
-const LISTENER_TEST: crate::Template = crate::template!("spring/listener_test_java.java");
-const IT: crate::Template = crate::template!("spring/messaging_it_java.java");
+use crate::emit_operation::Key;
+use crate::recipe::{
+    BootCondition, Fragment, Import, JavaFile, Naming, Placement, Recipe, Rendered, SourceSet,
+};
+use jails_contracts::RenderedTree;
+use jails_model::{AppModel, Operation, OperationKind, Package};
 
 pub(crate) fn emit(
     model: &AppModel,
     output: &mut RenderedTree,
     snapshot: &jails_contracts::WorkspaceSnapshot,
 ) -> Result<(), CompileError> {
-    let templates = &snapshot.template_overrides;
-    if !model
-        .capabilities
-        .values()
-        .any(|capability| capability.kind == "kafka")
-    {
+    if !crate::recipe::declares(model, "kafka") {
         return Ok(());
     }
     for operation in model.operations.values() {
         if !matches!(operation.kind, OperationKind::Event(_)) {
             continue;
         }
-        for (path, file) in files(model, operation, templates)? {
-            output.insert(path, file).map_err(CompileError::new)?;
-        }
+        crate::recipe::render(model, operation, &EVENT, snapshot, output)?;
     }
     Ok(())
 }
 
-/// `payout_settled` as `payout-settled`, which is the topic.
-///
-/// The stable label rather than the Java name, so renaming the type leaves
-/// the deployed topic alone -- the same rule every other projection follows.
-pub(crate) fn topic(operation: &Operation) -> String {
-    operation.label.replace('_', "-")
+/// A main-source file in the `messaging` layer.
+const fn main(
+    role: &'static str,
+    template: crate::Template,
+    class: Naming<Operation>,
+    ejectable: bool,
+) -> JavaFile<Operation> {
+    JavaFile {
+        role,
+        template,
+        before_boot: None,
+        // Every file here names the payload record, and gets the import
+        // unless it is already in this package.
+        imports: &[Import::Keyed(Package::DomainEvents, Key::Event)],
+        only_when: None,
+        source_set: SourceSet::Main,
+        placement: Placement::Layer(Package::Messaging),
+        ejectable,
+        class,
+        template_class: Naming::Fixed(""),
+    }
 }
 
-fn files(
-    model: &AppModel,
-    operation: &Operation,
-    templates: &jails_contracts::TemplateOverrides,
-) -> Result<Vec<(ProjectPath, RenderedFile)>, CompileError> {
-    let name = &operation.names.java_type;
-    let event_type = crate::emit_java::with_suffix(name, "Event");
-    let messaging = model.project.package_for(Package::Messaging);
-    let events = model.project.package_for(Package::DomainEvents);
-    let topic = topic(operation);
-    let key = partition_key(model, operation)?;
-    // Every file here names the payload record, and gets the import unless it
-    // is already in this package.
-    let payload = |text: String| {
-        let mut unit = JavaUnit::from_source(&text);
-        unit.import_from(&events, &event_type);
-        unit
-    };
-
-    let publisher = payload(
-        PUBLISHER
-            .resolve(templates)?
-            .replace("{{pkg}}", &messaging)
-            .replace("{{ordering}}", &key.javadoc)
-            .replace(
-                "kafka.send(topic, {{key}}, event)",
-                &match &key.expression {
-                    Some(expression) => format!("kafka.send(topic, {expression}, event)"),
-                    None => "kafka.send(topic, event)".to_string(),
-                },
-            )
-            .replace("{{topic}}", &topic)
-            .replace("{{name}}Event", &event_type)
-            .replace("{{name}}", name),
-    );
-    // **The handler port is the reaction's home, and it lives beside the
-    // listener rather than in `ports.events`.** That package is the *outbound*
-    // publish port an entity's `events` facet emits; an inbound handler is the
-    // other direction, and filing both under one name would make
-    // `TaskEvents` and `ClosedHandler` look like halves of one interface.
-    let handler_type = format!("{name}Handler");
-    let handler = payload(
-        HANDLER
-            .resolve(templates)?
-            .replace("{{pkg}}", &messaging)
-            .replace("{{name}}Event", &event_type)
-            .replace("{{name}}", name),
-    );
-    let listener = payload(
-        LISTENER
-            .resolve(templates)?
-            .replace("{{pkg}}", &messaging)
-            .replace("{{topic}}", &topic)
-            .replace("{{name}}Event", &event_type)
-            .replace("{{name}}", name),
-    );
-
-    // **The proof needs a component to wait for.** Its probe replays the whole
-    // topic from the start of its own consumer group, so it matches the record
-    // by id -- and asserting on whichever record arrived first would make the
-    // test pass or fail on what a neighbouring test published. A payload with
-    // no `id` gets the publisher and the listener and no proof, rather than a
-    // proof that is flaky by construction.
-    let mut files = vec![
-        rendered(
-            operation,
-            "publisher",
-            &messaging,
-            &format!("{name}Publisher"),
-            publisher,
-            FileKind::JavaMain,
-        )?,
-        // Managed ABI: the listener's constructor names it, so ejecting the
-        // port would leave the compiler emitting a class against a type it no
-        // longer controls. The implementations the reader writes are theirs
-        // already -- jails never generates one.
-        port(operation, &messaging, &handler_type, handler)?,
-        rendered(
-            operation,
-            "listener",
-            &messaging,
-            &format!("{name}Listener"),
-            listener,
-            FileKind::JavaMain,
-        )?,
-    ];
-    let (arguments, disabled, sample_imports) =
-        crate::emit_component::http_sink::sample(model, operation)?;
-    let disabled_annotation = match disabled {
-        true => "@Disabled(\"jails cannot construct a project-owned component of this payload\")\n",
-        false => "",
-    };
-
-    // **Both proofs construct the payload, so both need what constructing it
-    // names.** The sample is `UUID.fromString(..)`, `Instant.parse(..)` and
-    // the rest, and a test given only the event record's own import compiles
-    // exactly as long as every component happens to be a `String`.
-    let proof = |text: String| {
-        let mut unit = payload(text);
-        for name in &sample_imports {
-            unit.import(name);
-        }
-        if disabled {
-            unit.import("org.junit.jupiter.api.Disabled");
-        }
-        unit
-    };
-
-    // **The listener test needs no broker and no `id`.** The proof below waits
-    // for a record to come back and matches it by id, so it is emitted only
-    // for a payload that has one; delegation to the port is a property of an
-    // ordinary object, so it is proved for every event.
-    let listener_test = proof(
-        LISTENER_TEST
-            .resolve(templates)?
-            .replace("{{pkg}}", &messaging)
-            .replace("{{disabled}}", disabled_annotation)
-            .replace("{{event_args}}", &arguments)
-            .replace("{{name}}Event", &event_type)
-            .replace("{{name}}", name),
-    );
-    files.push(rendered(
-        operation,
-        "listener_test",
-        &messaging,
-        &format!("{name}ListenerTest"),
-        listener_test,
-        FileKind::JavaTest,
-    )?);
-
-    if !crate::emit_java::event_component_names(
-        model,
-        match &operation.kind {
-            OperationKind::Event(event) => event,
-            _ => unreachable!("only events reach here"),
+/// **The handler port is the reaction's home, and it lives beside the
+/// listener rather than in `ports.events`.** That package is the *outbound*
+/// publish port an entity's `events` facet emits; an inbound handler is the
+/// other direction, and filing both under one name would make `TaskEvents`
+/// and `ClosedHandler` look like halves of one interface.
+///
+/// The port is managed ABI: the listener's constructor names it, so ejecting
+/// it would leave the compiler emitting a class against a type it no longer
+/// controls. The implementations the reader writes are theirs already --
+/// jails never generates one.
+const EVENT: Recipe<Operation> = Recipe {
+    substitutions: &[("KAFKA_TESTCONTAINERS_CONFIG", "KafkaTestcontainersConfig")],
+    keys: &[Key::Topic, Key::Event],
+    fragments: &[
+        Fragment::Rendered {
+            key: "ordering",
+            render: ordering,
         },
-    )?
-    .iter()
-    .any(|component| component == "id")
-    {
-        return Ok(files);
-    }
-
-    let mut test = proof(
-        IT.resolve(templates)?
-            .replace("{{pkg}}", &messaging)
-            .replace("{{disabled}}", disabled_annotation)
-            .replace(
-                "{{KAFKA_TESTCONTAINERS_CONFIG}}",
-                "KafkaTestcontainersConfig",
+        Fragment::Rendered {
+            key: "send",
+            render: send,
+        },
+        Fragment::Rendered {
+            key: "event_args",
+            render: event_args,
+        },
+        Fragment::Rendered {
+            key: "disabled",
+            render: disabled,
+        },
+    ],
+    requires: &[],
+    files: &[
+        main(
+            "publisher",
+            crate::template!("spring/publisher_java.java"),
+            Naming::Suffix("Publisher"),
+            true,
+        ),
+        main(
+            "handler",
+            crate::template!("spring/event_handler_java.java"),
+            Naming::Suffix("Handler"),
+            false,
+        ),
+        main(
+            "listener",
+            crate::template!("spring/listener_java.java"),
+            Naming::Suffix("Listener"),
+            true,
+        ),
+        // **The listener test needs no broker and no `id`.** The proof below
+        // waits for a record to come back and matches it by id, so it is
+        // emitted only for a payload that has one; delegation to the port is
+        // a property of an ordinary object, so it is proved for every event.
+        JavaFile {
+            source_set: SourceSet::Test,
+            ..main(
+                "listener_test",
+                crate::template!("spring/listener_test_java.java"),
+                Naming::Suffix("ListenerTest"),
+                true,
             )
-            .replace("{{event_args}}", &arguments)
-            .replace("{{topic}}", &topic)
-            .replace("{{name}}Event", &event_type)
-            .replace("{{name}}", name),
-    );
-    test.import_from(
-        &model.project.package_for(Package::Base),
-        "KafkaTestcontainersConfig",
-    );
+        },
+        // **The proof needs a component to wait for.** Its probe replays the
+        // whole topic from the start of its own consumer group, so it matches
+        // the record by id -- and asserting on whichever record arrived first
+        // would make the test pass or fail on what a neighbouring test
+        // published. A payload with no `id` gets the publisher and the
+        // listener and no proof, rather than a proof that is flaky by
+        // construction.
+        JavaFile {
+            imports: &[
+                Import::Keyed(Package::DomainEvents, Key::Event),
+                Import::From(Package::Base, "KafkaTestcontainersConfig"),
+            ],
+            only_when: Some(has_id),
+            source_set: SourceSet::Test,
+            ..main(
+                "messaging_it",
+                crate::template!("spring/messaging_it_java.java"),
+                Naming::Suffix("MessagingIT"),
+                true,
+            )
+        },
+    ],
+    files_when: BootCondition::Any,
+    resources: &[],
+    dependencies: &[],
+    properties: &[],
+    compose_services: &[],
+    build_features: &[],
+    default_package: messaging_package,
+    pass: "messaging",
+    minimum_boot: None,
+};
 
-    files.push(rendered(
-        operation,
-        "messaging_it",
-        &messaging,
-        &format!("{name}MessagingIT"),
-        test,
-        FileKind::JavaTest,
-    )?);
-    Ok(files)
+fn messaging_package(model: &AppModel, _: &Operation) -> String {
+    model.project.package_for(Package::Messaging)
+}
+
+/// Whether the payload carries an `id` component the proof can match on.
+fn has_id(model: &AppModel, operation: &Operation) -> bool {
+    payload_names(model, operation).is_ok_and(|names| names.iter().any(|name| name == "id"))
+}
+
+fn payload_names(model: &AppModel, operation: &Operation) -> Result<Vec<String>, CompileError> {
+    let OperationKind::Event(event) = &operation.kind else {
+        unreachable!("only events reach here");
+    };
+    crate::emit_java::event_component_names(model, event)
+}
+
+/// `{{ordering}}`: the Javadoc that says truthfully what the partition key is.
+fn ordering(model: &AppModel, operation: &Operation) -> Result<Rendered, CompileError> {
+    Ok(partition_key(model, operation)?.javadoc.into())
+}
+
+/// `{{send}}`: the `kafka.send(..)` call, keyed or not.
+fn send(model: &AppModel, operation: &Operation) -> Result<Rendered, CompileError> {
+    Ok(match partition_key(model, operation)?.expression {
+        Some(expression) => format!("kafka.send(topic, {expression}, event)"),
+        None => "kafka.send(topic, event)".to_string(),
+    }
+    .into())
+}
+
+/// `{{event_args}}`: one `<Name>Event(...)` argument list for the proofs.
+///
+/// **Both proofs construct the payload, so both need what constructing it
+/// names.** The sample is `UUID.fromString(..)`, `Instant.parse(..)` and the
+/// rest, and a test given only the event record's own import compiles
+/// exactly as long as every component happens to be a `String`.
+fn event_args(model: &AppModel, operation: &Operation) -> Result<Rendered, CompileError> {
+    let (arguments, _, imports) = crate::emit_component::http_sink::sample(model, operation)?;
+    Ok(Rendered {
+        text: arguments,
+        imports,
+    })
+}
+
+/// `{{disabled}}`: the annotation a proof carries when jails cannot construct
+/// a project-owned component of the payload, and the import it needs.
+fn disabled(model: &AppModel, operation: &Operation) -> Result<Rendered, CompileError> {
+    let (_, disabled, _) = crate::emit_component::http_sink::sample(model, operation)?;
+    Ok(match disabled {
+        true => Rendered {
+            text:
+                "@Disabled(\"jails cannot construct a project-owned component of this payload\")\n"
+                    .to_string(),
+            imports: ["org.junit.jupiter.api.Disabled".to_string()].into(),
+        },
+        false => String::new().into(),
+    })
 }
 
 /// Which component of the payload decides the partition, with the Javadoc that
@@ -288,66 +278,6 @@ fn lower_first(value: &str) -> String {
     characters.next().map_or_else(String::new, |first| {
         first.to_ascii_lowercase().to_string() + characters.as_str()
     })
-}
-
-/// The handler port, which is ABI rather than an adapter.
-///
-/// [`rendered`] marks everything it writes ejectable, and that is right for the
-/// publisher, the listener and the proof -- they are implementations a reader
-/// may take over. The port is not: the listener's constructor names it, so
-/// transferring ownership would leave the compiler emitting a class against a
-/// type it no longer controls. Same rule as a repository port.
-fn port(
-    operation: &Operation,
-    package: &str,
-    type_name: &str,
-    unit: impl Into<JavaUnit>,
-) -> Result<(ProjectPath, RenderedFile), CompileError> {
-    let (path, mut file) = rendered(
-        operation,
-        "handler",
-        package,
-        type_name,
-        unit,
-        FileKind::JavaMain,
-    )?;
-    file.provenance.ejectable = false;
-    Ok((path, file))
-}
-
-fn rendered(
-    operation: &Operation,
-    suffix: &str,
-    package: &str,
-    type_name: &str,
-    unit: impl Into<JavaUnit>,
-    kind: FileKind,
-) -> Result<(ProjectPath, RenderedFile), CompileError> {
-    let artifact = format!("art_{}_{suffix}", operation.id.as_str());
-    let root = match kind {
-        FileKind::JavaTest => TEST_ROOT,
-        _ => MAIN_ROOT,
-    };
-    let path = ProjectPath::parse(format!(
-        "{root}/{}/{type_name}.java",
-        package.replace('.', "/")
-    ))
-    .map_err(CompileError::new)?;
-    Ok((
-        path,
-        RenderedFile {
-            bytes: unit.into().render(&artifact).into_bytes(),
-            kind,
-            mode: FileMode::Regular,
-            provenance: Provenance {
-                artifact_id: artifact.clone(),
-                ejection_id: None,
-                ejectable: true,
-                semantic_ids: BTreeSet::from([operation.id.as_str().to_string()]),
-                compiler_pass: "messaging".to_string(),
-            },
-        },
-    ))
 }
 
 #[cfg(test)]

@@ -25,6 +25,7 @@ const ACTUATOR_FILES: &[JavaFile<Capability>] = &[JavaFile {
     template: crate::template!("spring/actuator_test_java.java"),
     before_boot: None,
     imports: &[],
+    only_when: None,
     source_set: SourceSet::Test,
     placement: Placement::Default,
     ejectable: true,
@@ -38,6 +39,7 @@ const CACHE_FILES: &[JavaFile<Capability>] = &[
         template: crate::template!("spring/cache_config_java.java"),
         before_boot: None,
         imports: &[],
+        only_when: None,
         source_set: SourceSet::Main,
         placement: Placement::Default,
         ejectable: true,
@@ -49,6 +51,7 @@ const CACHE_FILES: &[JavaFile<Capability>] = &[
         template: crate::template!("spring/cache_test_java.java"),
         before_boot: None,
         imports: &[],
+        only_when: None,
         source_set: SourceSet::Test,
         placement: Placement::Default,
         ejectable: true,
@@ -63,6 +66,7 @@ const CORS_FILES: &[JavaFile<Capability>] = &[
         template: crate::template!("spring/cors_config_java.java"),
         before_boot: None,
         imports: &[],
+        only_when: None,
         source_set: SourceSet::Main,
         placement: Placement::Default,
         ejectable: true,
@@ -77,6 +81,7 @@ const CORS_FILES: &[JavaFile<Capability>] = &[
             crate::template!("spring/cors_config_test_classic_java.java"),
         )),
         imports: &[Import::Moved(AUTOCONFIGURE_MOCKMVC)],
+        only_when: None,
         source_set: SourceSet::Test,
         placement: Placement::Default,
         ejectable: true,
@@ -91,6 +96,7 @@ const OBSERVABILITY_FILES: &[JavaFile<Capability>] = &[
         template: crate::template!("spring/metrics_config_java.java"),
         before_boot: None,
         imports: &[Import::Moved(METER_REGISTRY_CUSTOMIZER)],
+        only_when: None,
         source_set: SourceSet::Main,
         placement: Placement::Default,
         ejectable: true,
@@ -102,6 +108,7 @@ const OBSERVABILITY_FILES: &[JavaFile<Capability>] = &[
         template: crate::template!("spring/app_metrics_java.java"),
         before_boot: None,
         imports: &[],
+        only_when: None,
         source_set: SourceSet::Main,
         placement: Placement::Default,
         ejectable: true,
@@ -113,6 +120,7 @@ const OBSERVABILITY_FILES: &[JavaFile<Capability>] = &[
         template: crate::template!("spring/app_metrics_test_java.java"),
         before_boot: None,
         imports: &[],
+        only_when: None,
         source_set: SourceSet::Test,
         placement: Placement::Default,
         ejectable: true,
@@ -124,6 +132,7 @@ const OBSERVABILITY_FILES: &[JavaFile<Capability>] = &[
         template: crate::template!("spring/prometheus_scrape_test_java.java"),
         before_boot: None,
         imports: &[],
+        only_when: None,
         source_set: SourceSet::Test,
         placement: Placement::Default,
         ejectable: true,
@@ -138,6 +147,7 @@ const SSE_FILES: &[JavaFile<Capability>] = &[
         template: crate::template!("spring/sse_hub_java.java"),
         before_boot: None,
         imports: &[],
+        only_when: None,
         source_set: SourceSet::Main,
         placement: Placement::Default,
         ejectable: true,
@@ -149,6 +159,7 @@ const SSE_FILES: &[JavaFile<Capability>] = &[
         template: crate::template!("spring/scheduling_config_java.java"),
         before_boot: None,
         imports: &[],
+        only_when: None,
         source_set: SourceSet::Main,
         placement: Placement::Default,
         ejectable: true,
@@ -162,6 +173,7 @@ const SSE_FILES: &[JavaFile<Capability>] = &[
         // The controller holds the hub, and `package_overrides` files it under
         // `web` while the hub stays in the base package.
         imports: &[Import::Own("EventHub")],
+        only_when: None,
         source_set: SourceSet::Main,
         placement: Placement::Layer(Package::Web),
         ejectable: true,
@@ -173,6 +185,7 @@ const SSE_FILES: &[JavaFile<Capability>] = &[
         template: crate::template!("spring/sse_hub_test_java.java"),
         before_boot: None,
         imports: &[],
+        only_when: None,
         source_set: SourceSet::Test,
         placement: Placement::Default,
         ejectable: true,
@@ -187,6 +200,7 @@ const REDIS_FILES: &[JavaFile<Capability>] = &[
         template: crate::template!("spring/key_value_store_java.java"),
         before_boot: None,
         imports: &[],
+        only_when: None,
         source_set: SourceSet::Main,
         placement: Placement::Default,
         ejectable: true,
@@ -198,6 +212,7 @@ const REDIS_FILES: &[JavaFile<Capability>] = &[
         template: crate::template!("spring/key_value_store_it_java.java"),
         before_boot: None,
         imports: &[],
+        only_when: None,
         source_set: SourceSet::IntegrationTest,
         placement: Placement::Default,
         ejectable: true,
@@ -502,6 +517,7 @@ pub(super) const ACTUATOR_PACK: Recipe<Capability> = Recipe {
     build_features: NO_BUILD_FEATURES,
     default_package: root_package,
     minimum_boot: None,
+    pass: "",
 };
 
 pub(super) const CACHE_PACK: Recipe<Capability> = Recipe {
@@ -518,6 +534,7 @@ pub(super) const CACHE_PACK: Recipe<Capability> = Recipe {
     build_features: NO_BUILD_FEATURES,
     default_package: root_package,
     minimum_boot: None,
+    pass: "",
 };
 
 /// `k8s` emits its chart through `project_file.rs`; this is the one setting
@@ -541,6 +558,7 @@ pub(super) const K8S_PACK: Recipe<Capability> = Recipe {
     build_features: NO_BUILD_FEATURES,
     default_package: root_package,
     minimum_boot: None,
+    pass: "",
 };
 
 const K8S_PROPERTIES: &[PropertySpec] = &[PropertySpec {
@@ -565,6 +583,7 @@ pub(super) const API_PACK: Recipe<Capability> = Recipe {
     default_package: api_package,
     // `ProblemDetail` is Framework 6, which is Boot 3.
     minimum_boot: Some((3, "ProblemDetail")),
+    pass: "",
 };
 
 const API_DEPENDENCIES: &[DependencySpec] = &[DependencySpec {
@@ -592,6 +611,7 @@ pub(super) const CORS_PACK: Recipe<Capability> = Recipe {
     build_features: NO_BUILD_FEATURES,
     default_package: root_package,
     minimum_boot: None,
+    pass: "",
 };
 
 pub(super) const OBSERVABILITY_PACK: Recipe<Capability> = Recipe {
@@ -608,6 +628,7 @@ pub(super) const OBSERVABILITY_PACK: Recipe<Capability> = Recipe {
     build_features: NO_BUILD_FEATURES,
     default_package: root_package,
     minimum_boot: None,
+    pass: "",
 };
 
 pub(super) const SSE_PACK: Recipe<Capability> = Recipe {
@@ -624,6 +645,7 @@ pub(super) const SSE_PACK: Recipe<Capability> = Recipe {
     build_features: NO_BUILD_FEATURES,
     default_package: root_package,
     minimum_boot: None,
+    pass: "",
 };
 
 pub(super) const REDIS_PACK: Recipe<Capability> = Recipe {
@@ -640,4 +662,5 @@ pub(super) const REDIS_PACK: Recipe<Capability> = Recipe {
     build_features: NO_BUILD_FEATURES,
     default_package: adapters_package,
     minimum_boot: None,
+    pass: "",
 };

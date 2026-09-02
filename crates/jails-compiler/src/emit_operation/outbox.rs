@@ -24,23 +24,16 @@
 //! publication cannot.
 
 use crate::CompileError;
-use crate::emit_java::JavaUnit;
-use jails_contracts::{
-    FileKind, FileMode, ProjectPath, Provenance, RenderedFile, RenderedMigration, RenderedTree,
+use crate::emit_operation::Key;
+use crate::recipe::{
+    BootCondition, Import, JavaFile, Naming, Need, Placement, Recipe, SourceSet, Want,
 };
+use jails_contracts::{RenderedMigration, RenderedTree};
 use jails_model::{
     AppModel, BuiltinType, Delivery, Operation, OperationKind, Package, ParameterSource, StableId,
     TypeRef,
 };
 use std::collections::BTreeSet;
-
-const MAIN_ROOT: &str = ".jails/generated/main/java";
-
-const STORE: crate::Template = crate::template!("spring/outbox_store_java.java");
-const SINK: crate::Template = crate::template!("spring/outbox_sink_java.java");
-const KAFKA_SINK: crate::Template = crate::template!("spring/outbox_kafka_sink_java.java");
-const LOGGING_SINK: crate::Template = crate::template!("spring/outbox_logging_sink_java.java");
-const WORKER: crate::Template = crate::template!("spring/outbox_worker_java.java");
 
 /// Every command in this model that delivers through an outbox.
 pub(crate) fn commands(model: &AppModel) -> Vec<&Operation> {
@@ -94,11 +87,8 @@ pub(crate) fn emit(
     output: &mut RenderedTree,
     snapshot: &jails_contracts::WorkspaceSnapshot,
 ) -> Result<(), CompileError> {
-    let templates = &snapshot.template_overrides;
     for operation in commands(model) {
-        for (path, file) in files(model, operation, templates)? {
-            output.insert(path, file).map_err(CompileError::new)?;
-        }
+        crate::recipe::render(model, operation, &OUTBOX, snapshot, output)?;
     }
     Ok(())
 }
@@ -134,11 +124,6 @@ pub(crate) fn migrations(accepted: Option<&AppModel>, next: &AppModel) -> Vec<Re
 /// renamed Java type does not strand the rows already in it.
 pub(crate) fn table(operation: &Operation) -> String {
     format!("{}_outbox", operation.label)
-}
-
-/// The `outbox.<command>.*` property prefix the store and worker read.
-pub(crate) fn property(operation: &Operation) -> String {
-    operation.label.replace('_', "-")
 }
 
 /// The single event an outbox command relays, checked.
@@ -195,181 +180,124 @@ pub(crate) fn relayed<'a>(
     }
 }
 
-fn files(
-    model: &AppModel,
-    operation: &Operation,
-    templates: &jails_contracts::TemplateOverrides,
-) -> Result<Vec<(ProjectPath, RenderedFile)>, CompileError> {
-    let event = relayed(model, operation)?;
-    require(model, "db", operation, "a table to stage events in")?;
-    require(model, "json", operation, "a payload encoder (`Json`)")?;
-
-    let usecase = &operation.names.java_type;
-    let event_type = crate::emit_java::with_suffix(&event.names.java_type, "Event");
-    let jobs = model.project.package_for(Package::Jobs);
-    let events = model.project.package_for(Package::DomainEvents);
-    let adapters = model.project.package_for(Package::Adapters);
-    let table = table(operation);
-    let property = property(operation);
-    // Every file but the worker names the staged event's record type.
-    let staged = |text: String| {
-        let mut unit = JavaUnit::from_source(&text);
-        unit.import_from(&events, &event_type);
-        unit
-    };
-
-    let mut store = staged(
-        STORE
-            .resolve(templates)?
-            .replace("{{pkg}}", &jobs)
-            .replace("{{usecase}}", usecase)
-            .replace("{{property}}", &property)
-            .replace("{{event}}Event", &event_type)
-            .replace("{{table}}", &table),
-    );
-    store.import_from(&adapters, "Json");
-    let sink = staged(
-        SINK.resolve(templates)?
-            .replace("{{pkg}}", &jobs)
-            .replace("{{usecase}}", usecase)
-            .replace("{{event}}Event", &event_type),
-    );
-    let logging = staged(
-        LOGGING_SINK
-            .resolve(templates)?
-            .replace("{{pkg}}", &jobs)
-            .replace("{{usecase}}", usecase)
-            .replace("{{event}}Event", &event_type),
-    );
-    let worker = WORKER
-        .resolve(templates)?
-        .replace("{{pkg}}", &jobs)
-        .replace("{{usecase}}", usecase)
-        .replace("{{property}}", &property);
-
-    // **The broker is a destination, not the relay's business.** The worker
-    // walks the sink chain and knows nothing about Kafka; declaring the
-    // capability is what puts a Kafka sink in that chain, and a project
-    // without one keeps the logging sink and its WARN.
-    let mut files = Vec::new();
-    if model
-        .capabilities
-        .values()
-        .any(|capability| capability.kind == "kafka")
-    {
-        let messaging = model.project.package_for(Package::Messaging);
-        let publisher = format!("{}Publisher", event.names.java_type);
-        let mut kafka = staged(
-            KAFKA_SINK
-                .resolve(templates)?
-                .replace("{{pkg}}", &jobs)
-                .replace("{{usecase}}", usecase)
-                .replace("{{event}}Publisher", &publisher)
-                .replace("{{event}}Event", &event_type),
-        );
-        kafka.import_from(&messaging, &publisher);
-        files.push(rendered(
-            operation,
-            "outbox_kafka_sink",
-            &jobs,
-            &format!("{usecase}KafkaOutboxSink"),
-            kafka,
-            true,
-        )?);
-    }
-
-    files.extend([
-        rendered(
-            operation,
-            "outbox_store",
-            &jobs,
-            &format!("Jdbc{usecase}Outbox"),
-            store,
-            true,
-        )?,
-        // The port is managed ABI: the worker names it and every sink the
-        // reader writes implements it.
-        rendered(
-            operation,
-            "outbox_sink",
-            &jobs,
-            &format!("{usecase}OutboxSink"),
-            sink,
-            false,
-        )?,
-        rendered(
-            operation,
-            "outbox_logging_sink",
-            &jobs,
-            &format!("{usecase}LoggingOutboxSink"),
-            logging,
-            true,
-        )?,
-        rendered(
-            operation,
-            "outbox_worker",
-            &jobs,
-            &format!("{usecase}OutboxWorker"),
-            worker,
-            true,
-        )?,
-    ]);
-    Ok(files)
-}
-
-/// Refuse when a capability the rendered Java names is not in the model.
+/// The outbox of one command, as a recipe over the command operation.
 ///
-/// Naming the capability rather than the missing class is deliberate: the
-/// reader's fix is a declaration, and `Json.toJson` is a symbol they never
-/// asked for.
-fn require(
-    model: &AppModel,
-    kind: &str,
-    operation: &Operation,
-    why: &str,
-) -> Result<(), CompileError> {
-    if model
-        .capabilities
-        .values()
-        .any(|capability| capability.kind == kind)
-    {
-        return Ok(());
+/// **The broker is a destination, not the relay's business.** The worker
+/// walks the sink chain and knows nothing about Kafka; declaring the
+/// capability is what puts a Kafka sink in that chain, and a project without
+/// one keeps the logging sink and its WARN. The port is managed ABI: the
+/// worker names it and every sink the reader writes implements it.
+///
+/// Naming the capability rather than the missing class in a refusal is
+/// deliberate: the reader's fix is a declaration, and `Json.toJson` is a
+/// symbol they never asked for.
+const OUTBOX: Recipe<Operation> = Recipe {
+    substitutions: &[],
+    keys: &[
+        Key::Usecase,
+        Key::Property,
+        Key::Table("_outbox"),
+        Key::Event,
+        Key::Publisher,
+    ],
+    fragments: &[],
+    requires: &[
+        Need {
+            want: Want::Capability("db"),
+            why: "delivers through an outbox, which needs a table to stage events in",
+        },
+        Need {
+            want: Want::Capability("json"),
+            why: "delivers through an outbox, which needs a payload encoder (`Json`)",
+        },
+    ],
+    files: &[
+        JavaFile {
+            imports: &[
+                Import::Keyed(Package::DomainEvents, Key::Event),
+                Import::From(Package::Adapters, "Json"),
+            ],
+            ..staged(
+                "outbox_store",
+                crate::template!("spring/outbox_store_java.java"),
+                Naming::Wrap("Jdbc", "Outbox"),
+                true,
+            )
+        },
+        staged(
+            "outbox_sink",
+            crate::template!("spring/outbox_sink_java.java"),
+            Naming::Suffix("OutboxSink"),
+            false,
+        ),
+        staged(
+            "outbox_logging_sink",
+            crate::template!("spring/outbox_logging_sink_java.java"),
+            Naming::Suffix("LoggingOutboxSink"),
+            true,
+        ),
+        JavaFile {
+            imports: &[
+                Import::Keyed(Package::DomainEvents, Key::Event),
+                Import::Keyed(Package::Messaging, Key::Publisher),
+            ],
+            only_when: Some(has_broker),
+            ..staged(
+                "outbox_kafka_sink",
+                crate::template!("spring/outbox_kafka_sink_java.java"),
+                Naming::Suffix("KafkaOutboxSink"),
+                true,
+            )
+        },
+        JavaFile {
+            imports: &[],
+            ..staged(
+                "outbox_worker",
+                crate::template!("spring/outbox_worker_java.java"),
+                Naming::Suffix("OutboxWorker"),
+                true,
+            )
+        },
+    ],
+    files_when: BootCondition::Any,
+    resources: &[],
+    dependencies: &[],
+    properties: &[],
+    compose_services: &[],
+    build_features: &[],
+    default_package: jobs_package,
+    pass: "outbox",
+    minimum_boot: None,
+};
+
+/// A main-source file in the `jobs` layer that names the staged event's
+/// record type.
+const fn staged(
+    role: &'static str,
+    template: crate::Template,
+    class: Naming<Operation>,
+    ejectable: bool,
+) -> JavaFile<Operation> {
+    JavaFile {
+        role,
+        template,
+        before_boot: None,
+        imports: &[Import::Keyed(Package::DomainEvents, Key::Event)],
+        only_when: None,
+        source_set: SourceSet::Main,
+        placement: Placement::Layer(Package::Jobs),
+        ejectable,
+        class,
+        template_class: Naming::Fixed(""),
     }
-    Err(CompileError::new(format!(
-        "canonical command `{}` delivers through an outbox, which needs {why}\n       fix: declare `cap {kind}` in the model",
-        operation.label
-    )))
 }
 
-fn rendered(
-    operation: &Operation,
-    suffix: &str,
-    package: &str,
-    type_name: &str,
-    unit: impl Into<JavaUnit>,
-    ejectable: bool,
-) -> Result<(ProjectPath, RenderedFile), CompileError> {
-    let artifact = format!("art_{}_{}", operation.id.as_str(), suffix);
-    let path = ProjectPath::parse(format!(
-        "{MAIN_ROOT}/{}/{type_name}.java",
-        package.replace('.', "/")
-    ))
-    .map_err(CompileError::new)?;
-    Ok((
-        path,
-        RenderedFile {
-            bytes: unit.into().render(&artifact).into_bytes(),
-            kind: FileKind::JavaMain,
-            mode: FileMode::Regular,
-            provenance: Provenance {
-                artifact_id: artifact,
-                ejection_id: None,
-                ejectable,
-                semantic_ids: BTreeSet::from([operation.id.as_str().to_string()]),
-                compiler_pass: "outbox".to_string(),
-            },
-        },
-    ))
+fn jobs_package(model: &AppModel, _: &Operation) -> String {
+    model.project.package_for(Package::Jobs)
+}
+
+fn has_broker(model: &AppModel, _: &Operation) -> bool {
+    crate::recipe::declares(model, "kafka")
 }
 
 /// The table, and the partial index the relay claims through.

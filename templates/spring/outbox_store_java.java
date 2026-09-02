@@ -41,7 +41,7 @@ public class Jdbc{{usecase}}Outbox {
     }
 
     @Transactional
-    public void stage({{event}}Event event) {
+    public void stage({{event}} event) {
         Objects.requireNonNull(event, "event is required");
         String payload = Json.toJson(event);
         int inserted = db.sql("""
@@ -57,7 +57,7 @@ public class Jdbc{{usecase}}Outbox {
         if (inserted == 0) {
             var existing = db.sql("select payload::text from {{table}} where id = :id")
                     .param("id", event.id()).query(String.class).single();
-            if (!Json.parse(existing, {{event}}Event.class).equals(event)) {
+            if (!Json.parse(existing, {{event}}.class).equals(event)) {
                 throw new IllegalStateException("event id already staged with different payload: " + event.id());
             }
         }
@@ -111,7 +111,7 @@ public class Jdbc{{usecase}}Outbox {
                 .param("batchSize", batchSize)
                 .query((rows, rowNumber) -> new Claimed(
                         rows.getObject("id", UUID.class),
-                        Json.parse(rows.getString("payload"), {{event}}Event.class),
+                        Json.parse(rows.getString("payload"), {{event}}.class),
                         rows.getInt("attempts"),
                         Set.copyOf(Arrays.asList((String[]) rows.getArray("delivered").getArray()))))
                 .list();
@@ -176,5 +176,5 @@ public class Jdbc{{usecase}}Outbox {
     public enum State { PENDING, RUNNING, SUCCEEDED, FAILED }
     public record Status(UUID id, State state, int attempts,
                          Optional<String> lastError, Optional<Instant> completedAt) {}
-    public record Claimed(UUID id, {{event}}Event event, int attempt, Set<String> delivered) {}
+    public record Claimed(UUID id, {{event}} event, int attempt, Set<String> delivered) {}
 }

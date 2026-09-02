@@ -102,7 +102,7 @@ impl Node for Component {
     /// The artifact id is what the merge is keyed on, so it has to survive a
     /// rename: `art_<component id>_<role>` moves with the declaration where a
     /// path-derived id would look like a delete and an add.
-    fn provenance(&self, artifact_id: String, ejectable: bool) -> Provenance {
+    fn provenance(&self, artifact_id: String, ejectable: bool, _: &'static str) -> Provenance {
         Provenance {
             artifact_id,
             ejection_id: None,
