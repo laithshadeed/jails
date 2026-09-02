@@ -192,7 +192,7 @@ pub(super) fn controller_test(
     let entry = dialect.standalone(&format!("new {type_name}({stub})"), &mut imports);
     imports.extend(request.imports.iter().cloned());
     let body = format!(
-        "class {type_name}Test {{{{\n\n    private final {tester} mvc = {entry};\n\n{disabled}    @Test\n    void answersOnItsDeclaredRoute(){} {{{{\n{invocation}\n    }}}}\n{unconditional}\n    // Reader-owned tests belong below this stable boundary.\n}}}}",
+        "class {type_name}Test {{\n\n    private final {tester} mvc = {entry};\n\n{disabled}    @Test\n    void answersOnItsDeclaredRoute(){} {{\n{invocation}\n    }}\n{unconditional}\n    // Reader-owned tests belong below this stable boundary.\n}}",
         dialect.throws(),
     );
     Ok((imports, body))

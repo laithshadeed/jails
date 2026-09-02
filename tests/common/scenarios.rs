@@ -1077,6 +1077,27 @@ pub const SCENARIOS: &[Scenario] = &[
         seed: &[],
         steps: &[&["add", "docker", "--no-start"]],
     },
+    // An operation served over HTTP by the `api` capability: the one place
+    // `emit_http::proof` renders, which no other scenario reached -- the
+    // proof-app manifests found it emitting `{{` for `{`, and goldens compare
+    // bytes, so a renderer without a scenario is a renderer nothing checks.
+    Scenario {
+        name: "usecase-api-proof",
+        fixture: Fixture::Spring,
+        seed: &[],
+        steps: &[
+            &["add", "db", "api", "--no-start"],
+            &["g", "scaffold", "Ticket", "id:long@pk", "subject:string!"],
+            &[
+                "g",
+                "usecase",
+                "OpenTicket",
+                "subject:string!",
+                "--on",
+                "Ticket",
+            ],
+        ],
+    },
 ];
 
 /// `g cases` reads scenarios out of a markdown file, so the file is input,
