@@ -11,6 +11,13 @@
 //! start different classes. The POM is Maven's own record
 //! of the entry point, so it is the one thing that decides, and it moves only
 //! from a stub jails wrote that nobody has used.
+//!
+//! **[`entry_point`] reads the captured `pom.xml` and `App.java`, and that is
+//! the rule rather than an exception to it** (`docs/00-contracts.md` §1.8):
+//! a requirement about jails' *own* output comes from the IR, and a
+//! requirement about a file the reader owns is read from that file's captured
+//! bytes — a model field saying "App registers no command" would be stale the
+//! moment the reader registered one by hand.
 
 use super::{Emitted, Package, java, package};
 use crate::CompileError;

@@ -239,7 +239,7 @@ be satisfied while every duplicated concept survives.
 | preview, export, confirmation and apply reference one digest | `preview_export_and_apply_all_name_one_plan_digest` |
 | every command and alias resolves through one generated catalog | `commands.rs` walks the live `clap::Command`; `every_command_a_message_tells_the_reader_to_run_is_one_that_exists` checks messages against it |
 | every builtin type has one semantics row | `BuiltinSemantics` is one exhaustive match, held by the *largest table of per-builtin knowledge outside its row* ratchet |
-| every artifact requirement comes from IR, never a content or path scan | structural, with one recorded exception: `emit_component/cli.rs` reads captured `App.java` and `<mainClass>` to decide whether to retarget the jar (`docs/55-compiler.md` S55.8) |
+| every requirement about jails' *own* output comes from IR, never a content or path scan; a requirement about a *reader-owned* file is read from that file's captured bytes | structural. `emit_component/cli.rs::entry_point` is that read: whether jails may claim the jar is a fact about the reader's `pom.xml` and their `App.java`, both captured into the snapshot, and a model field asserting "App registers no command" would be stale the moment the reader registered one by hand |
 | managed output is written only below the managed root | `execute`'s precondition check |
 | reader-owned source changes only by an explicit typed patch/eject/adopt operation | `PatchReaderFile` with a captured before-image |
 | every advertised failpoint fires in at least one test | `failpoints!` emits both the registry and the constants, so an unfired point is `-D dead-code` |

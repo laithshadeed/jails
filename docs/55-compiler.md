@@ -78,14 +78,6 @@ package line and the import block are one property, not a hundred; name the
 duplicates and delete them (R6). The real-toolchain tier is the oracle here
 and none of it goes.
 
-**S55.8 -- The one byte scan.** `emit_component/cli.rs` reads captured
-`App.java` and `<mainClass>` to decide whether to retarget the jar --
-`docs/00-contracts.md` records it as the one place a requirement is still
-derived from bytes rather than the model. Either the dispatcher becomes a
-model fact (agent 4 adds it, you read it) or the paragraph in
-`docs/00-contracts.md` is rewritten as deliberate. Decide; do not leave it
-described as both.
-
 ## Traps
 
 - **Templates are `.java` files with `{{name}}` substitution, never
@@ -104,11 +96,6 @@ described as both.
   deliberately. Check `.java` alone if S55.2 touches the renderer.
 - **The compiler may not read the disk.** `canonical_compiler_is_pure_after_capture`
   holds it, and the crate depends on nothing that can.
-
-## Items you close elsewhere
-
-`docs/00-contracts.md` §1.7's *per-emitter copies of the Java shell* row,
-and its §1.8 recorded exception if S55.8 lands the model fact.
 
 ## Green
 
