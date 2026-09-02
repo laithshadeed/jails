@@ -539,11 +539,11 @@ mise run verify-rewrite && cargo install --path .       # before pushing
 **There is one answer to "is this green", and it is `mise run
 verify-rewrite`.** `.githooks/pre-push` and `.github/workflows/verify-rewrite.yml`
 invoke it and nothing else, so hook, CI and this file cannot disagree. It runs
-`cargo fmt --check`, `cargo clippy --workspace --all-targets -D warnings`,
+`cargo fmt --check`, then `cargo clippy --workspace --all-targets -D warnings`,
 `RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps` (the comments
 carry rustdoc links, and a link to a moved item is a warning nothing reads
-otherwise), and `cargo test --workspace` under `JAILS_TOOLCHAIN=1` and
-`JAILS_GIT_DIFF_ALGORITHM=`. `mise run lint` is its fast half and is what
+otherwise) and the test build at once, and then `cargo test --workspace`
+under `JAILS_TOOLCHAIN=1` and `JAILS_GIT_DIFF_ALGORITHM=`. `mise run lint` is its fast half and is what
 `.githooks/pre-commit` runs; `git config core.hooksPath .githooks` wires both.
 A Stop hook in `.claude/settings.json` runs the gate at turn end; run it
 yourself before pushing anyway.
@@ -561,9 +561,13 @@ and the toolchain pool waits for a JVM's worth of headroom before taking a
 slot. One unbounded run of the real-toolchain tier beside a few `cargo`
 builds took a 30 GB machine into swap and down; never run the tier bare, and
 run one heavy thing at a time (`JAILS_GATE_MEMORY_MB` and `JAILS_GATE_CPU`
-shrink a second one). Measured on 16 cores after this: the whole gate in
-134 s, test span 104 s, mean subprocess concurrency 9.1 of the 12-core
-quota, memory pressure about 1 %.
+shrink a second one). The compile phase is `scripts/gate-build.sh`: `fmt
+--check`, then clippy, rustdoc and the test build concurrently in three
+target directories (`target/lint`, `target/doc-check`, `target`), because
+they share no artifacts and one `target/` serialises them. Measured on 16
+cores after this: the whole gate in 116 s incremental and 146 s after a
+change to the bottom crate, test span 93-100 s, mean subprocess concurrency
+9-10 of the 12-core quota, memory pressure under 1 %.
 
 **`JAILS_TOOLCHAIN` is the one switch between the two commands.** Plain
 `cargo test --workspace` is Rust only -- no JVM, no container, no build tool.

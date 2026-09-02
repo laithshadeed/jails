@@ -143,9 +143,10 @@ Do not re-propose these:
 ## The developer machine, measured 2026-09-02
 
 The same suite on 16 cores and 30 GB, through `scripts/bounded.sh` (12-core
-quota, 15 GB cap, no swap): **134 s for the whole gate**, test span 104 s,
-950 s of subprocess work at mean concurrency 9.1, 320 s queued for a JVM
-permit, memory pressure about 1 %. Before the day's changes the same tree
+quota, 15 GB cap, no swap): **116 s for the whole gate incremental, 146 s
+after a change to the bottom crate**, test span 93-100 s, ~900 s of
+subprocess work at mean concurrency 9-10, ~350 s queued for a JVM permit,
+memory pressure under 1 %. Before the day's changes the same tree
 took 205 s unbounded and, run beside four `cargo` builds, took the machine
 into swap. What moved it, in order of size:
 
@@ -160,6 +161,11 @@ into swap. What moved it, in order of size:
   not the alphabet, decide.
 - **The pools size themselves from the cgroup**, not the machine, so the
   kernel's answer and the harness's cannot disagree.
+- **Three compilations that shared nothing ran one after another.** Clippy,
+  rustdoc and the test build each compile the workspace into their own
+  artifacts, and one `target/` holds one lock; `scripts/gate-build.sh` runs
+  them concurrently in three target directories, and a bottom-crate change
+  costs the longest of the three (185 s → 146 s for the gate).
 
 What is left on this machine is the poles: three proof apps at ~95 s each
 (`app apply`, `docker build`, `mvn test`, `failsafe`), the minicom `jails

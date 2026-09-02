@@ -14,15 +14,19 @@ gradle = "8.5"
 description = "Format and lint exactly as the gate does"
 run = [
   "cargo fmt --all --check",
-  "cargo clippy --workspace --all-targets -- -D warnings",
+  "cargo clippy --workspace --all-targets --target-dir target/lint -- -D warnings",
 ]
 
 # The one answer to "is this green". `.githooks/pre-push` and CI invoke this
 # task and nothing else.
 #
-# `cargo doc -D warnings` is here because the comments carry rustdoc links and
-# a link to a moved item is a warning nothing reads otherwise. It is in this
-# task rather than `lint` so the pre-commit wait stays short.
+# `scripts/gate-build.sh` is the compile phase: `fmt --check`, then clippy,
+# `cargo doc -D warnings` and the test build concurrently in three target
+# directories (`target/lint`, `target/doc-check`, `target`), because they share
+# no artifacts and one `target/` serialises them. `cargo doc -D warnings` is
+# in the gate because the comments carry rustdoc links and a link to a moved
+# item is a warning nothing reads otherwise; it is not in `lint` so the
+# pre-commit wait stays short.
 #
 # `JAILS_TOOLCHAIN=1` switches the real-toolchain tier on and turns a missing
 # tool into a failure rather than a skip. `JAILS_GIT_DIFF_ALGORITHM=` pins
@@ -44,9 +48,8 @@ run = [
 # the long tests near the end of the alphabet start late and set the tail.
 [tasks.verify-rewrite]
 description = "Run the single mandatory rewrite verification gate"
-depends = ["lint"]
 run = [
-  "RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps",
+  "./scripts/bounded.sh ./scripts/gate-build.sh",
   "rm -rf target/jails-test-profile",
   "JAILS_GIT_DIFF_ALGORITHM= JAILS_TOOLCHAIN=1 ./scripts/bounded.sh cargo test --workspace; status=$?; ./scripts/subprocess-summary.sh; exit $status",
 ]
