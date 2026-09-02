@@ -125,6 +125,15 @@ board's Maven-scanner row holds the count at one.
 
 **Every advertised generator and capability has a compiler backend: 39 of 39
 and 25 of 25**, held by `canonical_support::registry_classifies_every_advertised_word`.
+**The declarative ones are `Recipe` rows and `emit.rs` walks two tables.**
+`crates/jails-compiler/src/recipe.rs` is the shape -- files, dependencies,
+properties, compose services, build features, placement -- over a `Node`
+(capability, component, operation), and `recipe::render` is the one loop;
+`emit.rs` holds `RECIPE_WALKS` and `FUNCTIONS`, and the second is the list
+of emitters that still build Java from the model's structure, which
+`docs/60-abstraction.md` S60.3 counts. A new kind that is substitution over a
+template is a row, not a module; a role appears in exactly one recipe and
+`Import::Role` resolves it by lookup.
 `scaffold` is one typed entity profile over four facets. `migration` is
 deliberately not a declaration (JDL v1 §2.1, §12.6): it joins
 `PlanDraft.migrations` as an ordinary `AppendMigration`. Three of the last
@@ -821,20 +830,25 @@ the companion test is emitted whole and `@Disabled`, naming the component.
   **The test fixture must not supply what the tool is supposed to supply**:
   `SPRING_FIXTURE_POM` declares only what `jails new` writes.
 - **A type whose package a Boot major moved is an `Import::Moved` row, not a
-  template placeholder.** `emit_capability::MovedImport` holds both spellings
+  template placeholder.** `recipe::MovedImport` holds both spellings
   side by side with the rule that an unreadable version resolves to the older
   package; `AUTOCONFIGURE_MOCKMVC`, `WEBMVC_TEST` and
-  `METER_REGISTRY_CUSTOMIZER` are the three, and a pack's `JavaFile` row asks
-  for one so the name joins the unit's import set. Boot 4 moved
+  `METER_REGISTRY_CUSTOMIZER` are the three (in `emit_capability`), and a
+  recipe's `JavaFile` row asks for one so the name joins the unit's import
+  set. Boot 4 moved
   `@AutoConfigureMockMvc` and `@WebMvcTest` to
   `org.springframework.boot.webmvc.test.autoconfigure` with no shim, and moved
   `MeterRegistryCustomizer` out of `actuate.autoconfigure`. The validation
   package (`jakarta` vs `javax`) is the fourth version fact and stays a
   function, because it is a package *prefix* rather than a type.
-- **A pack's own facts are on its row.** `Pack::substitutions` carries what
-  only that capability's templates spell -- an image tag, a URL, a route
+- **A recipe's own facts are on its row.** `Recipe::substitutions` carries
+  what only that capability's templates spell -- an image tag, a URL, a route
   segment -- because one shared substitution list applies `redis:7-alpine` to
   `mail`'s templates and is safe only while no two packs pick the same key.
+  What a *node* spells -- a component's route, a label as a table or a
+  property prefix, the event a command relays -- is a `Key` on the row,
+  rendered once by the node's `Node::key`, and a template's own package is
+  always `{{pkg}}`, so placement is on the row and never in the template.
 - **`Map<long, Note>` is not a type.** `int` and `long` are the only builtins
   with a Java primitive, and a required one is spelled with it everywhere
   except a *type argument*, where it has to be boxed;

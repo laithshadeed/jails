@@ -59,21 +59,31 @@ grep -rc 'format!(' crates/jails-compiler/src | awk -F: '{s+=$2} END {print s}'
 ```
 
 **Exit:** the IR exists and the emitters build it instead of strings. It is a
-phase, not a fix. Its first rung is landed: one `JavaUnit` for the package
-line, the import block and the class shell, and one `emit_mockmvc` for the
-MockMvc dialect; `Pack` (22 of 25 capabilities are rows) is the shape the
-rest is missing, and `docs/60-abstraction.md` S60.3 names it `Recipe`.
+phase, not a fix. Two rungs are landed: one `JavaUnit` for the package line,
+the import block and the class shell, and one `emit_mockmvc` for the MockMvc
+dialect; and `Recipe<N>` (`docs/60-abstraction.md` S60.3), the declarative
+shape every capability pack, twelve component kinds, the event's Kafka slice
+and the outbox are rows of. What the rows do not yet carry is the structural
+Java -- a record's components, a repository's column list, a query's SQL --
+which the five remaining function passes still build with `format!`; S60.3
+names them and keeps the count.
 
 ## A3.15 — §16.4's readable boundary path does not resolve
 
 §16.4 says the preferred ejection reference is a readable, linked boundary
 path -- `Entity.record`, `Entity.repo.fake`, `Entity.http.api` -- defined by a
-boundary registry rather than string concatenation. There is no such registry:
-`known_targets` in the linker is the set of stable IDs already in the model,
-so an ejection resolves only against an `art_*` id or a node id, and emitters
-concatenate role suffixes at the point of use (`format!("{}Repository", ..)`).
-§20.2's "emitters MUST NOT concatenate a package, prefix, suffix, filename or
-test marker" is therefore not held.
+boundary registry rather than string concatenation. Half of it exists: for
+the kinds that are `Recipe` rows (S60.3) a role appears in exactly one
+recipe's `files`, its class is a `Naming` rule rather than a concatenation,
+and `Import::Role` resolves another file of the same node by looking the
+role up -- an unregistered role is a panic at the row, before any model.
+The other half does not: `known_targets` in the linker is still the set of
+stable IDs already in the model, so an ejection resolves only against an
+`art_*` id or a node id, the entity facets are not rows yet and still
+concatenate suffixes at the point of use (`format!("{}Repository", ..)`),
+and there is no exhaustiveness test over registered roles. §20.2's
+"emitters MUST NOT concatenate a package, prefix, suffix, filename or test
+marker" is therefore held for the recipe kinds and not for the rest.
 
 `the_specification_complete_example_links_except_its_one_recorded_gap` pins
 the gap: `eject Task.repo.fake` in the §4 example refuses with

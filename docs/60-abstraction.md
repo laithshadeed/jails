@@ -42,15 +42,21 @@ Five specific shapes, each measured:
    *directory* looks like from outside -- including a build file jails
    recognises by name and refuses to read -- which is a different question
    from a module's `build` axis, and its `Foreign(name)` reaches a refusal.
-2. **Generators are code, capabilities are data.** A capability is a `Pack`:
-   files, dependencies, properties, compose services, build features and a
-   placement rule, as one `static`. A generator kind is a `lower_and_emit`
-   function -- nine of them, plus six `lower`s -- each walking the model and
-   assembling Java with `format!` (834 sites). The two shapes emit into the
-   same `RenderedTree`.
-3. **The compiler re-derives its external facts.** `emit::Observed` is a
-   hand-picked subset of the snapshot, rebuilt in `Compiler::compile`; every
-   emitter that needs one more fact widens it.
+2. **Every declarative renderer is a `Recipe`; the structural ones are
+   still functions.** `Recipe<N>` (`jails-compiler::recipe`) is files,
+   dependencies, properties, compose services, build features and a
+   placement rule as one `static`, over a `Node` -- a capability, a
+   component or an operation -- and `recipe::render` is the one loop.
+   The 22 capability packs, twelve component kinds, the Kafka slice of an
+   event and a command's outbox are rows. `emit.rs` holds two tables: four
+   recipe walks and five function passes, and the five are the kinds that
+   build Java from the model's *structure* -- a record's components, a
+   query's SQL, a proof's request -- with `format!` (762 sites). S60.3 has
+   the count and what is left.
+3. **The compiler reads the snapshot.** Every pass takes
+   `&WorkspaceSnapshot`; the two predicates the compiler decides over it
+   (`emit::jdbc_on_classpath`, `emit::jspecify_on_classpath`) are named
+   functions of `snapshot.project`, not fields copied out of it.
 4. **The tool crates keep a second project model.** Closed: `Project` is a
    root plus the `ProjectFacts` capture observes, `jails-project` is the
    reader that produces them for the snapshot and for `drive` and `report`
@@ -101,36 +107,73 @@ passed to `compile` and read by `emit_sql::derive`.
 
 ### S60.3 — `Recipe` generalises `Pack` to every kind
 
-`Pack` is the right shape and it is used for 25 of the 25 capabilities. The
-39 generator kinds are functions because each was written when its kind was
-added. A `Recipe` is a `Pack` that can also name the *model node* it renders
-from and the *roles* it emits:
+**Landed:** `Recipe<N>` in `crates/jails-compiler/src/recipe.rs` is the
+shape, `Node` is what a capability, a component and an operation each
+implement (its id and name, the closed `Key` vocabulary its templates may
+spell, the provenance its files carry), and `recipe::render` is the one
+loop: for each node, look its recipe up, substitute the node's keys and the
+recipe's fragments into each row's template, and write it through the one
+`JavaUnit` shell. A row is
 
 ```text
-Recipe {
-    node:   which model node kind this renders (entity facet, unit, component, operation, capability)
-    files:  [(role, template, placement, ejectable, test?)]
-    deps:   [DependencySpec]         props: [PropertySpec]
-    build:  [BuildFeature]           compose: [ComposeService]
-    when:   BootCondition
-}
+JavaFile { role, template, before_boot, imports, only_when, source_set, placement, ejectable, class, template_class }
 ```
 
-Rendering is one loop: for each node, look up its recipe, render each file
-through the one `JavaUnit` builder (S55.2) with the node's typed values as
-the template's keys. What a template needs that is *structural* -- a column
-list, a parameter list, a switch over variants -- is a small closed set of
-fragment renderers, named in the recipe rather than written inline. The
-emitters that cannot be a recipe (SQL lowering, the proof tests, the
-dispatcher splice) stay functions, and the count of those is the number to
-watch: the target is under ten.
+with `Naming` (`Fixed`, `Suffix`, `Wrap`, `By`) for the class, `Placement`
+for the layer, `Import::{Own, Role, From, Keyed, Moved, ContainerSupport}`
+for what the template cannot say, and `Fragment::{WhenCapability,
+Rendered}` for what is structural -- a rendered fragment carries the
+imports its text relies on, and they join only the files that spell its
+key. `Need` refuses before rendering. Rows today: the 22 capability packs
+(`Recipe<Capability>`), twelve component kinds (`Recipe<Component>`:
+fetcher, auth, client, job, handler, socket, webhook, command, cli,
+presence, idempotency, http-workflow), the Kafka slice of an `event` and a
+command's outbox (`Recipe<Operation>`). `emit.rs` walks two tables --
+`RECIPE_WALKS` (four) and `FUNCTIONS` (five) -- and a unit test pins the
+lengths to these numbers. `lower_and_emit` is gone; a module's pass is its
+`emit`.
 
-This is also A3.15's registry: a role appears in exactly one recipe, so
-`Entity.repo.fake` resolves by looking it up, and an emitter asking for an
-unregistered role fails to compile.
+**What remains, and why each is still a function.** Of the 39 generator
+kinds, 12 are recipes and the rest are the five `FUNCTIONS` passes:
 
-**Exit:** `emit.rs` walks one table; `lower_and_emit` is gone; the
-`format!` count is the fragment renderers' and the SQL lowering's alone.
+- `emit_java` -- the entity facets (record, enum, factory, dto, repository,
+  service, http, events, search, seed), the units (class, interface,
+  service, sealed, strategy, controller, test), the use cases and the
+  repository adapters. Each builds a Java body from the entity's fields:
+  the record's components and compact constructor, the enum's constants and
+  converter, the repository's column list and row mapper. These are the
+  fragment renderers S60.3 names -- a column list, a parameter list, a
+  switch over variants -- and none exists as a named `Fragment` yet, so the
+  bodies are `format!`.
+- `emit_operation` -- command, query and transition: a JDBC adapter whose
+  SQL and bind list are lowered from the operation's parameters.
+- `emit_relation` -- association: the join table and both sides' adapters.
+- `emit_http` -- the HTTP proof of every routed operation, which drives a
+  request through `emit_mockmvc` from a sample of the operation's input.
+- `emit_architecture` -- the one ArchUnit test, a model-level file.
+
+Beside them, two component kinds stay functions inside the component
+walk (`http_sink`, `durable_job`: each renders a sample argument list from
+*another* node's fields), and three model-level shared files
+(`SchedulingConfig`, `ApiError`, the architecture test) are one file per
+model rather than per node, which the recipe's node-per-row shape does not
+express.
+
+The number to read is the `format!` count:
+
+```
+grep -rc 'format!(' crates/jails-compiler/src | awk -F: '{s+=$2} END {print s}'
+```
+
+762 now (834 when this file was first measured, 808 at the start of the
+`Recipe` work). It falls as a facet's body becomes a template plus named
+fragments, and the next rung is the closed set of fragment renderers for
+`emit_java` -- `Fragment::Rendered` is the slot, and the record's
+component list is the first one to name.
+
+**Exit:** every facet and operation emitter is a row plus named fragments;
+`FUNCTIONS` holds only SQL lowering and the proofs; the `format!` count is
+the fragment renderers' and the SQL lowering's alone.
 
 ### S60.7 — managed output lives in `src/`, and the lock says what is managed
 
