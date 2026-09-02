@@ -52,8 +52,16 @@ fn collect() -> Result<Vec<Check>> {
     let manifest = crate::model_command::resolve_manifest(None)?;
     let root = crate::model_command::root()?;
     let (source, model) = crate::model_command::load_model(&root, &manifest, crate::Output::Human)?;
-    let snapshot = jails_workspace::capture(&root, &manifest, source.as_bytes(), model, &[])
-        .map_err(|error| jails_support::Failure::Told(error.to_string()))?;
+    let snapshot = jails_workspace::capture(
+        &root,
+        &manifest,
+        source.as_bytes(),
+        model,
+        None,
+        &[],
+        jails_workspace::ModelFile::Observed,
+    )
+    .map_err(|error| jails_support::Failure::Told(error.to_string()))?;
 
     let mut checks = Vec::new();
     let mut edited = Vec::new();

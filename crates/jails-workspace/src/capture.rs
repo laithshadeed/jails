@@ -99,7 +99,32 @@ struct AcceptedCompilerState {
     migration_bytes: BTreeMap<ProjectPath, Vec<u8>>,
 }
 
-/// Capture a project's external facts for a compilation of `model`.
+/// Whether the model file is expected on disk when the plan runs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ModelFile {
+    /// Read the file as it is: present, with its bytes as the precondition,
+    /// or absent, for a project that has no model yet and compiles the seed
+    /// `model init` would write.
+    Observed,
+    /// The file must not exist: `model init` publishes the first model, and a
+    /// concurrently created one makes the plan stale rather than overwritten.
+    Absent,
+}
+
+/// Capture a project's external facts, once, for one compilation.
+///
+/// `model` is the model on disk; `intended` is the model the plan will
+/// compile when it differs -- **the reader trees are chosen from the
+/// intended model, not the one on disk**. Which trees a plan needs is a
+/// question about the intended state: `add db` has to splice
+/// `@Import(TestcontainersConfig.class)` into the reader's `@SpringBootTest`
+/// classes, and the very command that introduces `db` is the one whose
+/// current model does not have it. Asking the current model does half the
+/// work in silence: `add db` generates the config and adds the starter,
+/// splices nothing, and leaves `mvn verify` red on the `contextLoads` test
+/// the project ships with; a later `jails sync` -- whose model *is* the
+/// intended one -- quietly repairs it, which is why a test has to assert
+/// after each command rather than after two.
 ///
 /// `reader_paths` are the reader-owned files the plan may edit beyond the
 /// trees the model implies; pass `&[]` when the caller has none.
@@ -108,50 +133,18 @@ pub fn capture(
     model_path: &Path,
     model_source: &[u8],
     model: AppModel,
+    intended: Option<&AppModel>,
     reader_paths: &[ProjectPath],
+    model_file: ModelFile,
 ) -> Result<WorkspaceSnapshot, String> {
-    let trees = ReaderTrees::of(&model);
+    let trees = ReaderTrees::of(intended.unwrap_or(&model));
     capture_model_state(
         root,
         model_path,
         model_source,
         model,
         reader_paths,
-        true,
-        trees,
-    )
-}
-
-/// Capture for a plan that is about to *change* the model.
-///
-/// **The reader trees are chosen from the model the patch produces, not the
-/// one on disk.** Which of them a plan needs is a question about the intended
-/// state -- `add db` has to splice `@Import(TestcontainersConfig.class)` into
-/// the reader's `@SpringBootTest` classes, and the very command that
-/// introduces `db` is the one whose pre-patch model does not have it.
-///
-/// Asking the pre-patch model does half the work in silence: `add db` on a
-/// Spring project generates the config and adds the starter, splices nothing,
-/// and leaves `mvn verify` red on the `contextLoads` test the project ships
-/// with. A later `jails sync` -- whose model *is* the intended one -- quietly
-/// repairs it, which is why a test has to assert after each command rather
-/// than after two.
-pub fn capture_planned(
-    root: &Path,
-    model_path: &Path,
-    model_source: &[u8],
-    model: AppModel,
-    intended: &AppModel,
-    reader_paths: &[ProjectPath],
-) -> Result<WorkspaceSnapshot, String> {
-    let trees = ReaderTrees::of(intended);
-    capture_model_state(
-        root,
-        model_path,
-        model_source,
-        model,
-        reader_paths,
-        true,
+        model_file == ModelFile::Observed,
         trees,
     )
 }
@@ -214,30 +207,6 @@ impl ReaderTrees {
             test: self.test || other.test,
         }
     }
-}
-
-/// Capture a project before its one-way canonical model is published.
-///
-/// The supplied source is compiler input, but the model path itself is a
-/// missing-file precondition so a concurrently created model makes the exact
-/// import plan stale rather than being overwritten.
-pub fn capture_import(
-    root: &Path,
-    model_path: &Path,
-    model_source: &[u8],
-    model: AppModel,
-    reader_paths: &[ProjectPath],
-) -> Result<WorkspaceSnapshot, String> {
-    let trees = ReaderTrees::of(&model);
-    capture_model_state(
-        root,
-        model_path,
-        model_source,
-        model,
-        reader_paths,
-        false,
-        trees,
-    )
 }
 
 fn capture_model_state(
@@ -316,7 +285,7 @@ fn capture_model_state(
     // overwritten.
     //
     // Which trees, and why the *intended* model decides it, is
-    // [`ReaderTrees`] and `capture_planned`.
+    // [`ReaderTrees`] and [`capture`].
     let reader_main = root.join(READER_MAIN_ROOT);
     if trees.main && reader_main.exists() {
         capture_tree(root, &reader_main, &mut files, &mut preconditions)?;

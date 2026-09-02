@@ -666,8 +666,16 @@ fn compile(
     notice: Notice,
 ) -> Result<jails_contracts::PlanBundle> {
     let reader_paths = jails_compiler::external_project_paths(&model);
-    let snapshot = jails_workspace::capture(root, manifest, source, model, &reader_paths)
-        .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
+    let snapshot = jails_workspace::capture(
+        root,
+        manifest,
+        source,
+        model,
+        None,
+        &reader_paths,
+        jails_workspace::ModelFile::Observed,
+    )
+    .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
     let draft = jails_compiler::Compiler::compile(
         &snapshot,
         &snapshot.model.model,

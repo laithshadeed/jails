@@ -55,11 +55,10 @@ Five specific shapes, each measured:
    and `ProjectContext` answer "what is at this path" for `drive` and
    `report`, reading the disk again, while the snapshot's `ProjectFacts`
    answers the same question for the compiler.
-5. **Entry points come in families.** `capture`, `capture_planned` and
-   `capture_import` remain of a family of four; `materialize` and
-   `finish_generation` are one function each now, taking the model update
-   and the reader paths as arguments, and the binary's `_at` family is gone
-   (every model function takes the invocation's root).
+5. **Entry points come in families.** Closed: `capture`, `materialize` and
+   `finish_generation` are one function each, taking the intended model,
+   the model update and the reader paths as arguments; the binary's `_at`
+   family is gone.
 
 ## The target
 
@@ -164,21 +163,6 @@ command that starts a JVM has no reason to parse `pom.xml` its own way.
 **Exit:** one `struct` answers "what is this project"; no module outside
 capture reads the pom, and the board's Maven-scanner row reads one.
 
-### S60.5 — one entry point per verb
-
-`capture(root, model, reader_paths)`; `materialize(snapshot, desired)`;
-`mutate(invocation, edit, evolution)`. Variants become arguments with
-defaults, not functions. `materialize` and `finish_generation` are there;
-`capture_planned` and `capture_import` differ from `capture` by one argument
-each (the intended model, the model-absent precondition) and become one.
-The binary half is done: `Invocation::root` is the one walk, every model
-function takes the invocation or the root it resolved, and
-`A_FRESH_READ_IS_CORRECT` in `tests/architecture/measure.rs` names the two
-reads that are correct without a resolved project (`read_source`,
-`load_model`: the model may not exist yet).
-
-**Exit:** the `pub fn` count in `jails-workspace` is four.
-
 ### S60.6 — one test-execution vocabulary
 
 `jails-drive::testing` (`TestExecutionPlanV1`, `TestReportV1`, ...) and
@@ -275,7 +259,6 @@ BASE/OURS/THEIRS rule; `PlanBundle`, `PlannedOperation` (six kinds is right),
 | S60.2 one vocabulary | 51, 53, 54 | S51.2 moves survivors; S53.4 and S54.5 move the field parser; the `Layer` triple is S53.1's first deletion |
 | S60.3 `Recipe` | 55 | S55.2 (the shell) and S55.5 (packs as data) are its first two rungs |
 | S60.4 the snapshot | 53 | S53.2; the one Maven reader is `jails-workspace/src/documents/pom.rs`, which `jails-project` re-exports -- S60.4 flips that edge, so the reader sits in the crate that produces `ProjectFacts` |
-| S60.5 one entry point | 53 | S53.7 |
 | S60.6 one test vocabulary | 53 | S53.5 |
 | S60.7 managed output in `src/` | none yet | after S60.2 (one owner for the §9.7 table) and S60.4 (capture is the one reader); needs `jails model relocate` |
 

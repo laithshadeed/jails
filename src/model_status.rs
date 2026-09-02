@@ -111,8 +111,16 @@ pub(crate) fn run(selector: &str, live: Option<Live>, invocation: Invocation) ->
     let (source, model) =
         crate::model_command::load_model(&invocation.root()?, &manifest, invocation.output)?;
     let root = crate::model_command::root()?;
-    let snapshot = jails_workspace::capture(&root, &manifest, source.as_bytes(), model, &[])
-        .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
+    let snapshot = jails_workspace::capture(
+        &root,
+        &manifest,
+        source.as_bytes(),
+        model,
+        None,
+        &[],
+        jails_workspace::ModelFile::Observed,
+    )
+    .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
     let report = inspect(&snapshot, selector, live.as_ref());
     match invocation.output {
         Output::Human => print!("{}", render_human(&report)),

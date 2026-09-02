@@ -13,9 +13,7 @@ mod reader_facet;
 mod reconcile;
 mod verify;
 
-pub use capture::{
-    capture, capture_import, capture_planned, observe_build_system, observe_spring_boot,
-};
+pub use capture::{ModelFile, capture, observe_build_system, observe_spring_boot};
 pub use documents::maven_dependency_block;
 /// The one reader of `pom.xml`. Every question about a Maven build a
 /// command asks outside capture is asked here, so a second scanner cannot

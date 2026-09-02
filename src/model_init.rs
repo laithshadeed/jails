@@ -50,9 +50,16 @@ fn run_as(invocation: Invocation) -> Result<()> {
     // executor locks, rechecks its preconditions and publishes an exact
     // after-image, which is what makes a half-finished `model init` impossible
     // rather than merely unlikely.
-    let snapshot =
-        jails_workspace::capture_import(&root, model_path, source.as_bytes(), model, &[])
-            .map_err(|error| Failure::Told(format!("could not capture this project: {error}")))?;
+    let snapshot = jails_workspace::capture(
+        &root,
+        model_path,
+        source.as_bytes(),
+        model,
+        None,
+        &[],
+        jails_workspace::ModelFile::Absent,
+    )
+    .map_err(|error| Failure::Told(format!("could not capture this project: {error}")))?;
     let draft = jails_compiler::Compiler::compile(
         &snapshot,
         &snapshot.model.model,

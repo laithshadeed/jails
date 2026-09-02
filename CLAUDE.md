@@ -100,8 +100,9 @@ operation edge still points at the declaration. A stored entity requires
 revival reuses; drop appends one forward migration. Indexes are stable entity
 children and `resource index add|remove` appends one forward migration each.
 
-**Capture reads the intended model.** `capture_planned` decides which reader
-trees to read from the *patched* model, and `entry_point` takes `next_model`,
+**Capture reads the intended model.** `capture` takes the model the plan
+will compile beside the one on disk and decides which reader trees to read
+from the *intended* one, and `entry_point` takes `next_model`,
 so the command that declares a thing sees what it needs: `add db` reads
 `src/test/java` for the `@Import` splice, `g command` reads `src/main/java` to
 register in `App.java`, `g cli` retargets `<mainClass>`. A test that runs two

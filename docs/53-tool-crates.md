@@ -64,10 +64,7 @@ and load-bearing. Agent 1's S51.4 waits on this.
 **S53.7 -- `jails-support`.** `identity` keeps the newtypes `jails-java`,
 `jails-report`, `jails-drive` and `jails-spec` construct and nothing else.
 `unified` (the bounded diff) has one caller and stays. `lock` has one;
-check `jails-workspace` does not carry a second. `capture_import` is the one
-remaining capture variant: it differs from `capture` in one precondition
-(the model must *not* exist yet) and has one caller, `model init`; make the
-precondition an argument if a second caller appears, not a fifth function.
+check `jails-workspace` does not carry a second.
 
 **S53.8 -- Fold the leaves.** `jails-spec` holds the closed CLI vocabularies
 and where a project is; `jails-java` is the Java reader and the template

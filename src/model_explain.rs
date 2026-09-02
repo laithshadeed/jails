@@ -38,8 +38,16 @@ pub(crate) fn run(filter: Option<String>, invocation: Invocation) -> Result<()> 
     // defaults. Showing `com.example.domain` to a project whose `jails.toml`
     // says `domain = "core"` would be a report about a project nobody has.
     let root = crate::model_command::root()?;
-    let snapshot = jails_workspace::capture(&root, &manifest, source.as_bytes(), model, &[])
-        .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
+    let snapshot = jails_workspace::capture(
+        &root,
+        &manifest,
+        source.as_bytes(),
+        model,
+        None,
+        &[],
+        jails_workspace::ModelFile::Observed,
+    )
+    .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
     let mut model = snapshot.model.model;
     model.project.layout = snapshot.project.layout;
     model.refresh_derived();

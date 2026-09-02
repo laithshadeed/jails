@@ -88,9 +88,9 @@ it to what is there after S52.5.
   there; `Invocation::root` is the one place the walk happens, and
   `Invocation::for_new` pins the root instead. A function that walks on its
   own is the defect, not a convenience.
-- **Capture reads the pre-patch model unless told otherwise.** A test that
-  runs two commands and then reads the tree does not catch a frontend that
-  forgot `capture_planned`; assert after each command.
+- **Capture reads the model on disk unless handed the intended one.** A test
+  that runs two commands and then reads the tree does not catch a frontend
+  that forgot to pass `intended`; assert after each command.
 - **`--manifest` is resolved absolute; every other model path stays
   project-relative** because the same value becomes a `ProjectPath` in the
   exact plan. The pipeline must preserve that split or every report grows an

@@ -134,13 +134,14 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
     capture_paths.extend(jails_compiler::external_project_paths(&next_model));
     capture_paths.sort();
     capture_paths.dedup();
-    let snapshot = jails_workspace::capture_planned(
+    let snapshot = jails_workspace::capture(
         &root,
         model_path,
         current.source.as_bytes(),
         current.model,
-        &next_model,
+        Some(&next_model),
         &capture_paths,
+        jails_workspace::ModelFile::Observed,
     )
     .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
     clock.mark("capture");
