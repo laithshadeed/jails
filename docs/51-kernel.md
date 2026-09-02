@@ -34,9 +34,9 @@ crate self` line in `jails-support`. `hex` and `sha256` are the two things
 outside the wire that reach into `codec`; they move to `jails-support`'s
 root.
 
-**S51.7 -- The prose.** `docs/30-cutover.md` holds P13.2 (agent 3's S53.3)
-and the workspace workstream's open items; when nothing is left in it,
-delete the file and its row in `docs/00-contracts.md`.
+**S51.7 -- The prose.** `docs/30-cutover.md` holds the workspace workstream's
+open items; when nothing is left in it, delete the file and its row in
+`docs/00-contracts.md`.
 
 ## Green
 

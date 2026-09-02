@@ -73,8 +73,9 @@ plan carries the command that re-checks it.
    20 call sites and by `emit_capability::render` at one; 19 `format!` sites
    still write an `import` line by hand. Plan `55`.
 
-3. **The tool crates still carry a second Maven parser** (P13.2) and a
-   second project model beside the snapshot. Plan `53`.
+3. **The tool crates still carry a second project model** beside the
+   snapshot (the second Maven parser is gone: one element walk in
+   `jails-workspace/src/documents/pom.rs`). Plan `53`.
 
 4. **`jails-drive` describes test execution twice**, as `testing::*V1` and
    `testd::v2`, and the `#[derive(Codec)]` machinery exists for the first.
@@ -123,7 +124,7 @@ adds a new shape is not progress.
 |---|---|---|---|
 | `docs/51-kernel.md` | **1 -- kernel** | `crates/jails-codec-derive/**`, `crates/jails-support/src/codec*`, `crates/jails-spec/**`, `src/dispatch.rs`, `tests/protocol-golden/**`, `docs/30-cutover.md` | the codec, once the test-execution wire is one protocol |
 | `docs/52-binary.md` | **2 -- binary** | `src/**` except `src/dispatch.rs`, `tests/cli/**` except `generate.rs`, `capabilities.rs`, `tooling.rs`, `examples.rs`, `reports.rs`, `docs/feature-inventory.tsv`, `README.md`'s command sections | the second decision of each mutation, `new`'s three seeds, the unread flags |
-| `docs/53-tool-crates.md` | **3 -- tool crates** | `crates/jails-{project,java,drive,report,workspace,support,codemod,contracts}/**` (minus plan 1's files), `tests/cli/{tooling,capabilities,reports,examples}.rs`, `tests/corpus/**`, `tests/baseline.rs`, `tests/architecture_allowances.rs` | the second Maven parser, the second project model, the two test-execution vocabularies |
+| `docs/53-tool-crates.md` | **3 -- tool crates** | `crates/jails-{project,java,drive,report,workspace,support,codemod,contracts}/**` (minus plan 1's files), `tests/cli/{tooling,capabilities,reports,examples}.rs`, `tests/corpus/**`, `tests/baseline.rs`, `tests/architecture_allowances.rs` | the second project model, the two test-execution vocabularies |
 | `docs/54-language.md` | **4 -- language** | `crates/jails-model/**`, `docs/10-language.md` | the parser's repeated attribute handling |
 | `docs/55-compiler.md` | **5 -- compiler** | `crates/jails-compiler/**`, `templates/**`, `tests/golden/**`, `tests/golden.rs`, `tests/agreement.rs`, `tests/cli/generate.rs`, `docs/20-generated-java.md` | the remaining copies of the Java shell, the second proof renderer |
 
@@ -149,8 +150,6 @@ agent's path while there. Whoever lands second resolves the trivial conflict.
 
 - Plan `51`'s codec decision (S51.4) waits on plan `53`'s S53.5, because the
   test-execution wire is the codec's last user.
-- Plan `53`'s S53.3 and plan `55`'s S55.6 both touch what `doctor` compares
-  migrations against; land S55.6 first.
 
 **R4 -- the shared files keep their resolution rules** from
 `docs/00-contracts.md`: `tests/golden/**` is regenerated and the diff is read;

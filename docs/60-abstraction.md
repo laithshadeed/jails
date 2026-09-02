@@ -274,7 +274,7 @@ BASE/OURS/THEIRS rule; `PlanBundle`, `PlannedOperation` (six kinds is right),
 |---|---|---|
 | S60.2 one vocabulary | 51, 53, 54 | S51.2 moves survivors; S53.4 and S54.5 move the field parser; the `Layer` triple is S53.1's first deletion |
 | S60.3 `Recipe` | 55 | S55.2 (the shell) and S55.5 (packs as data) are its first two rungs |
-| S60.4 the snapshot | 53 | S53.2, S53.3 |
+| S60.4 the snapshot | 53 | S53.2; the one Maven reader is `jails-workspace/src/documents/pom.rs`, which `jails-project` re-exports -- S60.4 flips that edge, so the reader sits in the crate that produces `ProjectFacts` |
 | S60.5 one entry point | 53 | S53.7 |
 | S60.6 one test vocabulary | 53 | S53.5 |
 | S60.7 managed output in `src/` | none yet | after S60.2 (one owner for the §9.7 table) and S60.4 (capture is the one reader); needs `jails model relocate` |
