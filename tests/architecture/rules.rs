@@ -350,6 +350,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     // jails-spec: what a jails project is -- where it is, how it is laid out,
     // what a field means, and the closed CLI vocabularies.
     ("jails-spec", "build", 2),
+    ("jails-spec", "release", 2),
     ("jails-spec", "spec", 2),
     // Canonical semantic model: closed source schema -> linked stable IDs.
     ("jails-model", "diagnostic", 2),

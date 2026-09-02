@@ -50,7 +50,7 @@ pub struct Request<'a> {
     pub offline: bool,
     /// Write a Groovy Gradle build rather than fetching a Maven project.
     pub gradle: bool,
-    /// The Spring Boot version to pin. `None` is `pom::TARGET_BOOT`.
+    /// The Spring Boot version to pin. `None` is `release::TARGET_BOOT`.
     pub boot: Option<&'a str>,
     /// The Gradle distribution the wrapper pins. `None` is derived from the
     /// Boot major, because the Boot plugin refuses some pairings outright.
@@ -318,11 +318,11 @@ mod tests {
             "demo",
             "com.example",
             "com.example.demo",
-            crate::pom::TARGET_RELEASE,
+            crate::release::TARGET_RELEASE,
         );
         assert!(pom.contains(&format!(
             "<maven.compiler.release>{}</maven.compiler.release>",
-            crate::pom::TARGET_RELEASE
+            crate::release::TARGET_RELEASE
         )));
         // The release is whatever the caller asked for, not a baked-in constant.
         assert!(
@@ -339,7 +339,7 @@ mod tests {
             "demo",
             "com.example",
             "com.example.demo",
-            crate::pom::TARGET_RELEASE,
+            crate::release::TARGET_RELEASE,
         );
         assert!(pom.contains("<artifactId>junit-jupiter</artifactId>"));
         assert!(pom.contains("<artifactId>assertj-core</artifactId>"));
@@ -352,7 +352,7 @@ mod tests {
             name,
             group: None,
             package: None,
-            java: crate::pom::TARGET_RELEASE,
+            java: crate::release::TARGET_RELEASE,
             git,
             app: None,
             no_start: true,

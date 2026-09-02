@@ -629,7 +629,7 @@ pub fn real_java_available() -> bool {
 }
 
 /// Whether the `javac` on PATH understands the release jails generates for
-/// (`pom::TARGET_RELEASE`). Presence of a JDK is not enough: a JDK older than
+/// (`release::TARGET_RELEASE`). Presence of a JDK is not enough: a JDK older than
 /// the target rejects `--release N` outright. Tests that really compile
 /// generated code skip on this rather than hiding the reason in a javac
 /// failure.
@@ -662,7 +662,7 @@ pub fn real_docker_available() -> bool {
 
 /// The real constant, not a copy of it: `pom` is a library crate, so
 /// integration tests read it rather than keeping one fact in two places.
-pub use jails_project::pom::TARGET_RELEASE;
+pub use jails_spec::release::TARGET_RELEASE;
 
 fn real_path_dirs() -> impl Iterator<Item = PathBuf> {
     std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())

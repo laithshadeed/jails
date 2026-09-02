@@ -143,7 +143,7 @@ pub(super) fn boot_major(boot: &str) -> Result<u32> {
                 "--boot {boot} is not a version jails can read.\n       \
                  fix: pass a version whose first segment is a number, e.g. `--boot 2.7.18` \
                  or `--boot {}`.",
-                crate::pom::TARGET_BOOT
+                crate::release::TARGET_BOOT
             )
         })?)
 }
@@ -456,10 +456,10 @@ pub(super) fn create(request: &super::Request<'_>, deps: &str, boot: &str) -> Re
     let release = java
         .parse::<u32>()
         .map_err(|_| format!("--java must be a release number, got `{java}`"))?;
-    if release < crate::pom::MIN_RELEASE {
+    if release < crate::release::MIN_RELEASE {
         return Err(format!(
             "--java {java} is below Java {}, which jails' generated code needs",
-            crate::pom::MIN_RELEASE
+            crate::release::MIN_RELEASE
         )
         .into());
     }

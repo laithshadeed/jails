@@ -19,7 +19,7 @@ use crate::app;
 use crate::arguments;
 use crate::compose::Runtime;
 use crate::kafka;
-use crate::pom;
+use crate::release;
 use clap::{Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 use std::path::PathBuf;

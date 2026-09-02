@@ -14,7 +14,7 @@
 use super::wiring::property_value;
 use super::{Check, Status};
 use crate::model::Project;
-use crate::pom;
+use crate::{pom, release};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs as _};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -167,7 +167,7 @@ pub(super) fn jdk_check(project: &Project) -> Check {
         )
         .fix(format!(
             "add `sourceCompatibility = {}` to {}",
-            pom::TARGET_RELEASE,
+            release::TARGET_RELEASE,
             jails_project::gradle::FILE
         )),
         (None, _) => Check::new(
@@ -177,7 +177,7 @@ pub(super) fn jdk_check(project: &Project) -> Check {
         )
         .fix(format!(
             "add <maven.compiler.release>{}</maven.compiler.release> to <properties>",
-            pom::TARGET_RELEASE
+            release::TARGET_RELEASE
         )),
         (Some(want), None) => Check::new(
             Status::Skip,

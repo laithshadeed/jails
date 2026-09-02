@@ -35,10 +35,10 @@ pub fn new_cli(request: &Request<'_>) -> Result<()> {
     // A generic tool cannot hardcode one release level: the LTS most people
     // run and the newest JDK are rarely the same number.
     match java.parse::<u32>() {
-        Ok(level) if level < crate::pom::MIN_RELEASE => {
+        Ok(level) if level < crate::release::MIN_RELEASE => {
             return Err(format!(
                 "--release {java} is below Java {}, which is what jails' generated code needs",
-                crate::pom::MIN_RELEASE
+                crate::release::MIN_RELEASE
             )
             .into());
         }

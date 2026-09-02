@@ -97,8 +97,8 @@ pub fn plan(project: &Project, sources: &Sources) -> Result<Upgrade> {
                 "`jails modernize` upgrades a Maven or Gradle build, and this project's is \
                  {other:?}.\n       fix: nothing here is safe to guess at -- the versions to \
                  move to are Spring Boot {}, Java {}, Gradle {}.",
-                crate::pom::TARGET_BOOT,
-                crate::pom::TARGET_RELEASE,
+                crate::release::TARGET_BOOT,
+                crate::release::TARGET_RELEASE,
                 crate::gradle::TARGET_GRADLE
             )
             .into());
@@ -119,7 +119,7 @@ fn gradle(sources: &Sources, upgrade: &mut Upgrade) {
             },
             what: Vec::new(),
         };
-        let boot = crate::pom::TARGET_BOOT;
+        let boot = crate::release::TARGET_BOOT;
         match crate::gradle::boot_version(text) {
             Some(found) if found == boot => upgrade
                 .current
@@ -145,7 +145,7 @@ fn gradle(sources: &Sources, upgrade: &mut Upgrade) {
                 ),
             }),
         }
-        let release: u32 = crate::pom::TARGET_RELEASE.parse().unwrap_or(26);
+        let release: u32 = crate::release::TARGET_RELEASE.parse().unwrap_or(26);
         match crate::gradle::release_level(text) {
             Some(found) if found == release => {
                 upgrade
@@ -198,14 +198,14 @@ fn gradle(sources: &Sources, upgrade: &mut Upgrade) {
                         what: vec![format!(
                             "gradle        {found} -> {target} -- {found} does not run on JDK \
                              {}",
-                            crate::pom::TARGET_RELEASE
+                            crate::release::TARGET_RELEASE
                         )],
                     });
                 }
             }
             None => upgrade.findings.push(Finding {
                 what: format!("the wrapper's distributionUrl is not one jails can read a version out of, so it was left alone ({path})"),
-                fix: format!("point it at gradle-{target}, which is what supports JDK {}", crate::pom::TARGET_RELEASE),
+                fix: format!("point it at gradle-{target}, which is what supports JDK {}", crate::release::TARGET_RELEASE),
             }),
         }
     }
@@ -223,7 +223,7 @@ fn maven(sources: &Sources, upgrade: &mut Upgrade) {
         },
         what: Vec::new(),
     };
-    let boot = crate::pom::TARGET_BOOT;
+    let boot = crate::release::TARGET_BOOT;
     match crate::pom::spring_boot_version_of(text) {
         Some((major, minor)) => {
             match crate::pom::with_parent_version(&edit.artifact.contents, boot) {
@@ -245,7 +245,7 @@ fn maven(sources: &Sources, upgrade: &mut Upgrade) {
             ),
         }),
     }
-    let release: u32 = crate::pom::TARGET_RELEASE.parse().unwrap_or(26);
+    let release: u32 = crate::release::TARGET_RELEASE.parse().unwrap_or(26);
     match crate::pom::release_level(text) {
         Some(found) if found == release => {
             upgrade

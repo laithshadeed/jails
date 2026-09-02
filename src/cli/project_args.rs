@@ -27,7 +27,7 @@ pub(crate) struct NewArgs {
     pub(crate) package: Option<String>,
     #[arg(long, default_value = "web")]
     pub(crate) deps: String,
-    #[arg(long, default_value = pom::TARGET_RELEASE)]
+    #[arg(long, default_value = release::TARGET_RELEASE)]
     pub(crate) java: String,
     /// Skip `git init` and the .gitignore it normally sets up
     #[arg(long)]
@@ -103,7 +103,7 @@ pub(crate) struct NewCliArgs {
     #[arg(long)]
     pub(crate) package: Option<String>,
     /// Java release to compile against (>= 21)
-    #[arg(long, default_value = pom::TARGET_RELEASE)]
+    #[arg(long, default_value = release::TARGET_RELEASE)]
     pub(crate) release: String,
     /// Skip `git init` and the .gitignore it normally sets up
     #[arg(long)]

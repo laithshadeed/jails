@@ -24,7 +24,7 @@ pub mod why_subject;
 // it.
 pub(crate) use jails_java::{java, template};
 pub(crate) use jails_project::{compose, inspect, maven, model, pom};
-pub(crate) use jails_spec::build;
 pub(crate) use jails_spec::spec::kind::{ArtifactKind, Capability};
 pub(crate) use jails_spec::spec::paths::find_project_root;
+pub(crate) use jails_spec::{build, release};
 pub(crate) use jails_support::{apply, json, process};

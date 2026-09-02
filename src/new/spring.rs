@@ -37,7 +37,7 @@ pub fn new(request: Request<'_>) -> Result<()> {
         return gradle_project::create(
             &request,
             &deps_for_gradle,
-            request.boot.unwrap_or(crate::pom::TARGET_BOOT),
+            request.boot.unwrap_or(crate::release::TARGET_BOOT),
         );
     }
 
@@ -189,10 +189,10 @@ fn new_offline(request: &Request<'_>, deps: &str) -> Result<()> {
     let release = java
         .parse::<u32>()
         .map_err(|_| format!("--java must be a release number, got `{java}`"))?;
-    if release < crate::pom::MIN_RELEASE {
+    if release < crate::release::MIN_RELEASE {
         return Err(format!(
             "--java {java} is below Java {}, which jails' generated code needs",
-            crate::pom::MIN_RELEASE
+            crate::release::MIN_RELEASE
         )
         .into());
     }
@@ -237,7 +237,7 @@ fn new_offline(request: &Request<'_>, deps: &str) -> Result<()> {
             &[
                 ("artifact", name),
                 ("java", java),
-                ("boot", crate::pom::TARGET_BOOT),
+                ("boot", crate::release::TARGET_BOOT),
                 ("dependencies", &dependencies),
             ],
         ),
