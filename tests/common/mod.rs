@@ -1555,7 +1555,15 @@ fn test_profile_epoch() -> &'static Instant {
 ///
 /// `JAILS_TEST_MAX_TOOLCHAIN_PROCESSES` overrides it.
 fn default_max_toolchain_processes() -> usize {
-    let by_cores = (parallel::cgroup::cores() * 3 / 4).clamp(6, 12);
+    // A cgroup quota is already the machine's share for this run, so it is
+    // taken whole; the bare machine keeps a quarter for whoever else is on
+    // it.
+    let cores = parallel::cgroup::cores();
+    let by_cores = match parallel::cgroup::memory_limit_bytes().is_some() {
+        true => cores,
+        false => cores * 3 / 4,
+    }
+    .clamp(6, 12);
     let by_memory = parallel::cgroup::memory_limit_bytes()
         .into_iter()
         .chain(parallel::cgroup::available_memory_bytes())
