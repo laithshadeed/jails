@@ -5,8 +5,9 @@ projects, built as one semantic application compiler. `README.md` is the
 user-facing surface -- the command list, the field types, what is deliberately
 deferred -- and is the spec: update it in the same change as the code.
 `ARCHITECTURE.md` is the map. **Every idea, roadmap item and open design
-question lives under `docs/`**; this file describes what the code *is* and the
-traps in it, and nothing here is a proposal.
+question lives under `docs/`** -- `docs/60-abstraction.md` is the shape the
+code is converging on; this file describes what the code *is* and the traps
+in it, and nothing here is a proposal.
 
 The scope bar: no ORM, no jails runtime jar, no Lombok, no preview features in
 generated Java, and no plugin system with lifecycle hooks. Check `README.md`'s
@@ -240,8 +241,9 @@ Five things to know before touching the workspace:
   **Deliberately domain-blind**: a crawler, a support inbox and a payments
   gateway are three lists of the same generic intents, and none of them gets a
   command, branch, enum or template in core. A capability wires its own
-  integration points (`route::support::with_test_support` puts the container
-  import in the test it writes), so no second reconcile pass is needed.
+  integration points (`DocumentIntent::ReconcileSpringTestImport` puts the
+  container import in the tests that need it), so no second reconcile pass
+  is needed.
 - **`crates/jails-support/src/apply/`** -- **the only module that writes.**
   `fs::write` appears nowhere else and `tests/architecture/` fails when it
   does, and fails on a direct `apply::` call from anywhere that is not the
@@ -250,7 +252,7 @@ Five things to know before touching the workspace:
   `put` (the new content already accounts for whatever was there -- every
   splice into a reader-owned file lands here, with the byte-preserving merge
   done *before* the call by the module that owns the format), and
-  `put_bytes` for the 3-way merge result. `put_outside_project`,
+  `publish_tree` for the executor's staged after-images. `put_outside_project`,
   `ensure_directory_outside_project`, `put_in_scratch`, `remove_derived` and
   `ensure_derived_directory` are the named exemptions; the last two refuse a
   path outside `target/` or `build/`. `apply::Tree` is exempt as a type: a
@@ -331,8 +333,8 @@ Five things to know before touching the workspace:
   refusal that can say what still works. jails never reads, writes, parses or
   invokes a foreign build file; recognising a filename is not understanding a
   build. Because the emitted Java is shaped by what the pom says, a missing
-  pom silently changes the shape (`repository_wiring` to plain JDBC,
-  `jspecify_available` false), so the report says which shape it chose. `add`
+  pom silently changes the shape (plain JDBC instead of `JdbcClient`, no
+  `package-info.java`), so the report says which shape it chose. `add`
   is not exempted: a capability that installs the code and skips the
   dependency is worse than one that refuses.
 - **`crates/jails-project/src/config.rs`** -- `jails.toml`. Hand-parsed, one
@@ -588,63 +590,62 @@ The rules, each measured rather than guessed:
 
 ## Package layout
 
-Generated code does not all land in the base package. `generate::layout` maps
-each kind to the subpackage its layer conventionally owns; there are eleven
-layers and `config::LAYERS_IN_ORDER` is their single owner: `domain`, `app`,
+Generated code does not all land in the base package. Each kind renders into
+the subpackage its layer owns; the eleven layers are `domain`, `app`,
 `service`, `web`, `api`, `messaging`, `cli`, `clients`, `jobs`, `adapters`,
-`testkit`. `--package` overrides the placement. `scaffold` crosses package
-boundaries, so its templates take an `extra` parameter holding the imports
-that costs, and `import_of` returns an empty string when the two packages
-match, which keeps `--package ''` compiling.
-
-`spring::Slice` is placement as a value: `placed(Layer::X)` is this slice's
-own classes honouring `--package`, `owned(Layer::X)` is where an existing
-resource lives. No function in `spring.rs` takes more than five parameters,
-and `tests/architecture/` fails if one does; `Target`, `Defaults`, `Emission`,
-`Update` and `Projection` are the other parameter objects.
+`testkit`, listed once in `jails_spec::spec::layout` and mirrored as
+`jails_model::layout::Layer` (a duplication `docs/60-abstraction.md` S60.2
+removes). A `jails.toml` `[layout]` rename is applied through
+`Config::layers()` and reaches the model as `Layout`; six emitted packages
+sit under heads the convention does not close and are reported as
+`convention.facet.*` by `jails model explain` rather than moved. `--package`
+overrides placement for the kinds that accept it.
 
 ## Import order is normalised at write time, not in templates
 
-Every `.java` file goes through `normalize_imports`: static imports first, a
-blank line, then the rest sorted, which is what palantir-java-format produces,
-so `add format` leaves a project that passes `jails check`. Do not hand-order
-imports in templates. Formatter *wrapping* cannot be predicted from a
-template, so `add format` runs `spotless:apply` once, best-effort.
+Every emitted `.java` file goes through `emit::tidy_java`: static imports
+first, a blank line, then the rest sorted, which is what
+palantir-java-format produces, so `add format` leaves a project that passes
+`jails check`. Do not hand-order imports in templates. Formatter *wrapping*
+cannot be predicted from a template, so `add format` runs `spotless:apply`
+once, best-effort. `package-info.java` is written by `emit::package_infos`
+for every emitted package, only when `org.jspecify:jspecify` is a
+dependency.
 
-## Table constraints live in the field spec, and are a closed set
+## Table constraints are model nodes, and a closed set
 
-`@pk`, `@unique`, `@index`, `@positive`, `@nonnegative` parse off the type
-(before the `!`/`?` suffix, either order) into `Field::constraints`, ride
-through `sql::Column`, and are read only by `create_table`. **An unknown marker
-is an error, not a no-op.** **No arbitrary SQL**: `@check(...)` would be a
-string jails passes through and cannot validate. `--index` (repeatable, on
-`g scaffold`) carries what a per-column marker cannot, and
-`sql::validate_index` splits on whitespace so `created_at desc` is a column
-plus an ordering. `@scope` is the exception and touches no SQL: it marks a
-request-boundary field proved against a same-named JWT claim, and
-`spring::require_scope_authorizer` refuses a scoped operation when
-`add security` has not written a `ScopeAuthorizer` -- tenancy without the
-word "tenant" existing in core. A record read off disk carries no constraints.
+`@pk`, `@unique`, `@index`, `@positive`, `@nonnegative` parse off the compact
+field syntax into the entity's `EntityConstraint`s and `Index`es
+(`jails_model::constraint`, `jails_model::Index`), and `emit_sql` reads them
+into the DDL. **An unknown marker is an error, not a no-op.** **No arbitrary
+SQL**: `@check(...)` would be a string jails passes through and cannot
+validate. `--index` (repeatable, on `g scaffold`) carries what a per-column
+marker cannot, and `created_at desc` is a column plus an ordering. `@scope`
+is the exception and touches no SQL: it marks a request-boundary field
+proved against a same-named JWT claim, and the compiler refuses a scoped
+operation when `add security` has not declared a `ScopeAuthorizer` --
+tenancy without the word "tenant" existing in core.
 
 ## Field syntax: case is the rule
 
-`parse_fields` reads `name:type[!?]`. **Lowercase = jails' table, capitalised =
-a type the project owns**, passed through verbatim with no import.
-`builtin_by_java_name` keeps `id:String` working; `Currency` is deliberately
-not a builtin, because an enum of the currencies a project deals in is an
-ordinary thing to generate. There is one parser; two parsers of this syntax
-is the repository's most reliable drift generator.
+`src/model_field_parse.rs` reads `name:type[!?]`. **Lowercase = jails'
+table, capitalised = a type the project owns**, passed through verbatim with
+no import. `normalize_type` canonicalises the CLI's aliases (`String`,
+`text`, `bool`) on the way in, and `jdl 1` refuses a bare alias by name
+through `BuiltinType::from_alias`; `Currency` is deliberately not a builtin,
+because an enum of the currencies a project deals in is an ordinary thing to
+generate. There is one parser of this syntax; a second is the repository's
+most reliable drift generator, which is why `docs/60-abstraction.md` S60.2
+moves it beside the alias table.
 
-The suffix sets `Optionality`: `!` non-blank, `?` unchecked/nullable, bare
-non-null. `needs_null_check` and `needs_blank_check` are the only two places
-that decide. `?` emits an `Optional<T>` component, and the compact constructor
-normalises a null one with `requireNonNullElse(x, Optional.empty())` -- a
-deliberate departure from "Optional as a return type only", because a record
-component is both at once. `Field.java_type` always holds the *inner* type
-and `component_type` is the only place that wraps it. `sample_value` returns
-`Option`: an enum it can handle (`is_enum` reads the file); when a sample is
-impossible the companion test is emitted whole and `@Disabled`, naming the
-component.
+The suffix sets optionality: `!` non-blank, `?` nullable, bare non-null.
+`?` emits an `Optional<T>` component, and the compact constructor normalises
+a null one with `requireNonNullElse(x, Optional.empty())`
+(`emit_java::record_validation`) -- a deliberate departure from "Optional as a
+return type only", because a record component is both at once.
+`BuiltinSemantics` in `jails_model::builtin` is the one row per type that
+knows its Java type, SQL type and sample value; when a sample is impossible
+the companion test is emitted whole and `@Disabled`, naming the component.
 
 ## Gotchas
 
@@ -673,24 +674,24 @@ component.
   under `cfg.DateTimeFeature`.
 - **Boot 4 split the servlet test slice.** `@WebMvcTest` and
   `@AutoConfigureMockMvc` live in `spring-boot-webmvc-test`, so a generated
-  test using either needs `spring-boot-starter-webmvc-test`, supplied from the
-  write path keyed off the emitted bytes; `pom::webmvc_test_import_for` picks
-  the package the project's Boot version has. **The test fixture must not
-  supply what the tool is supposed to supply**: `SPRING_FIXTURE_POM` declares
-  only what `jails new` writes.
-- **Three version facts are read off the project, never assumed**:
-  `mockmvc_autoconfigure_import`, `webmvc_test_import`,
-  `spring::validation_package` (`jakarta` vs `javax`) and
-  `spring::mockmvc_template`. Boot 4 moved `@AutoConfigureMockMvc` to
-  `org.springframework.boot.webmvc.test.autoconfigure` with no shim, and moved
-  `MeterRegistryCustomizer` out of `actuate.autoconfigure`.
+  test using either needs `spring-boot-starter-webmvc-test`, which the
+  compiler declares as a `BuildDependency` from the units it emitted; the
+  captured Boot version (`snapshot.project.spring_boot`) picks the package.
+  **The test fixture must not supply what the tool is supposed to supply**:
+  `SPRING_FIXTURE_POM` declares only what `jails new` writes.
+- **Three version facts are read off the captured project, never assumed**:
+  the `@AutoConfigureMockMvc` package, the `WebMvcTest` starter and the
+  validation package (`jakarta` vs `javax`). Boot 4 moved
+  `@AutoConfigureMockMvc` to `org.springframework.boot.webmvc.test.autoconfigure`
+  with no shim, and moved `MeterRegistryCustomizer` out of
+  `actuate.autoconfigure`.
 - **The Boot floor is in the generated *code*, not its tests.** `add api`
   writes `ProblemDetail`, `add security` writes `requestMatchers`, `g query`
   and `g transition` write a `JdbcClient` adapter, all in the main source set;
-  they refuse through `spring::require_jakarta_spring`, which names the type
-  the compiler would have named.
+  `refuse::preflight` refuses below the floor, naming the type the compiler
+  would have emitted.
 - **Exactly one repository adapter carries `@Repository`.**
-  `generate::repository_wiring` decides: with `spring-boot-starter-jdbc`
+  `emit::jdbc_on_classpath` decides: with `spring-boot-starter-jdbc`
   present the `JdbcClient` adapter is the bean and the in-memory one is an
   unannotated fake; without it the adapter is plain `Connection` JDBC and the
   in-memory one is the bean. `JdbcClient` lives in `spring-jdbc`, so without
@@ -727,7 +728,8 @@ component.
   only when the JDBC starter is present. `jails add db api` re-resolves the
   project between the two; `add api` then `add db` is repaired by `jails sync`.
   **Two capabilities own `management.endpoints.web.exposure.include`**, so
-  `spring::exposure_include` reads the current value and unions.
+  `emit_capability::spring` unions the value rather than letting the last
+  pack win.
 - **`add observability` generates a `MeterRegistryCustomizer`** rather than
   `management.metrics.tags.*`, because it is code the project owns and does
   not depend on which actuator modules are present.
@@ -751,30 +753,31 @@ component.
   select-then-insert reopens the race. Domain-blind by construction.
 - **A name that already carries its kind's suffix must not get it twice.**
   `strip_redundant_suffix` runs in `generate` and `destroy`; `scaffold` is
-  exempt because it spans Controller, Service and Repository at once.
-- **`package-info.java` is written from the write path, not per kind**, and
-  only when `org.jspecify:jspecify` is a dependency.
+  exempt because it spans Controller, Service and Repository at once. It is
+  a `jails-protocol` symbol today and moves to `jails-spec` under
+  `docs/51-kernel.md` S51.2.
 - **`record`/`command` are the plain-Java kinds.** `command` registers itself
   in the project's dispatcher, found by *shape* (`is_dispatcher`: the registry
   type plus the `return commands;` anchor), one line spliced idempotently, with
   the Javadoc instructions as the fallback when there is no dispatcher or more
-  than one. `cli::adopt_as_entry_point` retargets `<mainClass>` only off a stub
+  than one (`DocumentIntent::EnsureCommandRegistration`);
+  `DocumentIntent::SetMavenMainClass` retargets `<mainClass>` only off a stub
   jails wrote with no command registered.
-- **`sql::table_name` is the only pluraliser** and `web::resource_path`
-  delegates to it. Irregulars are a short list matched on the last word plus
-  a short uncountable list; no `jails.toml` override, because derivability is
-  what lets `destroy` find what `generate` wrote.
+- **`naming::plural_snake_case` is the only pluraliser**, and every table
+  and resource path derives from it. Irregulars are a short list matched on
+  the last word plus a short uncountable list; no `jails.toml` override,
+  because derivability is what lets `destroy` find what `generate` wrote.
 - **Commons CSV's `Builder.build()` is `Builder.get()` from 1.13**; a unit
-  test in `add.rs` holds the pinned version and the generated call together.
+  test beside the `csv` pack holds the pinned version and the generated call
+  together.
 - **Don't use preview features in generated Java.** Anything preview needs
   `--enable-preview` in compile and surefire and breaks on the next JDK.
 - **The `@MockBean` family does not exist in Boot 4**; `@MockitoBean` and
   `@MockitoSpyBean` from `org.springframework.test.context.bean.override.mockito`
   are the replacement. `MockMvcTester` is the current MockMvc entry point.
-- **`sql::Dialect::column_type` rewrites exactly one name**, `timestamptz` to
-  `timestamp with time zone`, because every other type is in H2's own type
-  table verbatim. The dialect is chosen by the driver, not by `jails.toml`;
-  Postgres wins when both are present. One column list feeds the DDL, the
+- **`BuiltinSemantics` rewrites exactly one SQL name for H2**, `timestamptz`
+  to `timestamp with time zone`, because every other type is in H2's own type
+  table verbatim. The dialect is the model's `storage` axis. One column list feeds the DDL, the
   select, the insert, the bind and the row mapper, and the write expression
   bakes in the receiver (`Timestamp.from(x.at())`) because gluing it on the
   front yields `x.Timestamp.from(at())`, which only the real-toolchain tier
@@ -823,27 +826,28 @@ AssertJ is on the classpath; Testcontainers containers are Spring beans with
 
 The scaffold's controller, service and DTOs are real, so the generated
 application has to *start*: an in-memory adapter is generated and carries
-`@Repository` while the JDBC one, taking a `Connection` the caller owns, does
-not; and `Field.java_type` always holds the inner type.
+`@Repository` while the JDBC one does not, or the other way round when the
+JDBC starter is absent (`emit::jdbc_on_classpath`).
 
-## Anything that writes an `*IT` must also configure Failsafe
+## Anything that emits an `*IT` also declares the build feature
 
 Surefire runs `*Test`; `*IT` is Failsafe's, and Failsafe is not in the Spring
 Boot parent's default build, so a `verify` completes and executes none of
-them. `generate::ensure_failsafe` is called from the write path, keyed off the
-emitted bytes, with both goals bound. `ensure_assertj` and
-`ensure_webmvc_test` follow the same rule for the same reason: the projects
-that need them are the ones jails did not create.
+them. An integration-test unit lowers to `BuildFeature::IntegrationTests`,
+carried to the build file by `DocumentIntent::ReconcileBuildFeatures`: Maven
+gets Failsafe with both goals bound, Gradle gets separate tasks wired into
+`check`. Removing the last such unit removes the marked block.
 
-## A generator that emits code must supply the dependency it needs
+## A generator that emits code declares the dependency it needs
 
 And the version it needs depends on the project's flavour: a `<dependency>`
 with no `<version>` is correct under `spring-boot-starter-parent` and fatal
-without one, so every splice goes through a flavour-aware chooser
-(`spring::validation_dependency`, `spring::failsafe_plugin`, `pom::assertj`).
-`g dto` splices `spring-boot-starter-validation`; `g client` splices
-`spring-boot-starter-restclient`, without which the proxies build, the project
-starts, and the first call fails with `URI with undefined scheme`.
+without one, so every dependency is a `BuildDependency` reconciled through
+`DocumentIntent::ReconcileDependencies` with the version decided once from
+the captured flavour. `g dto` declares `spring-boot-starter-validation`;
+`g client` declares `spring-boot-starter-restclient`, without which the
+proxies build, the project starts, and the first call fails with `URI with
+undefined scheme`.
 
 ## Testing philosophy
 

@@ -136,6 +136,14 @@ for c in sorted(pathlib.Path('crates').iterdir()) + [pathlib.Path('.')]:
 PY
 ```
 
+## The shape the plans converge on
+
+`docs/60-abstraction.md` names it: five nouns (source, model, snapshot,
+desired, plan), four verbs (edit, compile, plan, execute), one owner per
+closed vocabulary, generators as data the way capabilities already are. Read
+it before starting a step, and read its last paragraph twice: a deletion that
+adds a new shape is not progress.
+
 ## The five plans
 
 | plan | agent | owns | what it deletes | expected |

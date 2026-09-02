@@ -1380,7 +1380,8 @@ fn every_script_and_task_the_automation_names_exists() {
     );
 }
 
-/// Every markdown file under `docs/`, with fenced code blocks removed.
+/// Every markdown file under `docs/` plus the three root documents, with
+/// fenced code blocks removed.
 ///
 /// The fences are dropped because every rule below reads a backticked token as
 /// a name somebody is citing, and a fenced block is a command line rather than
@@ -1403,6 +1404,9 @@ fn document_prose() -> Vec<(std::path::PathBuf, String)> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut paths = Vec::new();
     walk(&root.join("docs"), &mut paths);
+    for name in ["CLAUDE.md", "ARCHITECTURE.md", "README.md"] {
+        paths.push(root.join(name));
+    }
     paths.sort();
     // A scanner that has lost the tree reports exactly what a clean one does.
     assert!(
@@ -1534,9 +1538,7 @@ fn backticked(text: &str) -> Vec<(usize, String)> {
 /// wanting to backtick a Java or SQL identifier carrying three underscores
 /// should spell it without the backticks. Nothing under `docs/` does.
 ///
-/// **`CLAUDE.md`, `ARCHITECTURE.md` and `README.md` are deliberately not
-/// scanned**: their prose belongs to whoever owns their rewrite, not to this
-/// gate.
+/// `CLAUDE.md`, `ARCHITECTURE.md` and `README.md` are scanned with `docs/`.
 #[test]
 fn every_cross_reference_in_the_documents_resolves() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));

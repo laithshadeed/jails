@@ -33,6 +33,7 @@ has not been done.
 | `docs/40-gates-and-ci.md` | workstream D: the gates, the suite, and the CI budget | one agent |
 | `docs/50-simplify.md` | the simplification pass: brief, baseline, ownership for five agents | everyone, during the pass |
 | `docs/51-kernel.md` .. `docs/55-compiler.md` | the five plans of that pass | one agent each |
+| `docs/60-abstraction.md` | the target shape the five plans converge on: five nouns, four verbs | everyone, during the pass |
 
 The split exists so several agents can work at once without reading each
 other's context or editing each other's files. Everything genuinely shared is

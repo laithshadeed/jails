@@ -76,7 +76,7 @@ compiler derived rather than the author writing, with the rule that produced
 it.
 
 **Ejection** is the escape hatch for one implementation boundary, such as
-`art_cap_fake_ent_note_repository` or a controller and its test. It moves the
+art_cap_fake_ent_note_repository or a controller and its test. It moves the
 captured live files, hand edits included, from `.jails/generated/main/java` to
 the matching `src/main/java` or `src/test/java` paths, records an `eject`
 declaration in the same plan, and leaves the ejected source alone forever

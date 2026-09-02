@@ -1,0 +1,236 @@
+<!--
+The target abstraction. `docs/50-simplify.md` says what the five plans delete;
+this file says what shape they are deleting *towards*, so five agents removing
+code in parallel converge on one system rather than five tidier versions of
+the old one.
+
+**A closed item is deleted from this file**, in the commit that closes it.
+Item numbers `S60.n` are stable and never reused.
+-->
+
+# 60 — The abstraction: five nouns, four verbs
+
+**Read `docs/00-contracts.md` first.** The five contracts stand. What this
+file changes is the number of *shapes* between them: the code carries several
+representations of each contract and a translation layer between every pair,
+and that is where the mess is.
+
+## What the tree looks like today
+
+Measured 2026-09-02 over the crates that survive the pass
+(`grep -rhoE '^\s*pub(\(crate\))? (struct|enum|trait) \w+' <crate>/src | wc -l`):
+
+| crate | public types | of which |
+|---|---:|---|
+| `jails-model` | 143 | ~40 are `source.rs`'s second copy of the model for the TOML input; 4 belong to the upgrade |
+| root binary | 71 | 40 are clap argument types; the rest are per-command request bags |
+| `jails-contracts` | 44 | |
+| `jails-drive` | 42 | two test-execution vocabularies (`testing::*V1`, `testd::*V2`) |
+| `jails-project` | 41 | a second project model (`model::{Project, Slice, Layer, Layers, Artifact, Change}`) beside the snapshot's `ProjectFacts` |
+| `jails-spec` | 13 | six closed vocabularies that also exist in `jails-model` |
+| `jails-compiler` | 10 | |
+| `jails-workspace` | 4 | |
+
+Six specific shapes, each measured:
+
+1. **One mutation is encoded three times.** Every frontend edits the JDL
+   text (`next_source`), builds a `ModelPatch` (34 variants), and serialises
+   a third form as `patch_bytes` JSON. `PreparedMutation` carries all three.
+   The compiler then applies the patch to the model it parsed from the *old*
+   source while the plan replaces the source file with the *new* text -- two
+   routes to the same next model, and a test (`model_generate_jdl::parse`
+   at 30 call sites) that they agree.
+2. **Closed vocabularies exist in two or three crates each.** `Layer` is
+   defined in `jails-model`, `jails-spec` and `jails-project`. `Capability`,
+   `Dialect`, `HttpMethod`, `WireFormat`, `ArtifactKind` are `clap::ValueEnum`s
+   in `jails-spec`; the model spells the same sets as `CAPS`, `storage`,
+   `EndpointMethod`, `RequestFormat`, `UnitKind`/`ComponentKind`/`ProjectionKind`.
+   `Build` is in `jails-spec`, `BuildSystem` in `jails-contracts`, and a third
+   `Build` in the upgrade. Every pair has a translation and a test that they
+   agree, and `the_compilers_renameable_layers_are_the_engines_layers` exists
+   only because there are two.
+3. **Generators are code, capabilities are data.** A capability is a `Pack`:
+   files, dependencies, properties, compose services, build features and a
+   placement rule, as one `static`. A generator kind is a `lower_and_emit`
+   function -- nine of them, plus six `lower`s -- each walking the model and
+   assembling Java with `format!` (838 sites). The two shapes emit into the
+   same `RenderedTree`.
+4. **The compiler re-derives its external facts.** `emit::Observed` is a
+   hand-picked subset of the snapshot, rebuilt in `Compiler::compile`; every
+   emitter that needs one more fact widens it.
+5. **The tool crates keep a second project model.** `jails-project::Project`
+   and `ProjectContext` answer "what is at this path" for `drive` and
+   `report`, reading the disk again, while the snapshot's `ProjectFacts`
+   answers the same question for the compiler.
+6. **Entry points come in families.** `capture`, `capture_with_reader_paths`,
+   `capture_planned`, `capture_import`; `materialize`, `materialize_with_model`;
+   `finish_generation`, `finish_generation_with_reader_paths`,
+   `finish_carry_across`. Each variant is one caller's exception promoted to
+   API.
+
+## The target
+
+Five nouns. Each is one type, owned by one crate, with no second spelling.
+
+| noun | type | crate | what it is |
+|---|---|---|---|
+| **Source** | `Document` (the CST) | `jails-model` | the JDL text; the only thing a command edits |
+| **Model** | `AppModel` | `jails-model` | what the source means, linked; owns every closed vocabulary |
+| **Snapshot** | `WorkspaceSnapshot` | `jails-contracts` | every external fact, captured once; `ProjectFacts` is the only project model |
+| **Desired** | `PlanDraft` | `jails-contracts` | the managed tree, reader-file intents and migrations the model implies |
+| **Plan** | `PlanBundle` | `jails-contracts` | the exact, content-addressed transition |
+
+Four verbs. Each is one function.
+
+```text
+edit    : Source × Edit                 -> Source        (jails-model)
+compile : Snapshot × Model × Evolution  -> Desired       (jails-compiler)
+plan    : Snapshot × Desired            -> Plan          (jails-workspace)
+execute : Plan                          -> ()            (jails-workspace)
+```
+
+and one composition in the binary:
+
+```text
+mutate(root, edit, evolution) = execute(plan(snapshot, compile(snapshot, link(edit(source)), evolution)))
+```
+
+with `--pretend` stopping after `plan`, `--plan-out` writing it, and
+`--plan-in` starting at `execute`. That composition is `finish_generation`
+today; the change is what it takes.
+
+### S60.1 — `Edit` replaces `ModelPatch`, `patch_bytes` and the text splices
+
+An `Edit` is a syntactic operation on the CST, from a closed set small enough
+to list: append a declaration, remove a declaration, set or clear an
+attribute or property, add or remove a member, rename an identifier, replace
+one member. Every frontend becomes a function from its arguments to an
+`Edit`, and `edit` is the one place JDL text is rewritten -- byte-preserving
+outside the touched span, which `jdl/v1/edit.rs` already does.
+
+The model is then whatever the edited source parses and links to. The plan
+records the source before-image and after-image (`ReplaceModelFile` already
+does), which is the only "patch" the executor needs. `ModelPatch`,
+`AppModel::apply`, `model_apply.rs`, `CanonicalModelPatch`'s JSON and the
+`Batch`/`ReplaceModel` plumbing go. `ReplaceModel` is a whole-source edit;
+`Batch` is a `Vec<Edit>`.
+
+What does not fit in the source is **`Evolution`**: a one-shot instruction
+about how to get from the accepted model to the next one, which is not
+desired state and must not be written into the file. The list is short and
+closed -- rename-column policy (`preserve` / `single-cutover`), type-change
+strategy (`safe`), storage retirement (`preserve` / `drop`) and its
+confirmation, index removal's confirmation -- and it is one enum passed to
+`compile` beside the model, where `emit_sql::derive` reads it. Seven
+`ModelPatch` variants exist only to carry these; they become `Evolution`'s
+variants and nothing else changes.
+
+**Exit:** `ModelPatch` is gone; `Compiler::compile` takes a `&AppModel` and
+an `Evolution`; no frontend constructs a JSON patch; `PreparedMutation` has
+one source field.
+
+### S60.2 — one owner per closed vocabulary
+
+Every closed set lives in `jails-model` and nowhere else: layers, capability
+kinds, artifact kinds, dialects, HTTP methods, wire formats, build systems,
+platforms. The CLI's `clap::ValueEnum`s are those enums, not copies: the
+model crate gains a `cli` feature that derives `ValueEnum` on them, or
+`jails-spec` becomes a generated table read *from* `jails-model`'s `ALL`
+lists. Either way there is one list and a `label()` per member.
+
+`jails-spec` then holds two things the model does not: where a project is
+(`find_project_root`, `build`) and the compact field syntax's parser -- and
+the parser's output is a model `Field`, so it moves next to
+`BuiltinType::from_alias` (S53.4, S54.5). What remains of `jails-spec` is
+small enough to question.
+
+**Exit:** one definition of each set; the tests that check two copies agree
+are deleted with the second copy.
+
+### S60.3 — `Recipe` generalises `Pack` to every kind
+
+`Pack` is the right shape and it is used for 25 of the 25 capabilities. The
+39 generator kinds are functions because each was written when its kind was
+added. A `Recipe` is a `Pack` that can also name the *model node* it renders
+from and the *roles* it emits:
+
+```text
+Recipe {
+    node:   which model node kind this renders (entity facet, unit, component, operation, capability)
+    files:  [(role, template, placement, ejectable, test?)]
+    deps:   [DependencySpec]         props: [PropertySpec]
+    build:  [BuildFeature]           compose: [ComposeService]
+    when:   BootCondition
+}
+```
+
+Rendering is one loop: for each node, look up its recipe, render each file
+through the one `JavaUnit` builder (S55.2) with the node's typed values as
+the template's keys. What a template needs that is *structural* -- a column
+list, a parameter list, a switch over variants -- is a small closed set of
+fragment renderers, named in the recipe rather than written inline. The
+emitters that cannot be a recipe (SQL lowering, the proof tests, the
+dispatcher splice) stay functions, and the count of those is the number to
+watch: the target is under ten.
+
+This is also A3.15's registry: a role appears in exactly one recipe, so
+`Entity.repo.fake` resolves by looking it up, and an emitter asking for an
+unregistered role fails to compile.
+
+**Exit:** `emit.rs` walks one table; `lower_and_emit` is gone; the
+`format!` count is the fragment renderers' and the SQL lowering's alone.
+
+### S60.4 — the snapshot is the only project model
+
+`emit::Observed` goes: the compiler reads `snapshot.project` directly, and a
+fact it needs that the snapshot lacks is added to `ProjectFacts` by capture.
+`jails-project::model::{Project, Slice, Layer, Layers, Artifact, Change}` and
+`ProjectContext` go: `jails-project` becomes the *reader* that produces
+`ProjectFacts` and captured files (today's `capture/observe.rs` and the
+document adapters), and `jails-drive`/`jails-report` take a snapshot -- or a
+`Project` that is nothing but a root plus a lazily captured snapshot. A
+command that starts a JVM has no reason to parse `pom.xml` its own way.
+
+**Exit:** one `struct` answers "what is this project"; no module outside
+capture reads the pom, and the board's Maven-scanner row reads one.
+
+### S60.5 — one entry point per verb
+
+`capture(root, model, reader_paths)`; `materialize(snapshot, desired)`;
+`mutate(invocation, edit, evolution)`. Variants become arguments with
+defaults, not functions. The `_at` family in the binary is the same
+observation: `Invocation` already carries the root.
+
+**Exit:** the `pub fn` count in `jails-workspace` is four; the binary has one
+`finish`.
+
+### S60.6 — one test-execution vocabulary
+
+`jails-drive::testing` (`TestExecutionPlanV1`, `TestReportV1`, ...) and
+`testd::v2` describe one thing -- select tests, run them through an engine,
+report cases -- as two versioned protocols. One `TestPlan` and one `TestReport`,
+with the daemon's wire framing as an encoding of them rather than a second
+model.
+
+## What stays exactly as it is
+
+The executor and its crash proof; the three-way merge and the lock's
+BASE/OURS/THEIRS rule; `PlanBundle`, `PlannedOperation` (six kinds is right),
+`ProjectPath`, `ContentDigest`; `DerivedValue` and `jails model explain`;
+`BuiltinSemantics` as the one type table; the marked block; the templates as
+`.java` files. None of these is where the shapes multiplied.
+
+## Where each plan meets this
+
+| item | plan | step |
+|---|---|---|
+| S60.1 `Edit` and `Evolution` | 52, 54 | S52.1 builds the one pipeline; S54.2 decides `ModelPatch`'s fate on this basis |
+| S60.2 one vocabulary | 51, 53, 54 | S51.2 moves survivors; S53.4 and S54.5 move the field parser; the `Layer` triple is S53.1's first deletion |
+| S60.3 `Recipe` | 55 | S55.2 (the shell) and S55.5 (packs as data) are its first two rungs |
+| S60.4 the snapshot | 53 | S53.2, S53.3 |
+| S60.5 one entry point | 52, 53 | S52.1, S53.7 |
+| S60.6 one test vocabulary | 53 | S53.5 |
+
+A plan step that lands a deletion without moving toward one of these is
+still worth landing; a step that adds a *new* shape -- a fourth vocabulary, a
+`_with_x` variant, a second project reader -- is not, whatever it deletes.
