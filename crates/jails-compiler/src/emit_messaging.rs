@@ -29,7 +29,7 @@ const IT: crate::Template = crate::template!("spring/messaging_it_java.java");
 pub(crate) fn lower_and_emit(
     model: &AppModel,
     output: &mut RenderedTree,
-    observed: &crate::emit::Observed<'_>,
+    templates: &jails_contracts::TemplateOverrides,
 ) -> Result<(), CompileError> {
     if !model
         .capabilities
@@ -42,7 +42,7 @@ pub(crate) fn lower_and_emit(
         if !matches!(operation.kind, OperationKind::Event(_)) {
             continue;
         }
-        for (path, file) in files(model, operation, observed.templates)? {
+        for (path, file) in files(model, operation, templates)? {
             output.insert(path, file).map_err(CompileError::new)?;
         }
     }

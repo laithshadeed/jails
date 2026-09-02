@@ -125,14 +125,15 @@ pub(super) fn lower_and_emit(
     model: &AppModel,
     capability: &Capability,
     output: &mut RenderedTree,
-    observed: &crate::emit::Observed<'_>,
+    project: &jails_contracts::ProjectFacts,
+    templates: &jails_contracts::TemplateOverrides,
 ) -> Result<(), CompileError> {
     match capability.kind.as_str() {
-        "loadtest" => lower_loadtest(model, capability, output, observed.templates),
-        "ci" => lower_ci(model, capability, output, observed, observed.templates),
-        "docker" => lower_docker(model, capability, output, observed, observed.templates),
-        "k8s" => lower_k8s(model, capability, output, observed.templates),
-        "format" => lower_format(capability, output, observed.templates),
+        "loadtest" => lower_loadtest(model, capability, output, templates),
+        "ci" => lower_ci(model, capability, output, project.maven_wrapper, templates),
+        "docker" => lower_docker(model, capability, output, project.maven_wrapper, templates),
+        "k8s" => lower_k8s(model, capability, output, templates),
+        "format" => lower_format(capability, output, templates),
         // **One keep file, whichever storage declared it.** Both storage
         // capabilities fill the same directory, and two facets targeting one
         // path is a collision the executor refuses -- correctly, since it
@@ -184,7 +185,7 @@ fn lower_ci(
     model: &AppModel,
     capability: &Capability,
     output: &mut RenderedTree,
-    observed: &crate::emit::Observed<'_>,
+    maven_wrapper: bool,
     templates: &jails_contracts::TemplateOverrides,
 ) -> Result<(), CompileError> {
     let workflow = crate::template!("add/ci_workflow.yml")
@@ -192,14 +193,7 @@ fn lower_ci(
         .replace("{{CHECKOUT_SHA}}", CHECKOUT_SHA)
         .replace("{{SETUP_JAVA_SHA}}", SETUP_JAVA_SHA)
         .replace("{{RELEASE}}", &model.project.java_release.to_string())
-        .replace(
-            "{{MAVEN}}",
-            if observed.maven_wrapper {
-                "./mvnw"
-            } else {
-                "mvn"
-            },
-        );
+        .replace("{{MAVEN}}", if maven_wrapper { "./mvnw" } else { "mvn" });
     reader_facet::emit_managed_file(
         output,
         capability,
@@ -220,11 +214,11 @@ fn lower_docker(
     model: &AppModel,
     capability: &Capability,
     output: &mut RenderedTree,
-    observed: &crate::emit::Observed<'_>,
+    maven_wrapper: bool,
     templates: &jails_contracts::TemplateOverrides,
 ) -> Result<(), CompileError> {
     let release = model.project.java_release.to_string();
-    let build = if observed.maven_wrapper {
+    let build = if maven_wrapper {
         crate::template!("add/dockerfile_build_wrapper")
     } else {
         crate::template!("add/dockerfile_build_maven")

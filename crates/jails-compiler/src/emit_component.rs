@@ -45,26 +45,24 @@ const TEST_ROOT: &str = ".jails/generated/test/java";
 pub(crate) fn lower_and_emit(
     model: &AppModel,
     output: &mut RenderedTree,
-    observed: &crate::emit::Observed<'_>,
+    templates: &jails_contracts::TemplateOverrides,
 ) -> Result<(), CompileError> {
     for component in model.components.values() {
         let files = match component.kind {
-            ComponentKind::Client => client::files(model, component, observed.templates)?,
-            ComponentKind::Fetcher => fetcher::files(model, component, observed.templates)?,
-            ComponentKind::Job => job::files(model, component, observed.templates)?,
-            ComponentKind::Auth => auth::files(model, component, observed.templates)?,
-            ComponentKind::Idempotency => idempotency::files(model, component, observed.templates)?,
-            ComponentKind::Handler => handler::files(model, component, observed.templates)?,
-            ComponentKind::Presence => presence::files(model, component, observed.templates)?,
-            ComponentKind::Command => command::files(model, component, observed.templates)?,
-            ComponentKind::Cli => cli::files(model, component, observed.templates)?,
-            ComponentKind::Socket => socket::files(model, component, observed.templates)?,
-            ComponentKind::Webhook => webhook::files(model, component, observed.templates)?,
-            ComponentKind::HttpSink => http_sink::files(model, component, observed.templates)?,
-            ComponentKind::HttpWorkflow => {
-                http_workflow::files(model, component, observed.templates)?
-            }
-            ComponentKind::DurableJob => durable_job::files(model, component, observed.templates)?,
+            ComponentKind::Client => client::files(model, component, templates)?,
+            ComponentKind::Fetcher => fetcher::files(model, component, templates)?,
+            ComponentKind::Job => job::files(model, component, templates)?,
+            ComponentKind::Auth => auth::files(model, component, templates)?,
+            ComponentKind::Idempotency => idempotency::files(model, component, templates)?,
+            ComponentKind::Handler => handler::files(model, component, templates)?,
+            ComponentKind::Presence => presence::files(model, component, templates)?,
+            ComponentKind::Command => command::files(model, component, templates)?,
+            ComponentKind::Cli => cli::files(model, component, templates)?,
+            ComponentKind::Socket => socket::files(model, component, templates)?,
+            ComponentKind::Webhook => webhook::files(model, component, templates)?,
+            ComponentKind::HttpSink => http_sink::files(model, component, templates)?,
+            ComponentKind::HttpWorkflow => http_workflow::files(model, component, templates)?,
+            ComponentKind::DurableJob => durable_job::files(model, component, templates)?,
             _ => continue,
         };
         for file in files {
@@ -76,12 +74,12 @@ pub(crate) fn lower_and_emit(
     // Emitted after the loop and once: `SchedulingConfig` belongs to every job
     // in the model rather than to one, and a managed tree refuses two units
     // writing the same path.
-    if let Some(shared) = job::scheduling(model, observed.templates)? {
+    if let Some(shared) = job::scheduling(model, templates)? {
         output
             .insert(shared.path, shared.file)
             .map_err(CompileError::new)?;
     }
-    for shared in handler::envelope(model, observed.templates)? {
+    for shared in handler::envelope(model, templates)? {
         output
             .insert(shared.path, shared.file)
             .map_err(CompileError::new)?;

@@ -310,9 +310,10 @@ pub(crate) fn build_features(model: &AppModel) -> BTreeSet<BuildFeature> {
 pub(crate) fn lower_and_emit(
     model: &AppModel,
     output: &mut RenderedTree,
-    observed: &crate::emit::Observed<'_>,
+    snapshot: &jails_contracts::WorkspaceSnapshot,
 ) -> Result<(), CompileError> {
-    let boot_major = boot_major(observed.spring_boot);
+    let boot_major = boot_major(snapshot.project.spring_boot.as_deref());
+    let compose_path = crate::emit::compose_path(snapshot)?;
     // Every capability the *model* declares, which is a question the compiler
     // can answer once for the whole tree -- asking the project's pom one
     // capability at a time would let `add api` before `add db` leave an advice
@@ -360,7 +361,7 @@ pub(crate) fn lower_and_emit(
                     SourceSet::Test | SourceSet::IntegrationTest => (TEST_ROOT, FileKind::JavaTest),
                 };
                 let mut unit = JavaUnit::from_source(&substitute(
-                    template_for(file, boot_major).resolve(observed.templates)?,
+                    template_for(file, boot_major).resolve(&snapshot.template_overrides)?,
                     &package,
                     &template_class,
                     capability,
@@ -392,15 +393,16 @@ pub(crate) fn lower_and_emit(
                 emit_resource(output, capability, resource)?;
             }
             for service in pack.compose_services {
-                reader_facet::emit_compose_service(
-                    output,
-                    capability,
-                    observed.compose_path,
-                    service,
-                )?;
+                reader_facet::emit_compose_service(output, capability, &compose_path, service)?;
             }
         }
-        project_file::lower_and_emit(model, capability, output, observed)?;
+        project_file::lower_and_emit(
+            model,
+            capability,
+            output,
+            &snapshot.project,
+            &snapshot.template_overrides,
+        )?;
     }
     Ok(())
 }

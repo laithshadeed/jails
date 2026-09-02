@@ -125,18 +125,6 @@ impl Compiler {
             &next_model,
         ));
         let root = ProjectPath::parse(MANAGED_ROOT).map_err(CompileError::new)?;
-        let compose_path = emit::compose_path(snapshot)?;
-        let observed = emit::Observed {
-            spring_boot: snapshot.project.spring_boot.as_deref(),
-            templates: &snapshot.template_overrides,
-            compose_path: &compose_path,
-            maven_wrapper: snapshot.project.maven_wrapper,
-            jdbc: emit::jdbc_on_classpath(snapshot),
-            jspecify: snapshot
-                .project
-                .dependencies
-                .contains("org.jspecify:jspecify"),
-        };
         let baseline_model = snapshot.accepted_model.as_ref().or_else(|| {
             snapshot
                 .files
@@ -157,7 +145,7 @@ impl Compiler {
         if snapshot.accepted_projection.is_none()
             && let Some(model) = baseline_model
         {
-            emit::emit(model, &mut baseline, &observed)?;
+            emit::emit(model, &mut baseline, snapshot)?;
             let ejected = model
                 .ejections
                 .values()
@@ -168,7 +156,7 @@ impl Compiler {
                 .retain(|_, file| !ejected.contains(file.provenance.ejection_target()));
         }
         let mut generated = RenderedTree::new(root);
-        emit::emit(&next_model, &mut generated, &observed)?;
+        emit::emit(&next_model, &mut generated, snapshot)?;
         let previous_ejections = snapshot
             .model
             .model

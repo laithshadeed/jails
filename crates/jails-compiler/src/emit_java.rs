@@ -26,9 +26,11 @@ pub(crate) const JAVA_ROOT: &str = ".jails/generated/main/java";
 pub(crate) fn lower_and_emit(
     model: &AppModel,
     output: &mut RenderedTree,
-    observed: &crate::emit::Observed<'_>,
+    snapshot: &jails_contracts::WorkspaceSnapshot,
 ) -> Result<(), CompileError> {
-    let spring_boot = observed.spring_boot;
+    let spring_boot = snapshot.project.spring_boot.as_deref();
+    let templates = &snapshot.template_overrides;
+    let jdbc = crate::emit::jdbc_on_classpath(&snapshot.project);
     crate::emit_unit::lower_and_emit(model, output, spring_boot)?;
     if let Some(unit) = execution_context::lower(model)? {
         output
@@ -43,7 +45,7 @@ pub(crate) fn lower_and_emit(
     for entity in model.entities.values().filter(|entity| entity.active) {
         for facet in &entity.facets {
             if *facet == Facet::Seed {
-                for (path, file) in crate::emit_seed::lower(model, entity, observed.templates)? {
+                for (path, file) in crate::emit_seed::lower(model, entity, templates)? {
                     output.insert(path, file).map_err(CompileError::new)?;
                 }
                 continue;
@@ -118,7 +120,7 @@ pub(crate) fn lower_and_emit(
     // **Declared, or already on the classpath.** A project that states
     // `spring-boot-starter-data-jdbc` in its own build has JDBC whether or not
     // the model declares `db`, and the bean has to be the adapter that talks
-    // to it -- see `Observed::jdbc`. Emitting the in-memory one as the bean
+    // to it -- see `emit::jdbc_on_classpath`. Emitting the in-memory one as the bean
     // there gives a project with a real database a `LinkedHashMap` beside a
     // query adapter reading from PostgreSQL: two answers to one question, and
     // the wrong one wired in.
@@ -126,7 +128,7 @@ pub(crate) fn lower_and_emit(
         .capabilities
         .values()
         .find(|capability| capability.kind == "db");
-    let stored = observed.jdbc || declared.is_some();
+    let stored = jdbc || declared.is_some();
     // **One contract, emitted once, whichever adapters the project has.** A
     // repository entity always gets at least one -- the in-memory adapter
     // stands in until `db` is declared -- so the contract always has a caller,
@@ -137,9 +139,7 @@ pub(crate) fn lower_and_emit(
         .values()
         .filter(|entity| entity.active && entity.facets.contains(&Facet::Repository))
     {
-        if let Some(unit) =
-            repository::lower_repository_contract(model, entity, observed.templates)?
-        {
+        if let Some(unit) = repository::lower_repository_contract(model, entity, templates)? {
             output
                 .insert(unit.path, unit.file)
                 .map_err(CompileError::new)?;
@@ -164,7 +164,7 @@ pub(crate) fn lower_and_emit(
             // A fake with no test of its own can drift from the adapter it
             // stands in for while every test using it stays green.
             if let Some(unit) =
-                repository::lower_fake_repository_test(model, owner, entity, observed.templates)?
+                repository::lower_fake_repository_test(model, owner, entity, templates)?
             {
                 output
                     .insert(unit.path, unit.file)
@@ -177,7 +177,7 @@ pub(crate) fn lower_and_emit(
     // port, the same way the in-memory one does when nothing declares `fake`.
     if let Some(owner) = declared
         .map(|capability| capability.id.as_str())
-        .or_else(|| observed.jdbc.then_some("cap_scaffold_default"))
+        .or_else(|| jdbc.then_some("cap_scaffold_default"))
     {
         for entity in model
             .entities

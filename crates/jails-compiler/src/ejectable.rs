@@ -27,29 +27,17 @@ pub fn implementation_paths(
 ) -> Result<Vec<ProjectPath>, CompileError> {
     let root = ProjectPath::parse(MANAGED_ROOT).map_err(CompileError::new)?;
     let mut generated = RenderedTree::new(root);
-    let compose_path = ProjectPath::parse("compose.yaml").map_err(CompileError::new)?;
-    emit::emit(
-        model,
-        &mut generated,
-        &emit::Observed {
-            spring_boot,
-            // Which files an ejection moves is a question about paths, and a
-            // reader's template cannot move one -- the placeholder set is the
-            // contract and a path is not in it.
-            templates: &jails_contracts::TemplateOverrides::default(),
-            compose_path: &compose_path,
-            maven_wrapper,
-            // This renders only to work out which files an ejection would
-            // move, and both adapters are ejectable whichever one is the bean.
-            jdbc: model
-                .capabilities
-                .values()
-                .any(|capability| capability.kind == "db"),
-            // A `package-info.java` is not ejectable, so its presence cannot
-            // change which files an ejection moves.
-            jspecify: false,
-        },
-    )?;
+    // A detached snapshot carrying the two facts the emitters branch on.
+    // Which files an ejection moves is a question about paths, and a reader's
+    // template cannot move one -- the placeholder set is the contract and a
+    // path is not in it -- so the overrides stay empty; a `package-info.java`
+    // is not ejectable, so JSpecify's absence changes nothing; and both
+    // repository adapters are ejectable whichever one is the bean, so the
+    // dependency set can stay empty too.
+    let mut snapshot = jails_contracts::WorkspaceSnapshot::detached(model.clone());
+    snapshot.project.spring_boot = spring_boot.map(str::to_string);
+    snapshot.project.maven_wrapper = maven_wrapper;
+    emit::emit(model, &mut generated, &snapshot)?;
     Ok(generated
         .files
         .into_iter()

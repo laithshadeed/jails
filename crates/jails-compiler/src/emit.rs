@@ -1,56 +1,14 @@
-//! What the emitters need from the workspace, and the order they run in.
+//! The order the emitters run in, and the facts they read off the snapshot.
 //!
 //! `Compiler::compile` decides *what* the desired state is; this decides who
-//! renders it and what each renderer is told about a workspace it may not
-//! look at itself. Keeping them apart is what makes the next observed fact
-//! cheap: it is a field on [`Observed`] rather than another parameter
-//! threaded through four signatures.
+//! renders it. Every external fact an emitter needs is a field of
+//! [`WorkspaceSnapshot`] -- `snapshot.project` for the build's facts,
+//! `snapshot.template_overrides` for the reader's templates -- read directly,
+//! so a renderer that needs one more fact asks capture for it rather than
+//! widening a second copy kept here.
 
 use crate::{CompileError, emit_capability, emit_component, emit_http, emit_java, emit_operation};
-use jails_contracts::{FileKind, ProjectPath, RenderedTree, WorkspaceSnapshot};
-
-/// The workspace facts emission needs and a pure compiler may not observe.
-///
-/// A value rather than three more parameters: every one of these is captured
-/// once and consumed together, and threading them individually is how a
-/// signature reaches eight arguments one honest addition at a time.
-pub(crate) struct Observed<'a> {
-    /// The Boot version the project declares, if it is a Spring project.
-    pub spring_boot: Option<&'a str>,
-    /// Reader-authored replacements for jails' own Java templates.
-    ///
-    /// Captured rather than read here: the file that says "this class shaped
-    /// differently" lives in the project, which the compiler may not look at.
-    /// Every emitter resolves its template through this, so a kind that does
-    /// not would silently ignore an override the reader can see `doctor`
-    /// reporting.
-    pub templates: &'a jails_contracts::TemplateOverrides,
-    /// Where this project keeps its compose file.
-    pub compose_path: &'a ProjectPath,
-    /// Whether the project ships `mvnw`, so generated CI and container builds
-    /// invoke the build the way the project actually offers it.
-    pub maven_wrapper: bool,
-    /// Whether JSpecify is on this project's classpath.
-    ///
-    /// **A package annotated `@NullMarked` that cannot resolve the annotation
-    /// is a compile error in a file the reader did not ask for**, so the
-    /// `package-info.java` beside every generated package is conditional on
-    /// the artifact actually being a dependency. It is worth writing when it
-    /// is: without a package-level opt-in JSpecify reads the package as
-    /// "unspecified nullness" and a nullness checker has nothing to check --
-    /// package level is the only level JSpecify offers.
-    pub jspecify: bool,
-    /// Whether Spring's JDBC is on this project's classpath.
-    ///
-    /// **A model can say `storage none` over a project that has a database.**
-    /// The repository port always gets exactly one bean, and which adapter it
-    /// is depends on whether `JdbcClient` -- from `spring-jdbc`, which the JDBC
-    /// and data-JDBC starters both bring -- can be resolved at all. Reading it
-    /// off the declared `db` capability alone gives a Gradle project carrying
-    /// `spring-boot-starter-data-jdbc` an in-memory bean beside a query adapter
-    /// talking to its real database.
-    pub jdbc: bool,
-}
+use jails_contracts::{FileKind, ProjectFacts, ProjectPath, RenderedTree, WorkspaceSnapshot};
 
 /// Whether `JdbcClient` can be resolved in this project.
 ///
@@ -58,7 +16,14 @@ pub(crate) struct Observed<'a> {
 /// the JDBC starter, the data-JDBC starter, and the JPA starter above them.
 /// Named rather than matched on `jdbc` appearing anywhere in a coordinate, so
 /// a project's own `com.example:jdbc-utils` is not read as Spring's.
-pub(crate) fn jdbc_on_classpath(snapshot: &WorkspaceSnapshot) -> bool {
+///
+/// **A model can say `storage none` over a project that has a database.**
+/// The repository port always gets exactly one bean, and which adapter it is
+/// depends on whether `JdbcClient` can be resolved at all. Reading it off the
+/// declared `db` capability alone gives a Gradle project carrying
+/// `spring-boot-starter-data-jdbc` an in-memory bean beside a query adapter
+/// talking to its real database.
+pub(crate) fn jdbc_on_classpath(project: &ProjectFacts) -> bool {
     const PROVIDERS: [&str; 4] = [
         "org.springframework:spring-jdbc",
         "org.springframework.boot:spring-boot-starter-jdbc",
@@ -67,24 +32,38 @@ pub(crate) fn jdbc_on_classpath(snapshot: &WorkspaceSnapshot) -> bool {
     ];
     PROVIDERS
         .iter()
-        .any(|provider| snapshot.project.dependencies.contains(*provider))
+        .any(|provider| project.dependencies.contains(*provider))
+}
+
+/// Whether JSpecify is on this project's classpath.
+///
+/// **A package annotated `@NullMarked` that cannot resolve the annotation is
+/// a compile error in a file the reader did not ask for**, so the
+/// `package-info.java` beside every generated package is conditional on the
+/// artifact actually being a dependency. It is worth writing when it is:
+/// without a package-level opt-in JSpecify reads the package as "unspecified
+/// nullness" and a nullness checker has nothing to check -- package level is
+/// the only level JSpecify offers.
+pub(crate) fn jspecify_on_classpath(project: &ProjectFacts) -> bool {
+    project.dependencies.contains("org.jspecify:jspecify")
 }
 
 pub(crate) fn emit(
     model: &jails_model::AppModel,
     output: &mut RenderedTree,
-    observed: &Observed<'_>,
+    snapshot: &WorkspaceSnapshot,
 ) -> Result<(), CompileError> {
-    emit_capability::lower_and_emit(model, output, observed)?;
-    emit_java::lower_and_emit(model, output, observed)?;
+    let templates = &snapshot.template_overrides;
+    emit_capability::lower_and_emit(model, output, snapshot)?;
+    emit_java::lower_and_emit(model, output, snapshot)?;
     emit_operation::lower_and_emit(model, output)?;
     crate::emit_relation::lower_and_emit(model, output)?;
-    crate::emit_messaging::lower_and_emit(model, output, observed)?;
-    emit_operation::outbox::lower_and_emit(model, output, observed)?;
-    emit_component::lower_and_emit(model, output, observed)?;
-    emit_http::lower_and_emit(model, output, observed.spring_boot)?;
-    crate::emit_architecture::lower(model, output, observed.templates)?;
-    package_infos(output, observed.jspecify)?;
+    crate::emit_messaging::lower_and_emit(model, output, templates)?;
+    emit_operation::outbox::lower_and_emit(model, output, templates)?;
+    emit_component::lower_and_emit(model, output, templates)?;
+    emit_http::lower_and_emit(model, output, snapshot.project.spring_boot.as_deref())?;
+    crate::emit_architecture::lower(model, output, templates)?;
+    package_infos(output, jspecify_on_classpath(&snapshot.project))?;
     tidy_java(output);
     Ok(())
 }
