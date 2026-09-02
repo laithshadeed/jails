@@ -140,6 +140,33 @@ Do not re-propose these:
   reproducible under the dev profile, and a byte-exact tree comparison buys
   nothing because what a run costs is the JVM, not javac.
 
+## The developer machine, measured 2026-09-02
+
+The same suite on 16 cores and 30 GB, through `scripts/bounded.sh` (12-core
+quota, 15 GB cap, no swap): **134 s for the whole gate**, test span 104 s,
+950 s of subprocess work at mean concurrency 9.1, 320 s queued for a JVM
+permit, memory pressure about 1 %. Before the day's changes the same tree
+took 205 s unbounded and, run beside four `cargo` builds, took the machine
+into swap. What moved it, in order of size:
+
+- **The critical path was one test.** The shared plain toolbox ran sixteen
+  `jails` commands in sequence and each ran `mvn spotless:apply` -- the
+  `format` capability's follow-up effect -- so the test spent 162 of 165 s in
+  JVMs the product started. The product now formats once per manifest replay
+  and never after a no-op execution, and the toolbox is one manifest: 19 s.
+- **Libtest's alphabetical order.** With one thread per core the long tests
+  under `model::` started at 115 s and set the tail; `RUST_TEST_THREADS` at
+  twice the quota starts every one of them early and lets the permit pool,
+  not the alphabet, decide.
+- **The pools size themselves from the cgroup**, not the machine, so the
+  kernel's answer and the harness's cannot disagree.
+
+What is left on this machine is the poles: three proof apps at ~95 s each
+(`app apply`, `docker build`, `mvn test`, `failsafe`), the minicom `jails
+check` at ~80 s, and the runner lifecycle test's five sequential Spring
+boots at ~80 s. Each is real work in one JVM chain; splitting a chain across
+tests needs a shared, locked fixture (P13.10 first).
+
 ## What is left, if five minutes is still the target
 
 - **A larger runner.** The only lever that reaches 300s; it buys time rather

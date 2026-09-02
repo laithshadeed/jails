@@ -508,6 +508,20 @@ yourself before pushing anyway.
 **`--workspace` is not optional**: `cargo test` at the workspace root tests
 the root package only and says nothing about the rest.
 
+**The gate runs inside a cgroup, and so must anything as heavy.**
+`scripts/bounded.sh` puts a command in a transient user scope -- half the
+memory, three quarters of the cores, no swap, `MemoryHigh` one JVM below the
+cap so the kernel throttles before it kills -- and both `mise` tasks go
+through it. The harness reads the scope back: `cpu.max` sizes the spawn
+budget and the JVM permits, `memory.max` bounds the permits at 700 MB a JVM,
+and the toolchain pool waits for a JVM's worth of headroom before taking a
+slot. One unbounded run of the real-toolchain tier beside a few `cargo`
+builds took a 30 GB machine into swap and down; never run the tier bare, and
+run one heavy thing at a time (`JAILS_GATE_MEMORY_MB` and `JAILS_GATE_CPU`
+shrink a second one). Measured on 16 cores after this: the whole gate in
+134 s, test span 104 s, mean subprocess concurrency 9.1 of the 12-core
+quota, memory pressure about 1 %.
+
 **`JAILS_TOOLCHAIN` is the one switch between the two commands.** Plain
 `cargo test --workspace` is Rust only -- no JVM, no container, no build tool.
 `JAILS_TOOLCHAIN=1` switches the real-toolchain tier on and turns anything it
@@ -606,7 +620,14 @@ The rules, each measured rather than guessed:
   subprocess work removed buys one second of wall, and ordering, thread counts
   and permit budgets are worth nothing.
 - **Where the time goes is a JVM booting a Spring context**, not Maven's
-  startup, not containers, not the product binary (median invocation ~70 ms).
+  startup, not containers, not the product binary (median invocation ~70 ms)
+  -- *unless the product spawns one*. The plain toolbox spent 162 of its
+  165 s in `mvn spotless:apply`, one per mutation, because the `format`
+  capability's follow-up effect ran after every row of a manifest replay;
+  it runs once per replay now and never after an execution that wrote
+  nothing, and the toolbox is one manifest (`tests/fixtures/plain-toolbox.app.toml`).
+  The way to find the next one is `JAILS_TEST_PROFILE=1` with the per-fixture
+  timeline: a `jails` invocation measured in seconds is a JVM it started.
   `docs/40-gates-and-ci.md` records the levers already measured and declined
   -- mvnd under concurrency, `-DforkCount=0`, class-data sharing, lazy
   initialization, JUnit class-level parallelism, batching Maven runs -- so they
