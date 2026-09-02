@@ -35,7 +35,6 @@ has not been done.
 | `docs/51-kernel.md` .. `docs/54-language.md` | the plans of that pass still open (`55`, the compiler's, closed and is gone) | one agent each |
 | `docs/60-abstraction.md` | the target shape the five plans converge on: five nouns, four verbs | everyone, during the pass |
 | `docs/70-interface.md` | the interface research: what a reader sees, types and waits for, measured on the binary, with the items that follow | whoever changes the CLI, the JDL the tool writes, or a report |
-| `docs/71-interface-deep.md` | the second walk: where a mutation spends its time, the wider surfaces, and the ideas that would change what the tool is to a reader | the same readers, after `70` |
 
 The split exists so several agents can work at once without reading each
 other's context or editing each other's files. Everything genuinely shared is
