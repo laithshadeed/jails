@@ -78,10 +78,21 @@ pub(crate) fn run(invocation: Invocation) -> Result<()> {
                 .to_string(),
         ));
     }
+    // **The versions this moves decide what jails' own output says** -- the
+    // `@AutoConfigureMockMvc` package, `javax` against `jakarta`, the MockMvc
+    // form -- so a modelled project is recompiled beside the edit, the way
+    // `jails sync` does, rather than left with generated files shaped by the
+    // Boot it no longer declares.
+    let modelled = crate::model_command::owns(root);
     if invocation.pretend {
         println!(
-            "--pretend: nothing was written. ({} file(s) would change)",
-            upgrade.edits.len()
+            "--pretend: nothing was written. ({} file(s) would change{})",
+            upgrade.edits.len(),
+            if modelled {
+                ", then the model would be recompiled against them"
+            } else {
+                ""
+            }
         );
         return Ok(());
     }
@@ -89,5 +100,9 @@ pub(crate) fn run(invocation: Invocation) -> Result<()> {
         jails_support::apply::put_one_shot(&step.artifact.path, step.artifact.contents.clone())?;
     }
     println!("modernized {} file(s)", upgrade.edits.len());
+    if modelled {
+        println!("recompiling the model against the versions it now declares");
+        crate::model_command::sync(true, invocation)?;
+    }
     Ok(())
 }

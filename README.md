@@ -1680,6 +1680,13 @@ produce something that still does not compile while looking migrated. Same for
 
 Run `jails modernize --pretend` first.
 
+On a project that has a model, `modernize` recompiles it afterwards, the way
+`jails sync` does: the Boot version it moves decides what jails' own files
+say — which `MockMvc` dialect a controller test drives, which package
+`@AutoConfigureMockMvc` comes from, `javax` against `jakarta` — so the
+generated tree follows the build file in the same command. `--pretend` says
+so without writing either.
+
 ## Shaping the generated code
 
 Drop a file at `.jails/templates/<name>` to replace the built-in template of

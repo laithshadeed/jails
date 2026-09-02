@@ -44,19 +44,15 @@ mise run verify-rewrite
 
 ## P8.11a — the adoption half of P8.11
 
-- **`jails adopt resource <Name>`** registers an existing hand-written type
-  into the model so `resource field`, `destroy` and `rename resource` work on
-  it. Today they refuse: *"no `Message` is recorded in this project"*.
-- **`modernize` does not re-plan jails' own output.** It moves the Boot
-  version, and the Boot version decides what jails' generated files should say
-  -- `javax.validation` against `jakarta.validation`, the `@AutoConfigureMockMvc`
-  package, the MockMvc form. It should recompile the model afterwards.
-
-Both write reader-owned files on projects with no model, `apply::` is banned
-outside the write layer, and `execute` takes a `PlanBundle` whose `Plan`
-carries a `PlanInput`. So either the layout and release become model
-nodes, or `jails-workspace` gains an explicit reader-file operation no compiler
-produced. Forging a `Plan` outside the compiler is not on the list.
+**`jails adopt resource <Name>`** registers an existing hand-written type
+into the model so `resource field`, `destroy` and `rename resource` work on
+it. Today they refuse: *"no `Message` is recorded in this project"*. It
+writes a declaration plus the `eject` lines that say the reader owns the
+implementation, so it needs the readable boundary path (`Message.record`,
+`Message.repo.fake`) to link -- A3.15's registry, which is the compiler's
+and the linker's -- before it can be written. The `modernize` half closed:
+on a modelled project it recompiles the model against the versions it moved,
+the way `jails sync` does.
 
 ## Product direction that is yours
 

@@ -1565,6 +1565,83 @@ fn maven_json_is_one_report_and_timeout_is_bounded_without_tool_noise() {
 /// bumped without the toolchain block fails evaluation, and a toolchain bumped
 /// without the wrapper fails on an unsupported class file version. A run that
 /// stopped halfway would leave a build broken in a way neither half explains.
+/// `modernize` on a modelled project recompiles the model, because the Boot
+/// version it moves decides what jails' generated files say: below Boot 4
+/// the controller test drives the classic `MockMvcBuilders`/`perform`
+/// dialect, at or above it `MockMvcTester` (`emit_mockmvc` is the one place
+/// that decides), and a project left on the old dialect after the parent
+/// moved is a project whose generated tests no longer match its Boot.
+#[test]
+fn modernize_recompiles_a_modelled_project_against_the_versions_it_moved() {
+    let root = temp_dir("modernize-modelled");
+    write_spring_fixture(&root);
+    let pom = root.join("pom.xml");
+    let boot_3 = fs::read_to_string(&pom)
+        .unwrap()
+        .replace("<version>4.1.0</version>", "<version>3.5.5</version>");
+    assert!(
+        boot_3.contains("3.5.5"),
+        "the fixture's parent version moved"
+    );
+    fs::write(&pom, boot_3).unwrap();
+
+    let scaffold = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Ticket", "id:long@pk", "subject:string!"])
+        .output()
+        .unwrap();
+    assert!(
+        scaffold.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&scaffold.stdout),
+        String::from_utf8_lossy(&scaffold.stderr)
+    );
+    let dialect = |root: &Path| -> (bool, bool) {
+        let test = snapshot_tree(root)
+            .into_iter()
+            .find(|(path, _)| path.ends_with("TicketControllerTest.java"))
+            .map(|(_, bytes)| String::from_utf8_lossy(&bytes).into_owned())
+            .expect("the scaffold's controller test");
+        (
+            test.contains("MockMvcBuilders"),
+            test.contains("MockMvcTester"),
+        )
+    };
+    assert_eq!(
+        dialect(&root),
+        (true, false),
+        "on Boot 3 the controller test drives the classic dialect"
+    );
+
+    let preview = jails_cmd(&root, None)
+        .args(["modernize", "--pretend"])
+        .output()
+        .unwrap();
+    let preview = String::from_utf8_lossy(&preview.stdout).to_string();
+    assert!(
+        preview.contains("then the model would be recompiled"),
+        "{preview}"
+    );
+    assert_eq!(dialect(&root), (true, false), "--pretend recompiled");
+
+    let output = jails_cmd(&root, None).arg("modernize").output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "{stdout}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(stdout.contains("recompiling the model"), "{stdout}");
+    assert!(
+        fs::read_to_string(&pom).unwrap().contains("<version>4."),
+        "modernize moved the parent"
+    );
+    assert_eq!(
+        dialect(&root),
+        (false, true),
+        "after modernize the controller test drives MockMvcTester"
+    );
+}
+
 #[test]
 fn modernize_takes_a_boot_2_gradle_project_to_the_versions_jails_generates_against() {
     let root = temp_dir("modernize");
