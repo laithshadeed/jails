@@ -1081,3 +1081,84 @@ names the project.
 The Kafka tools against a broker, `jails db` and `jails console` (both
 interactive), `bench`, `test --affected` on a tree with real changes, and
 Neovim.
+
+## 17. The corners of consent, names and concurrency
+
+A fourth batch, run after the third walk on the same fixtures.
+
+- **`--output json` deletes without asking.** `jails --output json destroy
+  scaffold Task` printed `"files_deleted": 14` and deleted them; the human
+  path asks `Delete them? [y/N]` and refuses when nothing answers. The
+  prompt lives in `model_generate/report.rs` and only the human report
+  reaches it, so an editor or an agent speaking JSON has consent it never
+  gave.
+- **One scaffold is a 42,000-line diff.** In a committed project the second
+  `g scaffold` changes `compiler.lock.json` by +27,859/−14,230 lines
+  (`git diff --numstat`) beside 7 lines of `model.jdl` and 14 new files.
+  That is the diff a reviewer scrolls past on every pull request, and it is
+  I70.22's number in the unit reviewers feel.
+- **Two refusals for a bad name.** `g record Café a:int` says *`é` is not
+  valid in a Java identifier, and `Café` becomes one; fix: name it with
+  letters, digits and `_`*; `g record 2Fast a:int` says `[model-label]
+  $.entities.2_fast: `2_fast` is not a model label`, with no fix and a name
+  the reader never typed.
+- **Two commands at once.** A `g record` started 5 ms after a `g scaffold`
+  refused with *stale exact plan: `.jails/compiler.lock.json` no longer
+  matches its captured precondition -- its bytes changed after the plan*.
+  Correct, nothing was lost, and the sentence never says another jails was
+  running or that rerunning is the fix.
+- **A property collision is refused well.** `set
+  management.endpoints.web.exposure.include=beans` then `add actuator`:
+  *conflicts with model value `beans`; fix: remove the duplicate setting or
+  give it the capability-required value `health,info,prometheus,threaddump`;
+  nothing was written*. So is **removal over a hand edit**: `remove json`
+  after appending to `Json.java` refuses with *edited by you but removed by
+  the generator; fix: move the custom code to reader source, keep the model
+  component, or repeat with `--force` to discard the edits*. Both name the
+  fact, the fix and that nothing happened; they are the shape every refusal
+  should have.
+- **A relation is two commands and one word.** `g scaffold Comment
+  id:uuid@pk noteId:uuid body:string!` then `g association CommentNote
+  noteId=id --on Comment --yields Note` writes `relation commentNote to
+  Note { map noteId -> id }` in 2 files. The CLI says `--yields` for what
+  the language says `to`. A field typed by an entity (`g record Line
+  note:Note`) is the other way to relate and embeds the record instead;
+  nothing tells a reader which one they want.
+- **Ejection survives a model change.** After `model eject
+  art_ent_note_repository_memory`, `resource field add Note extra:string`
+  and `mvn test-compile` pass in 3 s; the ejected adapter is generic enough
+  not to care. `destroy scaffold Note` afterwards refuses with *semantic
+  target `ent_note` is reader-owned; fix: remove or migrate its ejection
+  declaration*.
+- **No colour anywhere**: no escape sequence, no `NO_COLOR`, in `src/` or
+  `crates/`. Every report is plain text, which is consistent and also why
+  a 23-line file list and a two-line refusal look the same at a glance.
+
+**I71.35 -- consent is one word and JSON has no shortcut.** A deletion
+without `--yes` (I70.19) refuses under every output encoding, with the
+refusal in the JSON envelope. **Exit:** `jails --output json destroy
+scaffold X` without `--yes` deletes nothing and returns `status:
+refused`.
+
+**I71.36 -- one identifier check, before the model.** The `Café` message
+is the one; `2Fast` gets it too, and the linker never sees a name the
+CLI could have refused. **Exit:** both names refuse with the same
+sentence.
+
+**I71.37 -- a concurrent run is named.** When the lock's bytes moved
+between plan and apply, the refusal says *another jails run changed this
+project while this one was planning; run the command again* and exits;
+the preconditions already guarantee nothing was written. **Exit:** the
+§17 race prints that line.
+
+**I71.38 -- `to`, not `--yields`, for a relation's parent.** The CLI word
+follows the language's: `g association CommentNote noteId=id --on Comment
+--to Note`, with `--yields` kept as a hidden alias for one release, and
+`explain association` says when a typed field is the better relation.
+**Exit:** `jails g association --help` shows `--to`.
+
+**I71.39 -- the refusal shape is the rule.** Fact, fix, *nothing was
+written*: the two good refusals above are the template every other
+`fix:` line is measured against by I70.5's gate. **Exit:** the audit in
+§14 finds no `fix:` line without a command, a file or an imperative
+sentence.
