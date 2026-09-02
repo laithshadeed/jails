@@ -113,6 +113,18 @@ jobs:
             ~/.gradle/caches/modules-2
           key: jvm-deps-${{ runner.os }}-v2
 
+      # The proof cache: every real-toolchain Maven run the last green runs
+      # proved, keyed on the project's bytes (`tests/support/mvn.rs`). Unlike
+      # the repositories above it changes on every run, so it is keyed by
+      # commit and restored from the newest one; the save is unconditional
+      # because only green runs are ever recorded into it.
+      - name: Restore the proof cache
+        uses: actions/cache/restore@v4
+        with:
+          path: target/jails-proof-cache
+          key: proof-cache-${{ runner.os }}-${{ github.sha }}
+          restore-keys: proof-cache-${{ runner.os }}-
+
       # Reads `mise.toml`, so CI runs the versions the repository pins.
       - name: Install the pinned toolchain
         uses: jdx/mise-action@v2
@@ -157,7 +169,7 @@ jobs:
         if: always()
         run: |
           rm -rf target/jails-e2e-cache target/jails-test-logs target/jails-test-permits \
-            target/jails-test-profile
+            target/jails-test-profile target/jails-proof-cache
           python3 - <<'DEPS'
           import collections
           from pathlib import Path
@@ -223,6 +235,13 @@ jobs:
             ~/.cargo/git
             target
           key: cargo-${{ runner.os }}-${{ steps.rust.outputs.version }}-${{ hashFiles('Cargo.lock') }}-${{ hashFiles('src/**', 'crates/**', 'tests/**', 'templates/**', '**/Cargo.toml') }}
+
+      - name: Save the proof cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: target/jails-proof-cache
+          key: proof-cache-${{ runner.os }}-${{ github.sha }}
 
       # Only after the gate has passed, and only when there was nothing to
       # restore -- see the restore step for why both conditions are load-bearing.

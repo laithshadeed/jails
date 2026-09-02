@@ -1,6 +1,7 @@
 //! Portable contracts and transparent developer tools through the real CLI.
 
 use super::*;
+use std::sync::OnceLock;
 
 /// A project with one route.
 ///
@@ -301,83 +302,126 @@ fn runner_treats_a_jshell_snippet_failure_as_a_failed_command() {
     );
 }
 
-#[test]
-fn real_console_and_runner_observe_predestroy_and_reject_session_failures() {
+/// Whether the machine can boot the runner fixture at all; `None` is the
+/// reason it cannot, for `skip`.
+fn runner_fixture_unavailable() -> Option<String> {
     if !real_mvn_available() {
-        skip("mvn not found on PATH");
-        return;
+        return Some("mvn not found on PATH".into());
     }
     if !real_java_supports_target_release() {
-        skip(&format!(
+        return Some(format!(
             "javac on PATH does not support --release {TARGET_RELEASE}"
         ));
-        return;
     }
     if !std::process::Command::new("jshell")
         .arg("--version")
         .status()
         .is_ok_and(|status| status.success())
     {
-        skip("jshell not found on PATH");
+        return Some("jshell not found on PATH".into());
+    }
+    None
+}
+
+/// One Spring project with a `@PreDestroy` probe, compiled once by the first
+/// runner boot, and every later boot is a copy of it.
+///
+/// **Five boots in one test were the suite's longest chain** (57 s, each a
+/// Spring context started and stopped in turn), and none of the five depends
+/// on another: the good script proves the compile and the shutdown hook, the
+/// console proves EOF, and the three failing scripts each prove one refusal.
+/// Split across tests they run at once, and each gets its own copy because
+/// the probe writes `lifecycle.marker` into the working directory.
+fn runner_fixture() -> &'static PathBuf {
+    static FIXTURE: OnceLock<PathBuf> = OnceLock::new();
+    FIXTURE.get_or_init(|| {
+        let root = temp_dir("spring-runner-lifecycle");
+        fs::write(
+            root.join("pom.xml"),
+            format!(
+                "<project xmlns=\"http://maven.apache.org/POM/4.0.0\">\n  <modelVersion>4.0.0</modelVersion>\n  <parent><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-parent</artifactId><version>4.1.0</version></parent>\n  <groupId>com.example</groupId><artifactId>runner-lifecycle</artifactId><version>0.0.1-SNAPSHOT</version>\n  <properties><java.version>{TARGET_RELEASE}</java.version></properties>\n  <dependencies>\n    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter</artifactId></dependency>\n    <dependency><groupId>org.springframework</groupId><artifactId>spring-tx</artifactId></dependency>\n  </dependencies>\n</project>\n"
+            ),
+        )
+        .unwrap();
+        let source = common::generated(&root, "src/main/java/com/example/demo");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(
+            source.join("DemoApplication.java"),
+            "package com.example.demo;\nimport org.springframework.boot.autoconfigure.SpringBootApplication;\n@SpringBootApplication public class DemoApplication {}\n",
+        )
+        .unwrap();
+        fs::write(
+            source.join("LifecycleProbe.java"),
+            "package com.example.demo;\nimport jakarta.annotation.PreDestroy;\nimport java.nio.file.Files;\nimport java.nio.file.Path;\nimport org.springframework.stereotype.Component;\n@Component public class LifecycleProbe { @PreDestroy void close() throws Exception { Files.writeString(Path.of(\"lifecycle.marker\"), \"closed\"); } }\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("scripts")).unwrap();
+        fs::write(root.join("scripts/good.jsh"), "beans().count();\n").unwrap();
+        fs::write(root.join("scripts/compile-error.jsh"), "int broken = ;\n").unwrap();
+        fs::write(
+            root.join("scripts/runtime-error.jsh"),
+            "throw new IllegalStateException(\"runner probe\");\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("scripts/cleanup-error.jsh"),
+            "((org.springframework.beans.factory.support.DefaultListableBeanFactory) ctx.getBeanFactory()).destroySingleton(\"jailsShutdownProbe\");\nJailsShutdownProbe.clean.set(false);\n",
+        )
+        .unwrap();
+        let path = real_path_without_mvnd();
+        let good = jails_cmd_with_path(&root, &path)
+            .args([
+                "runner",
+                "--file",
+                "scripts/good.jsh",
+                "--profile",
+                "test",
+                "--compile",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            good.status.success(),
+            "{}",
+            String::from_utf8_lossy(&good.stderr)
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("lifecycle.marker")).unwrap(),
+            "closed",
+            "the good runner script did not run @PreDestroy"
+        );
+        fs::remove_file(root.join("lifecycle.marker")).unwrap();
+        root
+    })
+}
+
+/// A private, already-compiled copy of the runner fixture.
+fn runner_copy(label: &str) -> PathBuf {
+    let root = temp_dir(label);
+    copy_dir_all(runner_fixture(), &root);
+    root
+}
+
+#[test]
+fn real_runner_runs_a_good_script_and_observes_predestroy() {
+    if let Some(reason) = runner_fixture_unavailable() {
+        skip(&reason);
         return;
     }
+    // Building the fixture is the proof: the good script boots, runs, and
+    // the shutdown hook writes the marker the builder asserted on.
+    assert!(runner_fixture().join("target/classes").is_dir());
+}
 
-    let root = temp_dir("spring-runner-lifecycle");
-    fs::write(
-        root.join("pom.xml"),
-        format!(
-            "<project xmlns=\"http://maven.apache.org/POM/4.0.0\">\n  <modelVersion>4.0.0</modelVersion>\n  <parent><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-parent</artifactId><version>4.1.0</version></parent>\n  <groupId>com.example</groupId><artifactId>runner-lifecycle</artifactId><version>0.0.1-SNAPSHOT</version>\n  <properties><java.version>{TARGET_RELEASE}</java.version></properties>\n  <dependencies>\n    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter</artifactId></dependency>\n    <dependency><groupId>org.springframework</groupId><artifactId>spring-tx</artifactId></dependency>\n  </dependencies>\n</project>\n"
-        ),
-    )
-    .unwrap();
-    let source = common::generated(&root, "src/main/java/com/example/demo");
-    fs::create_dir_all(&source).unwrap();
-    fs::write(
-        source.join("DemoApplication.java"),
-        "package com.example.demo;\nimport org.springframework.boot.autoconfigure.SpringBootApplication;\n@SpringBootApplication public class DemoApplication {}\n",
-    )
-    .unwrap();
-    fs::write(
-        source.join("LifecycleProbe.java"),
-        "package com.example.demo;\nimport jakarta.annotation.PreDestroy;\nimport java.nio.file.Files;\nimport java.nio.file.Path;\nimport org.springframework.stereotype.Component;\n@Component public class LifecycleProbe { @PreDestroy void close() throws Exception { Files.writeString(Path.of(\"lifecycle.marker\"), \"closed\"); } }\n",
-    )
-    .unwrap();
-    fs::create_dir_all(root.join("scripts")).unwrap();
-    fs::write(root.join("scripts/good.jsh"), "beans().count();\n").unwrap();
-    fs::write(root.join("scripts/compile-error.jsh"), "int broken = ;\n").unwrap();
-    fs::write(
-        root.join("scripts/runtime-error.jsh"),
-        "throw new IllegalStateException(\"runner probe\");\n",
-    )
-    .unwrap();
-    fs::write(
-        root.join("scripts/cleanup-error.jsh"),
-        "((org.springframework.beans.factory.support.DefaultListableBeanFactory) ctx.getBeanFactory()).destroySingleton(\"jailsShutdownProbe\");\nJailsShutdownProbe.clean.set(false);\n",
-    )
-    .unwrap();
+#[test]
+fn real_console_eof_observes_predestroy() {
+    if let Some(reason) = runner_fixture_unavailable() {
+        skip(&reason);
+        return;
+    }
+    let root = runner_copy("spring-runner-console");
     let lifecycle = root.join("lifecycle.marker");
-    let path = real_path_without_mvnd();
-
-    let good = jails_cmd_with_path(&root, &path)
-        .args([
-            "runner",
-            "--file",
-            "scripts/good.jsh",
-            "--profile",
-            "test",
-            "--compile",
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        good.status.success(),
-        "{}",
-        String::from_utf8_lossy(&good.stderr)
-    );
-    assert_eq!(fs::read_to_string(&lifecycle).unwrap(), "closed");
-
-    fs::remove_file(&lifecycle).unwrap();
-    let console = jails_cmd_with_path(&root, &path)
+    let console = jails_cmd_with_path(&root, &real_path_without_mvnd())
         .args(["console", "--profile", "test"])
         .output()
         .unwrap();
@@ -393,24 +437,40 @@ fn real_console_and_runner_observe_predestroy_and_reject_session_failures() {
         String::from_utf8_lossy(&console.stderr)
     );
     assert_eq!(fs::read_to_string(&lifecycle).unwrap(), "closed");
+}
 
-    for script in [
-        "scripts/compile-error.jsh",
-        "scripts/runtime-error.jsh",
-        "scripts/cleanup-error.jsh",
-    ] {
-        let failed = jails_cmd_with_path(&root, &path)
-            .args(["runner", "--file", script, "--profile", "test"])
-            .output()
-            .unwrap();
-        assert!(!failed.status.success(), "{script} exited successfully");
-        assert!(
-            String::from_utf8_lossy(&failed.stderr)
-                .contains("runner snippet or Spring context cleanup failed"),
-            "{}",
-            String::from_utf8_lossy(&failed.stderr)
-        );
+fn assert_runner_rejects(label: &str, script: &str) {
+    if let Some(reason) = runner_fixture_unavailable() {
+        skip(&reason);
+        return;
     }
+    let root = runner_copy(label);
+    let failed = jails_cmd_with_path(&root, &real_path_without_mvnd())
+        .args(["runner", "--file", script, "--profile", "test"])
+        .output()
+        .unwrap();
+    assert!(!failed.status.success(), "{script} exited successfully");
+    assert!(
+        String::from_utf8_lossy(&failed.stderr)
+            .contains("runner snippet or Spring context cleanup failed"),
+        "{}",
+        String::from_utf8_lossy(&failed.stderr)
+    );
+}
+
+#[test]
+fn real_runner_rejects_a_script_that_does_not_compile() {
+    assert_runner_rejects("spring-runner-compile-error", "scripts/compile-error.jsh");
+}
+
+#[test]
+fn real_runner_rejects_a_script_that_throws() {
+    assert_runner_rejects("spring-runner-runtime-error", "scripts/runtime-error.jsh");
+}
+
+#[test]
+fn real_runner_rejects_a_session_whose_cleanup_fails() {
+    assert_runner_rejects("spring-runner-cleanup-error", "scripts/cleanup-error.jsh");
 }
 
 #[test]

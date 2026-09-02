@@ -33,11 +33,12 @@ run = [
 # `git merge-file` to git's own default, which every git supports, so the
 # merged bytes do not depend on the distribution underneath the gate.
 #
-# `cargo test --workspace` builds every library, the `jails` binary the
-# integration tests spawn, and every harness as one graph; a separate
-# `cargo build` would only add an ordering barrier. The binaries run one after
-# another; `tests/cli` dominates the run, so concurrency across binaries has
-# nothing to win and unbounded memory to lose.
+# `scripts/gate-test.sh` runs the twenty-odd test executables the build
+# produced at once, plus the doctests, each to its own log. Under `cargo test`
+# they run one after another, and once the real-toolchain proofs replay from
+# `target/jails-proof-cache` (`tests/support/mvn.rs`) the queue of small
+# binaries is most of what is left. The budgets a concurrent run must respect
+# are `flock`s under `target/`, so they hold across processes.
 #
 # `scripts/bounded.sh` runs the test phase in a cgroup with a memory cap and a
 # CPU quota (half the memory, three quarters of the cores by default), so the
@@ -51,7 +52,7 @@ description = "Run the single mandatory rewrite verification gate"
 run = [
   "./scripts/bounded.sh ./scripts/gate-build.sh",
   "rm -rf target/jails-test-profile",
-  "JAILS_GIT_DIFF_ALGORITHM= JAILS_TOOLCHAIN=1 ./scripts/bounded.sh cargo test --workspace; status=$?; ./scripts/subprocess-summary.sh; exit $status",
+  "JAILS_GIT_DIFF_ALGORITHM= JAILS_TOOLCHAIN=1 ./scripts/bounded.sh ./scripts/gate-test.sh; status=$?; ./scripts/subprocess-summary.sh; exit $status",
 ]
 
 [tasks.test]

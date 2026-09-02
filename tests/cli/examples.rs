@@ -246,14 +246,16 @@ fn generated_unheld_gradle_example() -> &'static PathBuf {
 
 fn assert_second_apply_is_a_noop(root: &Path) {
     // The executable project is the example's output contract; `.jails` is
-    // versioned bookkeeping with its own gates.
+    // versioned bookkeeping with its own gates, and `target/` is the build
+    // tool's, written by the verification test that shares this fixture and
+    // may be running at the same time.
     let generated_tree = || {
         snapshot_tree(root)
             .into_iter()
             .filter(|(path, _)| {
-                !path
-                    .strip_prefix(root)
-                    .is_ok_and(|relative| relative.starts_with(".jails"))
+                !path.strip_prefix(root).is_ok_and(|relative| {
+                    relative.starts_with(".jails") || relative.starts_with("target")
+                })
             })
             .collect::<Vec<_>>()
     };
@@ -268,10 +270,28 @@ fn assert_second_apply_is_a_noop(root: &Path) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(
-        generated_tree(),
-        before,
-        "second apply changed generated output"
+    let after = generated_tree();
+    let mut changed: Vec<String> = Vec::new();
+    let before_by_path: std::collections::BTreeMap<_, _> = before.iter().cloned().collect();
+    let after_by_path: std::collections::BTreeMap<_, _> = after.iter().cloned().collect();
+    for (path, bytes) in &after_by_path {
+        match before_by_path.get(path) {
+            None => changed.push(format!("created {}", path.display())),
+            Some(previous) if previous != bytes => {
+                changed.push(format!("rewrote {}", path.display()));
+            }
+            Some(_) => {}
+        }
+    }
+    for path in before_by_path.keys() {
+        if !after_by_path.contains_key(path) {
+            changed.push(format!("removed {}", path.display()));
+        }
+    }
+    assert!(
+        changed.is_empty(),
+        "second apply changed generated output:\n  {}",
+        changed.join("\n  ")
     );
 }
 

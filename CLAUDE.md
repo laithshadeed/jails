@@ -576,10 +576,10 @@ run one heavy thing at a time (`JAILS_GATE_MEMORY_MB` and `JAILS_GATE_CPU`
 shrink a second one). The compile phase is `scripts/gate-build.sh`: `fmt
 --check`, then clippy, rustdoc and the test build concurrently in three
 target directories (`target/lint`, `target/doc-check`, `target`), because
-they share no artifacts and one `target/` serialises them. Measured on 16
-cores after this: the whole gate in 116 s incremental and 146 s after a
-change to the bottom crate, test span 93-100 s, mean subprocess concurrency
-9-10 of the 12-core quota, memory pressure under 1 %.
+they share no artifacts and one `target/` serialises them. The test phase is
+`scripts/gate-test.sh`: every test executable at once, plus the doctests,
+each to its own log. Measured on 16 cores after this: the whole gate in
+53 s warm and about 150 s cold, memory pressure under 1 %.
 
 **`JAILS_TOOLCHAIN` is the one switch between the two commands.** Plain
 `cargo test --workspace` is Rust only -- no JVM, no container, no build tool.
@@ -678,6 +678,22 @@ The rules, each measured rather than guessed:
   the core count. On four cores the suite is packed, so four seconds of
   subprocess work removed buys one second of wall, and ordering, thread counts
   and permit budgets are worth nothing.
+- **A proof is memoised on the bytes it proves.** `tests/support/mvn.rs` is
+  `mvn` with a cache in front, built as the cargo example named `mvn`; the
+  harness runs it in place of Maven and hands it to the product through
+  `JAILS_MAVEN`. It keys the project tree (minus `target/` and `.jails/`
+  outside `generated`), the argv with the directory and loopback ports
+  blanked, the JVM's environment and the toolchain's identity, and replays a
+  recorded green run whole: status, output, `target/` and every file the run
+  changed. Only green runs are recorded, so a hit cannot pass a proof that
+  would fail; a changed byte is a miss and runs Maven. Warm, the 47 Maven runs
+  of a full suite cost 8 s. `target/jails-proof-cache/misses.log` names what
+  missed, an entry's `key.txt` says why, and `JAILS_PROOF_CACHE_OFF=1` runs
+  everything for real. `docs/40-gates-and-ci.md` has the whole contract.
+- **A chain of boots in one test is five tests.** The runner lifecycle test
+  started five Spring contexts in turn (57 s); they are five tests over one
+  compiled fixture, each booting a copy (`copy_dir_all`, which copies
+  `target/` last so the classes stay newer than the sources): 15 s.
 - **Where the time goes is a JVM booting a Spring context**, not Maven's
   startup, not containers, not the product binary (median invocation ~70 ms)
   -- *unless the product spawns one*. The plain toolbox spent 162 of its

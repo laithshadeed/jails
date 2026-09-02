@@ -190,6 +190,26 @@ fn claim(cache: &Path, name: &str) -> bool {
     false
 }
 
+/// `from` copied under `to`, files and directories alike, with the
+/// executable bit kept. For handing one built fixture to several tests: the
+/// copy carries `target/`, so a copy boots without compiling again.
+pub fn copy_dir_all(from: &Path, to: &Path) {
+    fs::create_dir_all(to).unwrap();
+    // `target/` last: a copy takes the time it is written, and a staleness
+    // check reads classes older than their sources as a build to repair.
+    let mut entries: Vec<_> = fs::read_dir(from).unwrap().flatten().collect();
+    entries.sort_by_key(|entry| entry.file_name() == "target");
+    for entry in entries {
+        let source = entry.path();
+        let destination = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_dir_all(&source, &destination);
+        } else {
+            fs::copy(&source, &destination).unwrap();
+        }
+    }
+}
+
 /// A persistent toolchain directory whose validity also depends on harness
 /// inputs which are compiled into this integration-test binary rather than
 /// the `jails` executable itself (for example proof-application manifests).
@@ -692,6 +712,12 @@ pub fn jails_cmd_with_path(cwd: &Path, path: &str) -> ToolchainCommand {
     cmd.env("PATH", path);
     cmd.env("MAVEN_ARGS", REAL_MAVEN_ARGS);
     cmd.env("JAVA_TOOL_OPTIONS", REAL_JAVA_TOOL_OPTIONS);
+    // The product resolves Maven through `JAILS_MAVEN`, so a JVM it starts
+    // is memoised the same way as one the harness starts.
+    if let Some(maven) = proof_cache_maven() {
+        cmd.env(jails_project::maven::MAVEN_OVERRIDE, maven);
+        with_proof_cache(&mut cmd);
+    }
     ToolchainCommand::new(cmd)
 }
 
@@ -728,12 +754,83 @@ const REAL_JAVA_TOOL_OPTIONS: &str = "-XX:+UseSerialGC -XX:TieredStopAtLevel=1";
 /// libtest retains until the test completes. Warnings and all Maven failures
 /// remain visible; only successful-framework chatter is suppressed.
 pub fn real_maven_cmd(cwd: &Path, path: &str) -> ToolchainCommand {
-    let mut cmd = Command::new("mvn");
+    let mut cmd = Command::new(proof_cache_maven().unwrap_or_else(|| PathBuf::from("mvn")));
     cmd.current_dir(cwd);
     cmd.env("PATH", path);
     cmd.env("MAVEN_ARGS", REAL_MAVEN_ARGS);
     cmd.env("JAVA_TOOL_OPTIONS", real_java_tool_options());
+    with_proof_cache(&mut cmd);
     ToolchainCommand::new(cmd)
+}
+
+/// Where a memoised Maven run is recorded and replayed from, and which
+/// `mvn` to hand the real work to. Set on every command that can start
+/// Maven, directly or through the product; a plain `mvn` on `PATH` ignores
+/// both.
+fn with_proof_cache(cmd: &mut Command) {
+    if proof_cache_maven().is_some() {
+        cmd.env("JAILS_PROOF_CACHE", proof_cache_dir());
+        cmd.env("JAILS_PROOF_CACHE_MAVEN", "mvn");
+    }
+}
+
+fn proof_cache_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/jails-proof-cache")
+}
+
+/// The memoised `mvn` (`tests/support/mvn.rs`, the cargo example named
+/// `mvn`), or `None` when it is not built or `JAILS_PROOF_CACHE_OFF` is set.
+///
+/// **A proof is a function of the project's bytes**, so a real-toolchain run
+/// over a tree already proven green under the same toolchain is replayed --
+/// status, output, `target/` and every file it changed -- instead of booting
+/// the JVM again. Only green runs are recorded, so a replay cannot pass a
+/// proof that would fail; a changed byte anywhere in the tree is a miss and
+/// runs Maven as before. `cargo test --test cli` builds no examples, so a
+/// filtered run says once that it is uncached rather than failing.
+pub fn proof_cache_maven() -> Option<PathBuf> {
+    static FOUND: OnceLock<Option<PathBuf>> = OnceLock::new();
+    FOUND
+        .get_or_init(|| {
+            if std::env::var_os("JAILS_PROOF_CACHE_OFF").is_some_and(|value| !value.is_empty()) {
+                return None;
+            }
+            let wrapper = Path::new(env!("CARGO_BIN_EXE_jails"))
+                .parent()?
+                .join("examples")
+                .join("mvn");
+            if !wrapper.is_file() {
+                eprintln!(
+                    "[jails-tests] no memoised mvn at {}, so every Maven run is a real one. \
+                     `cargo test --workspace --no-run` builds it.",
+                    wrapper.display()
+                );
+                return None;
+            }
+            sweep_proof_cache(&proof_cache_dir());
+            Some(wrapper)
+        })
+        .clone()
+}
+
+/// Entries nothing has replayed for two weeks are rubbish: a proof for bytes
+/// no test produces any more. Replays touch the entry, so a live one stays.
+fn sweep_proof_cache(cache: &Path) {
+    const LIFETIME: Duration = Duration::from_secs(14 * 24 * 60 * 60);
+    let Ok(entries) = fs::read_dir(cache.join("entries")) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let stale = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age > LIFETIME);
+        if stale {
+            let _ = fs::remove_dir_all(entry.path());
+        }
+    }
 }
 
 /// `javac` with this project's dependencies already on the classpath.
@@ -896,6 +993,12 @@ pub fn oci_base_substitutions() -> Vec<(String, String)> {
         .collect()
 }
 
+/// The images the suite-scoped services run. Part of every proof recorded
+/// against them: a run replayed from the proof cache stands for these two,
+/// and a bump here is a new key.
+pub const POSTGRES_IMAGE: &str = "postgres:17-alpine";
+pub const KAFKA_IMAGE: &str = "apache/kafka:4.1.0";
+
 /// PostgreSQL and Kafka shared by the complete generated-application gate.
 ///
 /// The generated Testcontainers beans remain enabled by default. This harness
@@ -915,6 +1018,13 @@ pub struct AppSuiteEndpoints {
 
 impl AppSuiteEndpoints {
     pub fn configure_maven(&self, command: &mut ToolchainCommand, app_name: &str) {
+        // The ports below are blanked out of the proof cache's key; the
+        // services behind them are named here so the key still says what
+        // the run was proved against.
+        command.env(
+            "JAILS_PROOF_CACHE_KEY",
+            format!("services {POSTGRES_IMAGE} {KAFKA_IMAGE}"),
+        );
         command.args([
             "-Djails.testcontainers.postgres.enabled=false".to_string(),
             "-Djails.testcontainers.kafka.enabled=false".to_string(),
@@ -999,7 +1109,7 @@ impl AppSuiteServices {
                         "POSTGRES_USER=postgres".to_string(),
                         "-e".to_string(),
                         "POSTGRES_PASSWORD=postgres".to_string(),
-                        "postgres:17-alpine".to_string(),
+                        POSTGRES_IMAGE.to_string(),
                     ],
                 );
                 postgres_barrier.wait();
@@ -1069,7 +1179,7 @@ impl AppSuiteServices {
                         "KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1".to_string(),
                         "-e".to_string(),
                         "KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1".to_string(),
-                        "apache/kafka:4.1.0".to_string(),
+                        KAFKA_IMAGE.to_string(),
                     ],
                 );
                 kafka_barrier.wait();
@@ -1373,6 +1483,11 @@ impl ToolchainCommand {
         S: AsRef<OsStr>,
     {
         self.inner.args(args);
+        self
+    }
+
+    pub fn env<K: AsRef<OsStr>, V: AsRef<OsStr>>(&mut self, key: K, value: V) -> &mut Self {
+        self.inner.env(key, value);
         self
     }
 

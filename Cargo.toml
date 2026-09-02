@@ -65,6 +65,14 @@ jails-support.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 
+# `mvn`, memoised, for the real-toolchain tier (`tests/support/mvn.rs`). An
+# example rather than a bin so `cargo install --path .` never ships it, and
+# `cargo test` still builds it beside the suite.
+[[example]]
+name = "mvn"
+path = "tests/support/mvn.rs"
+test = false
+
 [dev-dependencies]
 # `CWD_LOCK`: `src/new.rs`'s tests change the process-global working directory.
 jails-testkit.workspace = true
