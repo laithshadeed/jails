@@ -119,17 +119,29 @@ four generators needed no emitter, only syntax in front of a backend that
 already existed; check for that shape before writing one.
 
 **The controller's companion test drives MockMvc, not reflection.**
-`emit_unit::controller_test` issues a real request through the dispatcher, in
-the `MockMvcTester` shape on Boot 4 and the classic `perform(...)` shape below
-it, with `spring-boot-starter-webmvc-test` declared where Boot 4 split that
-slice out. A route jails cannot drive is emitted whole and `@Disabled`,
-asserting status only. **A weaker generated test is the failure mode to look
-for when a surface moves to the compiler**: refusals are loud, a test that
-passes over a dead application is not.
+`emit_unit::controller_test` issues a real request through the dispatcher, with
+`spring-boot-starter-webmvc-test` declared where Boot 4 split that slice out. A
+route jails cannot drive is emitted whole and `@Disabled`, asserting status
+only. **A weaker generated test is the failure mode to look for when a surface
+moves to the compiler**: refusals are loud, a test that passes over a dead
+application is not.
 
-Two facts the compiler decides once and no renderer re-derives: how a request
-binds (a query is `@ModelAttribute`, a command is `@RequestBody`) and what the
-`Input` record declares. Two renderers reaching that answer separately is
+**`emit_mockmvc` is the one MockMvc dialect.** Which entry point a project has
+(`MockMvcTester` on Boot 4, the classic `perform(...)` below it), the imports
+each needs, whether the method declares `throws Exception`, and how a request
+and the status it must answer with are spelled -- all of it is decided there,
+and the three emitters that drive a route (`emit_http::proof`,
+`emit_unit::controller_test`, `emit_resource_http`) consume it. `Status` is a
+closed set because the two dialects spell one differently. Written three times
+it drifted: the fluent "no `If-Match` applies unconditionally" case was emitted
+into classic tests too, where `MockMvcTester` is not imported.
+
+Facts the compiler decides once and no renderer re-derives: how a request
+binds (a query is `@ModelAttribute`, a command is `@RequestBody`), what the
+`Input` record declares, and what a value for a field looks like --
+`emit_companion_test::builtin_sample` is the one reader of
+`BuiltinSemantics::sample` and `emit_operation::proof::record_arguments` the
+one entity sampler. Two renderers reaching one of those answers separately is
 drift.
 
 **Every project file has exactly one owner.** The CI workflow, Dockerfile,

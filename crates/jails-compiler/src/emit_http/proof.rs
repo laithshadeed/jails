@@ -18,6 +18,7 @@ use super::Binding;
 use crate::CompileError;
 use crate::emit_companion_test::json_sample;
 use crate::emit_java::RecordComponent;
+use crate::emit_mockmvc::{Dialect, Drive, Status};
 use jails_model::{AppModel, OperationRoute};
 use std::collections::BTreeSet;
 
@@ -63,15 +64,6 @@ pub(super) struct Scopes<'a> {
     pub(super) base_package: String,
     pub(super) claims: Vec<&'a str>,
 }
-
-/// The Boot major at which `MockMvcTester` is the shape to render.
-///
-/// `MockMvcTester` arrived in Framework 6.2, which is Boot 3.4 -- but the line
-/// is drawn at the major for the same reason `emit_unit` draws it there: the
-/// project states a Boot version, and a minor-level threshold turns every
-/// unreadable or unusual version string into a wrong answer rather than the
-/// conservative one.
-const MOCKMVC_TESTER_BOOT_MAJOR: u32 = 4;
 
 pub(super) fn controller_test(
     model: &AppModel,
@@ -142,71 +134,67 @@ pub(super) fn controller_test(
         .is_none()
         .then(|| format!("a sample of {returns}"))
         .or_else(|| request.missing.clone());
-    let (disabled_import, disabled) = match &unbuildable {
+    let disabled = match &unbuildable {
         Some(what) => {
             imports.insert("org.junit.jupiter.api.Disabled".to_string());
-            (
-                "",
-                format!("    @Disabled(\"todo: supply {what} -- jails cannot build one\")\n"),
-            )
+            format!("    @Disabled(\"todo: supply {what} -- jails cannot build one\")\n")
         }
-        None => ("", String::new()),
+        None => String::new(),
     };
-    let _ = disabled_import;
 
-    let classic = crate::emit_capability::boot_major(spring_boot)
-        .is_some_and(|major| major < MOCKMVC_TESTER_BOOT_MAJOR);
+    let dialect = Dialect::of(spring_boot);
     let verb = route.method.wire_name().to_ascii_lowercase();
     // **The precondition is part of the request, so the proof sends it.** An
     // `If-Match` route driven without the header proves the permissive branch
     // and nothing else -- and where the header is required, Spring answers 400
     // before the controller runs, so the proof would assert a status the route
     // never reaches on a real call.
-    let (header, unconditional) = match &precondition {
+    let (header, relaxed) = match &precondition {
         Some((sample, required)) => {
             imports.insert("org.springframework.http.HttpHeaders".to_string());
-            let sent = format!(
-                "\n                .header(HttpHeaders.IF_MATCH, \"\\\"{}\\\"\")",
-                sample.trim_matches('"')
-            );
-            let relaxed = if *required {
-                String::new()
-            } else {
-                // The other branch, named for what it proves. Without it
-                // `coalesce(:expected_version, version)` is code no test
-                // drives, and deleting the `coalesce` changes nothing.
+            (
                 format!(
-                    "\n    @Test\n    void aRequestWithNoIfMatchIsAppliedUnconditionally() {{\n        assertThat(mvc.{verb}()\n                .uri(\"{}\"{}){})\n                .hasStatusOk();\n    }}\n",
-                    route.path, request.uri_arguments, request.fluent,
-                )
-            };
-            (sent, relaxed)
+                    "\n                .header(HttpHeaders.IF_MATCH, \"\\\"{}\\\"\")",
+                    sample.trim_matches('"')
+                ),
+                !*required,
+            )
         }
-        None => (String::new(), String::new()),
+        None => (String::new(), false),
     };
-    let body = if classic {
-        imports.extend([
-            "org.springframework.test.web.servlet.MockMvc".to_string(),
-            "org.springframework.test.web.servlet.setup.MockMvcBuilders".to_string(),
-            format!(
-                "static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.{verb}"
-            ),
-            "static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status"
-                .to_string(),
-        ]);
-        imports.extend(request.imports.iter().cloned());
-        format!(
-            "class {type_name}Test {{\n\n    private final MockMvc mvc = MockMvcBuilders.standaloneSetup(\n            new {type_name}({stub})).build();\n\n{disabled}    @Test\n    void answersOnItsDeclaredRoute() throws Exception {{\n        mvc.perform({verb}(\"{}\"{}){}{header})\n                .andExpect(status().isOk());\n    }}\n{unconditional}\n    // Reader-owned tests belong below this stable boundary.\n}}",
-            route.path, request.classic_uri_arguments, request.classic,
-        )
-    } else {
-        imports.insert("org.springframework.test.web.servlet.assertj.MockMvcTester".to_string());
-        imports.extend(request.imports.iter().cloned());
-        format!(
-            "class {type_name}Test {{\n\n    private final MockMvcTester mvc = MockMvcTester.of(\n            new {type_name}({stub}));\n\n{disabled}    @Test\n    void answersOnItsDeclaredRoute() {{\n        assertThat(mvc.{verb}()\n                .uri(\"{}\"{}){}{header})\n                .hasStatusOk();\n    }}\n{unconditional}\n    // Reader-owned tests belong below this stable boundary.\n}}",
-            route.path, request.uri_arguments, request.fluent,
+    let drive = |extras: &str, imports: &mut BTreeSet<String>| {
+        dialect.drive(
+            &Drive {
+                verb: &verb,
+                uri: &route.path,
+                uri_arguments: &request.uri_arguments,
+                extras,
+                status: Status::Ok,
+                body_text: None,
+                indent: "        ",
+            },
+            imports,
         )
     };
+    let invocation = drive(&format!("{}{header}", request.chain), &mut imports);
+    // The other branch, named for what it proves. Without it
+    // `coalesce(:expected_version, version)` is code no test drives, and
+    // deleting the `coalesce` changes nothing.
+    let unconditional = match relaxed {
+        true => format!(
+            "\n    @Test\n    void aRequestWithNoIfMatchIsAppliedUnconditionally(){} {{\n{}\n    }}\n",
+            dialect.throws(),
+            drive(&request.chain, &mut imports)
+        ),
+        false => String::new(),
+    };
+    let tester = dialect.tester(&mut imports);
+    let entry = dialect.standalone(&format!("new {type_name}({stub})"), &mut imports);
+    imports.extend(request.imports.iter().cloned());
+    let body = format!(
+        "class {type_name}Test {{{{\n\n    private final {tester} mvc = {entry};\n\n{disabled}    @Test\n    void answersOnItsDeclaredRoute(){} {{{{\n{invocation}\n    }}}}\n{unconditional}\n    // Reader-owned tests belong below this stable boundary.\n}}}}",
+        dialect.throws(),
+    );
     Ok((imports, body))
 }
 
@@ -264,12 +252,19 @@ fn import_declared_closure(
     }
 }
 
-/// The request one controller accepts, in both MockMvc shapes.
+/// The request one controller accepts.
+///
+/// **One spelling, not one per MockMvc dialect.** `MockMvcTester`'s builder
+/// and `MockHttpServletRequestBuilder` declare the same `param`,
+/// `contentType`, `content` and `header` methods, and both take URI template
+/// arguments the same way -- so the chain and the arguments are the same text
+/// in either dialect, and carrying two copies only made it possible for them
+/// to disagree.
 struct Request {
-    fluent: String,
-    classic: String,
+    /// The builder chain between the URI and the assertion, each line carrying
+    /// its own leading newline and indentation.
+    chain: String,
     uri_arguments: String,
-    classic_uri_arguments: String,
     imports: BTreeSet<String>,
     /// What jails could not build, when it could not.
     missing: Option<String>,
@@ -302,17 +297,13 @@ fn request_shape(
         // filter" means to a query, and the four-character string `null` is
         // what sending it would actually mean.
         Binding::Model => {
-            let mut fluent = Vec::new();
-            let mut classic = Vec::new();
+            let mut chain = Vec::new();
             // A form-bound transition still addresses its row through the URL,
             // so the placeholder needs expanding even though nothing else
             // about this request is a body.
-            let (uri_arguments, classic_uri_arguments) = match key_json {
-                Some(key) => {
-                    let key = key.trim_matches('"').to_string();
-                    (format!(", \"{key}\""), format!(", \"{key}\""))
-                }
-                None => (String::new(), String::new()),
+            let uri_arguments = match key_json {
+                Some(key) => format!(", \"{}\"", key.trim_matches('"')),
+                None => String::new(),
             };
             for component in components {
                 // **An optional filter is sent with a value, not omitted and
@@ -332,15 +323,11 @@ fn request_shape(
                 let wire = binder
                     .and_then(|binder| crate::emit_java::wire_name(binder, &component.name))
                     .unwrap_or_else(|| component.name.clone());
-                let line = format!("                .param(\"{wire}\", \"{value}\")");
-                fluent.push(line.clone());
-                classic.push(line);
+                chain.push(format!("                .param(\"{wire}\", \"{value}\")"));
             }
             Ok(Request {
-                fluent: prefixed(&fluent),
-                classic: prefixed(&classic),
+                chain: prefixed(&chain),
                 uri_arguments,
-                classic_uri_arguments,
                 imports,
                 missing,
             })
@@ -367,26 +354,19 @@ fn request_shape(
             }
             let json = fields.join(",\n");
             imports.insert("org.springframework.http.MediaType".to_string());
-            let (uri_arguments, classic_uri_arguments) = match (binding, key_json) {
-                (Binding::Path, Some(key)) => {
-                    let key = key.trim_matches('"').to_string();
-                    (format!(", \"{key}\""), format!(", \"{key}\""))
-                }
+            let uri_arguments = match (binding, key_json) {
+                (Binding::Path, Some(key)) => format!(", \"{}\"", key.trim_matches('"')),
                 (Binding::Path, None) => {
                     missing.get_or_insert("a sample for the row key".to_string());
-                    (", \"1\"".to_string(), ", \"1\"".to_string())
+                    ", \"1\"".to_string()
                 }
-                _ => (String::new(), String::new()),
+                _ => String::new(),
             };
-            let fluent = format!(
-                "\n                .contentType(MediaType.APPLICATION_JSON)\n                .content(\"\"\"\n{{\n{json}\n}}\n\"\"\")"
-            );
-            let classic = fluent.clone();
             Ok(Request {
-                fluent,
-                classic,
+                chain: format!(
+                    "\n                .contentType(MediaType.APPLICATION_JSON)\n                .content(\"\"\"\n{{\n{json}\n}}\n\"\"\")"
+                ),
                 uri_arguments,
-                classic_uri_arguments,
                 imports,
                 missing,
             })

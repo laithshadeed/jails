@@ -50,8 +50,10 @@ class TicketControllerTest {
     void theDocumentedCreateRequestIsAccepted() {
         assertThat(mvc.post().uri("/tickets")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(CREATE_REQUEST)).hasStatus(201);
-        assertThat(mvc.get().uri("/tickets")).hasStatusOk();
+                .content(CREATE_REQUEST))
+                .hasStatus(201);
+        assertThat(mvc.get().uri("/tickets"))
+                .hasStatusOk();
     }
 
     // Reader-owned tests belong below this stable boundary.

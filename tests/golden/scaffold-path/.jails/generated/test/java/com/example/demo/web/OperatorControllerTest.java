@@ -50,8 +50,10 @@ class OperatorControllerTest {
     void theDocumentedCreateRequestIsAccepted() {
         assertThat(mvc.post().uri("/admin_api/operators")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(CREATE_REQUEST)).hasStatus(201);
-        assertThat(mvc.get().uri("/admin_api/operators")).hasStatusOk();
+                .content(CREATE_REQUEST))
+                .hasStatus(201);
+        assertThat(mvc.get().uri("/admin_api/operators"))
+                .hasStatusOk();
     }
 
     // Reader-owned tests belong below this stable boundary.

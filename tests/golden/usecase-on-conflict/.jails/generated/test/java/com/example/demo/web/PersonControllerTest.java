@@ -52,8 +52,10 @@ class PersonControllerTest {
     void theDocumentedCreateRequestIsAccepted() {
         assertThat(mvc.post().uri("/people")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(CREATE_REQUEST)).hasStatus(201);
-        assertThat(mvc.get().uri("/people")).hasStatusOk();
+                .content(CREATE_REQUEST))
+                .hasStatus(201);
+        assertThat(mvc.get().uri("/people"))
+                .hasStatusOk();
     }
 
     // Reader-owned tests belong below this stable boundary.

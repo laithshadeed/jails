@@ -51,8 +51,10 @@ class TopicControllerTest {
     void theDocumentedCreateRequestIsAccepted() {
         assertThat(mvc.post().uri("/topics")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(CREATE_REQUEST)).hasStatus(201);
-        assertThat(mvc.get().uri("/topics")).hasStatusOk();
+                .content(CREATE_REQUEST))
+                .hasStatus(201);
+        assertThat(mvc.get().uri("/topics"))
+                .hasStatusOk();
     }
 
     // Reader-owned tests belong below this stable boundary.

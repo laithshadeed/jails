@@ -52,8 +52,10 @@ class MessageControllerTest {
     void theDocumentedCreateRequestIsAccepted() {
         assertThat(mvc.post().uri("/messages")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(CREATE_REQUEST)).hasStatus(201);
-        assertThat(mvc.get().uri("/messages")).hasStatusOk();
+                .content(CREATE_REQUEST))
+                .hasStatus(201);
+        assertThat(mvc.get().uri("/messages"))
+                .hasStatusOk();
     }
 
     // Reader-owned tests belong below this stable boundary.

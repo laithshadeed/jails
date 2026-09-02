@@ -50,15 +50,6 @@ for f in $(find templates -type f); do rel=${f#templates/}; b=$(basename $f)
 
 ## Steps
 
-**S55.3 -- One proof renderer.** `emit_operation/proof.rs` (566 raw),
-`emit_http/proof.rs` and the companion-test halves of `emit_unit.rs` each
-construct a request for a route and assert a status. The fact they turn on --
-how the request binds, and what the `Input` record declares -- is decided
-once by the route renderer (`bugs.md` B48), so the proof renderers should
-consume that decision rather than each re-deriving it. Measure how many
-construct a sample value for a field; that function exists once in
-`emit_unit` and should be the only one.
-
 **S55.4 -- `Compiler::compile` (A6.2).** 508 lines in one function, split
 only where the split *deletes* something: the per-entity loops that each
 emitter re-walks are the candidate. A split that moves the same lines into

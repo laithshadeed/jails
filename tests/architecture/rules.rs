@@ -389,6 +389,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-compiler", "emit_http", 4),
     ("jails-compiler", "emit_java", 4),
     ("jails-compiler", "emit_messaging", 4),
+    ("jails-compiler", "emit_mockmvc", 4),
     ("jails-compiler", "emit_operation", 4),
     ("jails-compiler", "emit_relation", 4),
     ("jails-compiler", "emit_resource_http", 4),
@@ -789,13 +790,13 @@ const DEFAULT_BRANCH_IS_EXECUTED: &[(&str, &str)] = &[
         "crates/jails-compiler/src/lib.rs",
         "canonical_controller_merges_both_files_and_refuses_overlapping_route_edits",
     ),
-    // The operation controller's companion test, which renders `MockMvcTester`
-    // on Boot 4 and standalone `MockMvcBuilders` below it. The named test
+    // The one MockMvc dialect: `MockMvcTester` on Boot 4, `perform(...)`
+    // below it, for every generated test that drives a route. The named test
     // drives a canonical `api` project -- a command, a query and a transition,
     // one of them scoped -- through real `mvn test` on the 4.1.0 fixture, so
     // the default branch is the one that compiles and answers a request.
     (
-        "crates/jails-compiler/src/emit_http/proof.rs",
+        "crates/jails-compiler/src/emit_mockmvc.rs",
         "scoped_execution_context_survives_evolution_and_binds_tenant_at_runtime",
     ),
     // The scaffold's controller test picks `MockMvcTester` on Boot 4 and

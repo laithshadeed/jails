@@ -695,6 +695,13 @@ struct ParentRow {
 }
 
 /// Every component of an entity, sampled. `None` when one cannot be.
+///
+/// **The one entity sampler.** Every test jails writes that constructs a row
+/// -- an operation's JDBC proof, a scaffold's HTTP facet test -- builds it
+/// here, with `substitutions` naming the components whose value the caller
+/// already knows (a key the database assigned, say) and an empty map where it
+/// knows none. Written twice they disagreed about which components carry their
+/// own imports, and the disagreement only shows up when the file is compiled.
 pub(crate) fn record_arguments(
     model: &AppModel,
     entity: &Entity,

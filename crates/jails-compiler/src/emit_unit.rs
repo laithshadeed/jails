@@ -394,16 +394,6 @@ struct ControllerTest<'a> {
     spring_boot: Option<&'a str>,
 }
 
-/// The Spring Boot major at which `MockMvcTester` can be relied on.
-///
-/// It arrived in Spring Framework 6.2, which is Boot 3.4 -- but the captured
-/// version is read as a major and nothing finer, so the threshold is drawn at
-/// 4 rather than guessed at 3-point-something. A Boot 3.4+ project therefore
-/// gets the classic entry point it does not strictly need, which costs a
-/// fluent chain; a Boot 2 project given the fluent one would not compile, and
-/// the error would name a package rather than a version.
-const MOCKMVC_TESTER_BOOT_MAJOR: u32 = 4;
-
 /// The controller's companion test: a request through the real dispatcher.
 ///
 /// **This asserts the route answers, not that the annotation says so.** A
@@ -412,11 +402,9 @@ const MOCKMVC_TESTER_BOOT_MAJOR: u32 = 4;
 /// cannot start, the path collides with another controller, or the method is
 /// never dispatched -- and that is the weaker check.
 ///
-/// Two shapes, because the entry point differs by version. `MockMvcTester` is Spring's
-/// AssertJ front end and needs no `throws Exception`; `perform(...)` has
-/// existed since Spring 3 and still does in 7, so it is the fallback rather
-/// than the other way round -- the shape that compiles everywhere is the one
-/// to reach for when the version cannot be established.
+/// The request itself and the status it must answer with go through
+/// [`crate::emit_mockmvc`], which owns both spellings; this decides only what
+/// is asked of *this* route.
 fn controller_test(test: ControllerTest<'_>) -> (BTreeSet<String>, String) {
     let ControllerTest {
         stem,
@@ -426,7 +414,7 @@ fn controller_test(test: ControllerTest<'_>) -> (BTreeSet<String>, String) {
         spring_boot,
     } = test;
     let boot_major = crate::emit_capability::boot_major(spring_boot);
-    let modern = boot_major.is_some_and(|major| major >= MOCKMVC_TESTER_BOOT_MAJOR);
+    let dialect = crate::emit_mockmvc::Dialect::of(spring_boot);
 
     let mut imports = BTreeSet::from([
         "org.junit.jupiter.api.Test".to_string(),
@@ -443,53 +431,26 @@ fn controller_test(test: ControllerTest<'_>) -> (BTreeSet<String>, String) {
         "    @Disabled(\"todo: implement the handler, then delete this @Disabled\")\n".to_string()
     };
 
-    let (mvc_type, throws, invocation) = if modern {
-        imports.insert("static org.assertj.core.api.Assertions.assertThat".to_string());
-        imports.insert("org.springframework.test.web.servlet.assertj.MockMvcTester".to_string());
-        let assertion = if exercisable {
-            format!(
-                "                .hasStatusOk()\n                .bodyText()\n                .isEqualTo(\"{stem}\")"
-            )
-        } else {
-            // Status only. The body is whatever the reader writes, and
-            // asserting a shape jails invented would test jails' guess.
-            "                .hasStatus2xxSuccessful()".to_string()
-        };
-        (
-            "MockMvcTester",
-            "",
-            format!("        assertThat(mvc.{handler}().uri(\"{path}\"))\n{assertion};"),
-        )
-    } else {
-        imports.insert(format!(
-            "static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.{handler}"
-        ));
-        imports.insert(
-            "static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status"
-                .to_string(),
-        );
-        imports.insert("org.springframework.test.web.servlet.MockMvc".to_string());
-        let assertion = if exercisable {
-            // `content()` is a second static import, and only the exercisable
-            // shape asserts a body.
-            imports.insert(
-                "static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content"
-                    .to_string(),
-            );
-            format!(
-                "\n                .andExpect(status().isOk())\n                .andExpect(content().string(\"{stem}\"))"
-            )
-        } else {
-            "\n                .andExpect(status().is2xxSuccessful())".to_string()
-        };
-        (
-            "MockMvc",
-            // `perform` declares it, and that is the honest cost of the shape
-            // that compiles everywhere.
-            " throws Exception",
-            format!("        mvc.perform({handler}(\"{path}\")){assertion};"),
-        )
-    };
+    let mvc_type = dialect.tester(&mut imports);
+    let throws = dialect.throws();
+    // A route whose handler the reader still has to write is held to a status
+    // and nothing else: the body is theirs, and asserting a shape jails
+    // invented would test jails' guess.
+    let invocation = dialect.drive(
+        &crate::emit_mockmvc::Drive {
+            verb: handler,
+            uri: path,
+            uri_arguments: "",
+            extras: "",
+            status: match exercisable {
+                true => crate::emit_mockmvc::Status::Ok,
+                false => crate::emit_mockmvc::Status::Successful,
+            },
+            body_text: exercisable.then_some(stem),
+            indent: "        ",
+        },
+        &mut imports,
+    );
 
     let body = format!(
         "@SpringBootTest\n@AutoConfigureMockMvc\nclass {stem}ControllerTest {{\n\n    @Autowired private {mvc_type} mvc;\n\n    @Test\n{disabled}    void {handler}Answers(){throws} {{\n{invocation}\n    }}\n\n    // Reader-owned tests belong below this stable boundary.\n}}"

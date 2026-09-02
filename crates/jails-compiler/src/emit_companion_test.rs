@@ -19,7 +19,7 @@
 use crate::emit_java::JavaUnit;
 use crate::{CompileError, emit_java};
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
-use jails_model::{AppModel, Entity, Field, Package, StableId, TypeRef};
+use jails_model::{AppModel, BuiltinType, Entity, Field, Package, StableId, TypeRef};
 use std::collections::BTreeSet;
 
 pub(crate) const JAVA_TEST_ROOT: &str = ".jails/generated/test/java";
@@ -288,6 +288,23 @@ pub(crate) fn sample(
     sample_with(model, field, imports, &mut BTreeSet::new())
 }
 
+/// One builtin's sample expression, carrying the type it names.
+///
+/// **The one place `BuiltinSemantics::sample` is read.** Every emitter that
+/// needs a value for a builtin -- the companion tests, the test-data factory,
+/// an outbox sink's contract test, a durable job's payload -- goes through
+/// here, so a type is sampled one way and the import that makes the expression
+/// compile cannot be forgotten at one of them: left out, the file compiles
+/// everywhere the sample happens to be a literal and fails on the first
+/// `uuid`, `instant` or `date`.
+pub(crate) fn builtin_sample(builtin: BuiltinType, imports: &mut BTreeSet<String>) -> String {
+    let semantics = builtin.semantics();
+    if let Some(import) = semantics.java_import {
+        imports.insert(import.to_string());
+    }
+    semantics.sample.to_string()
+}
+
 fn sample_with(
     model: &AppModel,
     field: &Field,
@@ -299,13 +316,7 @@ fn sample_with(
         return Some("Optional.empty()".to_string());
     }
     match &field.ty {
-        TypeRef::Builtin(builtin) => {
-            let semantics = builtin.semantics();
-            if let Some(import) = semantics.java_import {
-                imports.insert(import.to_string());
-            }
-            Some(semantics.sample.to_string())
-        }
+        TypeRef::Builtin(builtin) => Some(builtin_sample(*builtin, imports)),
         // A type the *model* declares is one jails can build, which is the
         // whole of "generators compose through user-owned field types": the
         // enum and the record were generated two commands ago, so refusing to

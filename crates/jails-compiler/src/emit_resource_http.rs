@@ -19,12 +19,11 @@
 
 use crate::CompileError;
 use crate::emit_java::{
-    JAVA_ROOT, JavaUnit, Unit, domain_import, import_declared_type, java_type, primary_key,
-    with_suffix,
+    JAVA_ROOT, JavaUnit, Unit, domain_import, java_type, primary_key, with_suffix,
 };
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
 use jails_model::{AppModel, Entity, Package, StableId};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 const JAVA_TEST_ROOT: &str = ".jails/generated/test/java";
 
@@ -399,12 +398,19 @@ fn controller_test(
         "org.junit.jupiter.api.Test".to_string(),
     ]);
     let key_type = java_type(key, &mut imports);
-    let Some(row) = sampled_row(model, entity, &mut imports) else {
+    // The same row every operation proof builds. A sample may name a type this
+    // file has not imported -- an enum component lives in `domain` and this
+    // test lives in `web` -- which the one sampler handles.
+    let Some(row) = crate::emit_operation::proof::record_arguments(
+        model,
+        entity,
+        &BTreeMap::new(),
+        &mut imports,
+    ) else {
         return Ok(None);
     };
     let path = resource_path(model, entity);
-    let boot_major = crate::emit_capability::boot_major(spring_boot);
-    let modern = boot_major.is_some_and(|major| major >= 4);
+    let dialect = crate::emit_mockmvc::Dialect::of(spring_boot);
     // **What the collection documents is what this proves.** A scoped
     // resource answers only the POST, so asserting an OK on the collection
     // would assert the leak `scoped` exists to prevent -- and 405 is what
@@ -412,69 +418,51 @@ fn controller_test(
     // is the property worth pinning.
     let create_only = scoped(entity);
     let read_comment = match create_only {
-        true => "// Every read carries the tenant, so the collection answers none.\n        ",
+        true => "        // Every read carries the tenant, so the collection answers none.\n",
         false => "",
     };
-    let (field, request) = if modern {
-        imports.insert("static org.assertj.core.api.Assertions.assertThat".to_string());
-        imports.insert("org.springframework.test.web.servlet.assertj.MockMvcTester".to_string());
-        (
-            format!(
-                "    private final MockMvcTester mvc = MockMvcTester.of(new {controller}(new {record}Service(REPOSITORY)));"
-            ),
-            format!(
-                "        assertThat(mvc.post().uri(\"{path}\")\n\
-                 \x20               .contentType(MediaType.APPLICATION_JSON)\n\
-                 \x20               .content(CREATE_REQUEST)).hasStatus(201);\n\
-                 \x20       {read_comment}assertThat(mvc.get().uri(\"{path}\")).hasStatus{};",
-                match create_only {
-                    true => "(405)",
-                    false => "Ok()",
-                }
-            ),
+    let tester = dialect.tester(&mut imports);
+    let field = format!(
+        "    private final {tester} mvc = {};",
+        dialect.standalone(
+            &format!("new {controller}(new {record}Service(REPOSITORY))"),
+            &mut imports
         )
-    } else {
-        imports.insert(
-            "static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get"
-                .to_string(),
-        );
-        imports.insert(
-            "static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status"
-                .to_string(),
-        );
-        imports.insert("org.springframework.test.web.servlet.MockMvc".to_string());
-        imports.insert(
-            "static org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup"
-                .to_string(),
-        );
-        (
-            format!(
-                "    private final MockMvc mvc = standaloneSetup(new {controller}(new {record}Service(REPOSITORY))).build();"
-            ),
-            format!(
-                "        mvc.perform(post(\"{path}\")\n\
-                 \x20               .contentType(MediaType.APPLICATION_JSON)\n\
-                 \x20               .content(CREATE_REQUEST)).andExpect(status().isCreated());\n\
-                 \x20       {read_comment}mvc.perform(get(\"{path}\")).andExpect(status().{});",
-                match create_only {
-                    true => "isMethodNotAllowed()",
-                    false => "isOk()",
-                }
-            ),
-        )
-    };
-    let throws = if modern { "" } else { " throws Exception" };
+    );
+    let created = dialect.drive(
+        &crate::emit_mockmvc::Drive {
+            verb: "post",
+            uri: &path,
+            uri_arguments: "",
+            extras: "\n                .contentType(MediaType.APPLICATION_JSON)\n                .content(CREATE_REQUEST)",
+            status: crate::emit_mockmvc::Status::Created,
+            body_text: None,
+            indent: "        ",
+        },
+        &mut imports,
+    );
+    let read = dialect.drive(
+        &crate::emit_mockmvc::Drive {
+            verb: "get",
+            uri: &path,
+            uri_arguments: "",
+            extras: "",
+            status: match create_only {
+                true => crate::emit_mockmvc::Status::MethodNotAllowed,
+                false => crate::emit_mockmvc::Status::Ok,
+            },
+            body_text: None,
+            indent: "        ",
+        },
+        &mut imports,
+    );
+    let request = format!("{created}\n{read_comment}{read}");
+    let throws = dialect.throws();
     let method = "theDocumentedCreateRequestIsAccepted";
     // **The same JSON the `.http` collection documents**, so what the reader
     // is shown and what the build proves cannot diverge -- a documented body
     // nothing exercises is a body nothing checks.
     imports.insert("org.springframework.http.MediaType".to_string());
-    if !modern {
-        imports.insert(
-            "static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post"
-                .to_string(),
-        );
-    }
     let request_constant = format!(
         "\x20   private static final String CREATE_REQUEST =\n\
          \x20           \"\"\"\n\
@@ -529,26 +517,6 @@ fn controller_test(
         "java-facets-test",
     )
     .map(Some)
-}
-
-/// Every component sampled, through the one sampler the proofs use.
-///
-/// A sample may name a type this file has not imported: an enum component
-/// lives in `domain` and this test lives in `web`.
-fn sampled_row(
-    model: &AppModel,
-    entity: &Entity,
-    imports: &mut BTreeSet<String>,
-) -> Option<String> {
-    entity
-        .fields
-        .iter()
-        .map(|field| {
-            import_declared_type(model, &field.ty, imports);
-            crate::emit_companion_test::sample(model, field, imports)
-        })
-        .collect::<Option<Vec<_>>>()
-        .map(|arguments| arguments.join(", "))
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -21,8 +21,7 @@ use crate::CompileError;
 use crate::emit_java::JavaUnit;
 use jails_contracts::PropertyEntry;
 use jails_model::{
-    AppModel, BuiltinType, Component, ComponentReference, Operation, OperationKind,
-    ParameterSource, TypeRef,
+    AppModel, Component, ComponentReference, Operation, OperationKind, ParameterSource, TypeRef,
 };
 use std::collections::BTreeSet;
 
@@ -216,8 +215,10 @@ pub(crate) fn sample(
         };
         match ty {
             TypeRef::Builtin(builtin) => {
-                imports.extend(builtin.semantics().java_import.map(str::to_string));
-                arguments.push(builtin_sample(builtin));
+                arguments.push(crate::emit_companion_test::builtin_sample(
+                    builtin,
+                    &mut imports,
+                ));
             }
             TypeRef::External(_) => {
                 disabled = true;
@@ -226,10 +227,6 @@ pub(crate) fn sample(
         }
     }
     Ok((arguments.join(",\n                "), disabled, imports))
-}
-
-fn builtin_sample(builtin: BuiltinType) -> String {
-    builtin.semantics().sample.to_string()
 }
 
 /// The `outbox.<command>.http.<sink>` prefix this sink's settings hang off.

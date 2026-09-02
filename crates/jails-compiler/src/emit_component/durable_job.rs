@@ -333,8 +333,10 @@ fn sample(
         };
         match ty {
             TypeRef::Builtin(builtin) => {
-                imports.extend(builtin.semantics().java_import.map(str::to_string));
-                arguments.push(builtin.semantics().sample.to_string());
+                arguments.push(crate::emit_companion_test::builtin_sample(
+                    builtin,
+                    &mut imports,
+                ));
                 alternates.push(builtin.semantics().alternate.map(str::to_string));
             }
             // **A declared enum is one jails can spell**, and it is the case

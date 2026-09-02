@@ -4,7 +4,7 @@ use crate::emit_companion_test::JAVA_TEST_ROOT;
 use crate::emit_java::JavaUnit;
 use crate::{CompileError, emit_java};
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
-use jails_model::{AppModel, BuiltinType, Entity, Field, Package, StableId, TypeRef};
+use jails_model::{AppModel, Entity, Field, Package, StableId, TypeRef};
 use std::collections::BTreeSet;
 
 pub(crate) fn lower(
@@ -97,19 +97,24 @@ fn declared_type(field: &Field, imports: &mut BTreeSet<String>) -> String {
     }
 }
 
+/// The default a builder starts a component at, or `None` when the reader has
+/// to supply one.
+///
+/// A project-owned type declines deliberately: the builder is *mutable*, so a
+/// component jails cannot spell gets a `withX` override and a guard rather
+/// than a fabricated value. The builtin half goes through the one sampler, so
+/// a type is sampled the same way here as in every companion test.
 fn sample(field: &Field, imports: &mut BTreeSet<String>) -> Option<String> {
     if !field.required {
         imports.insert("java.util.Optional".to_string());
         return Some("Optional.empty()".to_string());
     }
     match &field.ty {
-        TypeRef::Builtin(builtin) => Some(builtin_sample(*builtin)),
+        TypeRef::Builtin(builtin) => Some(crate::emit_companion_test::builtin_sample(
+            *builtin, imports,
+        )),
         TypeRef::External(_) => None,
     }
-}
-
-fn builtin_sample(builtin: BuiltinType) -> String {
-    builtin.semantics().sample.to_string()
 }
 
 fn upper_first(value: &str) -> String {
