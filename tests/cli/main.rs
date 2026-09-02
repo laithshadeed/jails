@@ -160,15 +160,15 @@ fn verified_plain_toolbox(path: &str) -> &'static std::path::PathBuf {
     static VERIFIED: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
     VERIFIED.get_or_init(|| {
         let workdir = temp_dir("plain-toolbox-verified");
-        // The manifest is applied *at creation*, not after: `--app` is the
-        // route that applies a manifest inside the publication. `app apply`
-        // would work too, but it would run against a project this fixture has
-        // already published, so the toolbox would be measuring a different
-        // command than the one it exists to cover.
-        let manifest = workdir.join("ledger-cli.app.toml");
+        // Everything the shared project proves, as one manifest: the ledger
+        // control application plus the plain kinds listed in the fixture.
+        // Applied *at creation*, not after: `--app` is the route that applies
+        // a manifest inside the publication, and one replay formats the
+        // tree once rather than once per row.
+        let manifest = workdir.join("plain-toolbox.app.toml");
         fs::write(
             &manifest,
-            include_str!("../../examples/ledger-cli/.jails/app.toml"),
+            include_str!("../fixtures/plain-toolbox.app.toml"),
         )
         .unwrap();
         let status = jails_cmd_with_path(&workdir, path)
@@ -178,67 +178,6 @@ fn verified_plain_toolbox(path: &str) -> &'static std::path::PathBuf {
             .unwrap();
         assert!(status.success(), "new-cli failed for the plain toolbox");
         let root = workdir.join("demo");
-        for capability in ["fake", "http"] {
-            let status = jails_cmd_with_path(&root, path)
-                .args(["add", capability])
-                .status()
-                .unwrap();
-            assert!(status.success(), "add {capability} failed in plain toolbox");
-        }
-        for args in [
-            &["g", "class", "MoneyMoved"][..],
-            &[
-                "g",
-                "record",
-                "Tally",
-                "hits:int@nonnegative",
-                "total:long@nonnegative",
-            ][..],
-            &["g", "enum", "Currency", "GBP", "EUR"][..],
-            &[
-                "g",
-                "record",
-                "SourceRef",
-                "system:string",
-                "externalId:string",
-            ][..],
-            &[
-                "g",
-                "value",
-                "CanonicalTransaction",
-                "id:string!",
-                "date:date",
-                "amountMinor:long",
-                "currency:Currency",
-                "source:SourceRef",
-                "note:string?",
-            ][..],
-            &["g", "sealed", "Outcome", "Accepted", "Rejected"][..],
-            &[
-                "g",
-                "value",
-                "Stamped",
-                "at:string!",
-                "result:Outcome",
-            ][..],
-            &["g", "record", "Transaction", "id:uuid", "amount:long"][..],
-            &["g", "record", "Reward", "id:uuid", "amount:long"][..],
-            &[
-                "g",
-                "strategy",
-                "Eligibility",
-                "Domestic",
-                "--on",
-                "Transaction",
-            ][..],
-            &["g", "integration-test", "Checkout"][..],
-        ] {
-            let status = jails_cmd_with_path(&root, path)
-                .args(args)
-                .status()
-                .unwrap();
-            assert!(status.success(), "{args:?} failed in plain toolbox");
-        }
         fs::write(
             root.join("brief.md"),
             "# Brief\n\n## Acceptance criteria\n\n- parses a `quoted` value\n- rejects **blank** ids\n",
@@ -249,24 +188,6 @@ fn verified_plain_toolbox(path: &str) -> &'static std::path::PathBuf {
             .status()
             .unwrap();
         assert!(status.success(), "generate cases failed in plain toolbox");
-
-        // The manifest ran at creation, so its `format` capability formatted
-        // what existed then, which is none of the sources above. One explicit
-        // pass covers every file.
-        //
-        // Through Maven rather than `jails fmt`: a modelled project refuses
-        // that command, and its own fix line says to run the project formatter
-        // directly, because formatter ownership is not modelled yet.
-        let output = real_maven_cmd(&root, path)
-            .arg("spotless:apply")
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "plain toolbox spotless:apply: {}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
 
         // The ledger manifest makes LedgerCli the executable dispatcher.
         // Generate this command afterwards and target that dispatcher so the

@@ -370,6 +370,13 @@ pub(crate) struct Invocation {
     /// rides here rather than being threaded through the frontends that never
     /// look at it.
     pub(crate) no_start: bool,
+    /// Defer the formatter to the caller, which runs it once.
+    ///
+    /// A manifest replay is many mutations in one process, and the formatter
+    /// is a Maven run: one per row is one JVM per row over a tree the next
+    /// row rewrites. The rows still declare the effect on their plans; the
+    /// replay runs it once after the last of them, over everything at once.
+    pub(crate) batch_effects: bool,
     pub(crate) output: Output,
     pub(crate) diff: bool,
     pub(crate) ast: bool,
@@ -404,6 +411,15 @@ impl Invocation {
     ///
     /// `--no-start` is declared on the subcommands that can have an effect
     /// rather than globally, so it arrives after the invocation is built.
+    /// The invocation for one row of a replay: its formatter is owed to the
+    /// replay rather than run here.
+    pub(crate) fn batching(self) -> Self {
+        Self {
+            batch_effects: true,
+            ..self
+        }
+    }
+
     pub(crate) fn without_starting(self, no_start: bool) -> Self {
         Self { no_start, ..self }
     }
@@ -440,6 +456,7 @@ impl Invocation {
         Self {
             pretend: false,
             debug,
+            batch_effects: false,
             output: Output::Human,
             diff: false,
             ast: false,

@@ -9,7 +9,7 @@ mod profile;
 mod effects;
 mod report;
 
-pub(crate) use effects::run_follow_up_effects;
+pub(crate) use effects::{run_follow_up_effects, run_owed_format};
 use report::refuse_unconfirmed_deletions;
 pub(crate) use report::{report_plan, write_bundle};
 
@@ -279,7 +279,7 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
     if invocation.output == Output::Human {
         clock.report();
     }
-    run_follow_up_effects(&root, &bundle, &invocation)
+    run_follow_up_effects(&root, &bundle, &execution, &invocation)
 }
 
 pub(crate) fn operation_field_labels(

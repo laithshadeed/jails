@@ -280,7 +280,7 @@ pub(crate) fn sync(no_start: bool, invocation: Invocation) -> Result<()> {
             println!("       no capabilities are declared: `jails add <capability>` declares one");
         }
     } else {
-        let value = serde_json::to_value(execution)
+        let value = serde_json::to_value(&execution)
             .map_err(|error| Failure::Told(format!("could not encode execution: {error}")))?;
         print_json(&value)?;
     }
@@ -294,6 +294,7 @@ pub(crate) fn sync(no_start: bool, invocation: Invocation) -> Result<()> {
     crate::model_generate::run_follow_up_effects(
         root,
         &bundle,
+        &execution,
         &invocation.clone().without_starting(true),
     )
 }

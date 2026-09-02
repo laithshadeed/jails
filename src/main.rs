@@ -90,6 +90,7 @@ fn main() -> std::process::ExitCode {
         // effects would. The `Add` arm reads the flag; everything else leaves
         // what is running alone.
         no_start: true,
+        batch_effects: false,
     };
     let failure_output = invocation.output;
     let failure_path = invocation.command_path.clone();

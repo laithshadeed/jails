@@ -34,13 +34,20 @@ run = [
 # `cargo build` would only add an ordering barrier. The binaries run one after
 # another; `tests/cli` dominates the run, so concurrency across binaries has
 # nothing to win and unbounded memory to lose.
+#
+# `RUST_TEST_THREADS` is libtest's thread count, scaled to the machine: a
+# real-toolchain test spends its life waiting on a Maven JVM the permit pool
+# admits, so with one thread per core the long tests near the end of the
+# alphabet start late and set the tail. Twice the cores lets every one of them
+# start early and queue on the pool, which is what bounds the JVM count and
+# the memory -- the threads themselves cost nothing.
 [tasks.verify-rewrite]
 description = "Run the single mandatory rewrite verification gate"
 depends = ["lint"]
 run = [
   "RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps",
   "rm -rf target/jails-test-profile",
-  "JAILS_GIT_DIFF_ALGORITHM= JAILS_TOOLCHAIN=1 cargo test --workspace; status=$?; ./scripts/subprocess-summary.sh; exit $status",
+  "RUST_TEST_THREADS=$(( $(nproc) * 2 )) JAILS_GIT_DIFF_ALGORITHM= JAILS_TOOLCHAIN=1 cargo test --workspace; status=$?; ./scripts/subprocess-summary.sh; exit $status",
 ]
 
 [tasks.test]

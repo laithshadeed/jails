@@ -130,9 +130,25 @@ fn stage_compose_document(
 /// are not up, and the message says the project itself is complete. Exiting 0
 /// would be worse -- `for c in db api; do jails add $c || fail; done` is how
 /// people write this, and a silent half-install is what it would hide.
+/// A formatter run a batched mutation left for its caller.
+///
+/// Process-wide because a replay is one process: every row that would have
+/// formatted sets it, and the replay's last step runs the formatter once if
+/// any row did. Cleared by that run, so a second replay in the same process
+/// starts owing nothing.
+static OWED_FORMAT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Run the formatter the batched rows owed, once, if any of them did.
+pub(crate) fn run_owed_format(root: &std::path::Path, debug: bool) {
+    if OWED_FORMAT.swap(false, std::sync::atomic::Ordering::Relaxed) {
+        jails_drive::run::format_generated(root, debug);
+    }
+}
+
 pub(crate) fn run_follow_up_effects(
     root: &std::path::Path,
     bundle: &jails_contracts::PlanBundle,
+    execution: &jails_workspace::Execution,
     invocation: &Invocation,
 ) -> Result<()> {
     // **The formatter runs over what was just written, before anything
@@ -141,13 +157,23 @@ pub(crate) fn run_follow_up_effects(
     // predicted from a template, which is what a formatter is for. Best
     // effort, like every other tool jails shells out to -- a machine with no
     // Maven gets a note rather than a failed generation.
+    //
+    // **Only over a tree that changed.** The plan declares the effect from
+    // the model, and a mutation that wrote nothing -- a second identical
+    // command, a `set` of the value already there -- leaves nothing to
+    // format; a Maven run for it is a JVM spent on a no-op. A replay owes
+    // the run to its caller instead, which runs it once after the last row
+    // (`run_owed_format`).
     drop_compiled_shadows(root, bundle);
-    if bundle
+    let formats = bundle
         .plan
         .follow_up_effects
         .iter()
         .any(|effect| effect.kind == "format")
-    {
+        && execution.files_written > 0;
+    if formats && invocation.batch_effects {
+        OWED_FORMAT.store(true, std::sync::atomic::Ordering::Relaxed);
+    } else if formats {
         jails_drive::run::format_generated(root, invocation.debug);
     }
     let compose: Vec<&jails_contracts::EffectIntent> = bundle

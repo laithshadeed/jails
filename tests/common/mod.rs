@@ -1546,11 +1546,34 @@ fn test_profile_epoch() -> &'static Instant {
 /// the permit queue measures zero, and leaves a four-core runner on the floor;
 /// past twelve there is no queue left to drain, measured.
 ///
+/// **Memory bounds it before cores do.** A Maven JVM running a generated
+/// project's tests in-process sits at 300-600 MB resident, so twelve of them
+/// on a machine with four gigabytes free is swap, and swap is slower than a
+/// queue. The budget is the smaller of the core-derived count and what the
+/// machine's *available* memory (`MemAvailable`, which counts reclaimable
+/// cache) can hold at 700 MB a JVM, floored at two so the tier still runs.
+///
 /// `JAILS_TEST_MAX_TOOLCHAIN_PROCESSES` overrides it.
 fn default_max_toolchain_processes() -> usize {
-    std::thread::available_parallelism()
+    let by_cores = std::thread::available_parallelism()
         .map(|cores| (cores.get() * 3 / 4).clamp(6, 12))
-        .unwrap_or(6)
+        .unwrap_or(6);
+    let by_memory = available_memory_bytes()
+        .map(|bytes| (bytes / (700 << 20)).clamp(2, 12) as usize)
+        .unwrap_or(by_cores);
+    by_cores.min(by_memory)
+}
+
+/// `MemAvailable` from `/proc/meminfo`, in bytes; `None` where the kernel
+/// does not say (macOS), which falls back to the core-derived budget.
+fn available_memory_bytes() -> Option<u64> {
+    let meminfo = fs::read_to_string("/proc/meminfo").ok()?;
+    meminfo
+        .lines()
+        .find_map(|line| line.strip_prefix("MemAvailable:"))
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|kib| kib.parse::<u64>().ok())
+        .map(|kib| kib * 1024)
 }
 const MAX_INFRASTRUCTURE_START_PROCESSES: usize = 2;
 static TOOLCHAIN_PROCESSES: PermitPool = PermitPool::new("toolchain");

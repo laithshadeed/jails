@@ -341,21 +341,23 @@ pub(crate) fn replay(requested: Option<&Path>, invocation: crate::Invocation) ->
     // Every capability in one patch, then every row. The manifest already
     // parsed its capability list into the closed vocabulary, so there is no
     // second lookup to get wrong here.
+    // **One formatter run for the whole replay.** Each row's plan declares
+    // the effect and each row would run it; over forty rows that is forty
+    // Maven JVMs formatting a tree the next row rewrites. The rows run
+    // batched and the formatter runs once here, over what all of them
+    // wrote -- and only if one of them wrote something.
+    let batched = invocation.clone().batching();
     if !manifest.capabilities.is_empty() {
-        crate::model_capability::add(
-            manifest.capabilities.clone(),
-            None,
-            None,
-            invocation.clone(),
-        )?;
+        crate::model_capability::add(manifest.capabilities.clone(), None, None, batched.clone())?;
     }
     let declared = rows
         .iter()
         .map(|row| row.name.clone())
         .collect::<std::collections::BTreeSet<_>>();
     for row in rows {
-        crate::model_generate_jdl::run(row, invocation.clone())?;
+        crate::model_generate_jdl::run(row, batched.clone())?;
     }
+    crate::model_generate::run_owed_format(root, invocation.debug);
     report_undeclared(root, &declared, &invocation)
 }
 
