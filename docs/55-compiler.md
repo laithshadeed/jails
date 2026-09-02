@@ -50,12 +50,6 @@ for f in $(find templates -type f); do rel=${f#templates/}; b=$(basename $f)
 
 ## Steps
 
-**S55.4 -- `Compiler::compile` (A6.2).** 508 lines in one function, split
-only where the split *deletes* something: the per-entity loops that each
-emitter re-walks are the candidate. A split that moves the same lines into
-five functions is not this pass; the module-size ratchet cannot tell the two
-apart and you can.
-
 **S55.7 -- `tests/cli/generate.rs`.** 7,948 lines and 110 tests, most of
 them "generate X, then read a file". After S55.2 the assertions about the
 package line and the import block are one property, not a hundred; name the

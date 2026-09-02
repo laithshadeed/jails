@@ -239,43 +239,26 @@ impl Compiler {
             false
         });
         if !non_ejectable.is_empty() {
-            return Err(CompileError::new(format!(
-                "ejection boundary{} {} form{} managed ABI and cannot be ejected\n       fix: eject an adapter implementation boundary; records and ports stay managed",
-                if non_ejectable.len() == 1 { "" } else { "s" },
-                non_ejectable
-                    .iter()
-                    .map(|id| format!("`{id}`"))
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                if non_ejectable.len() == 1 { "s" } else { "" },
-            )));
+            return Err(refuse_ejections(
+                "ejection boundary",
+                "form",
+                "managed ABI and cannot be ejected\n       fix: eject an adapter implementation boundary; records and ports stay managed",
+                &non_ejectable,
+            ));
         }
         let unmatched = desired_ejections
             .iter()
             .filter(|target| !matched_ejections.contains(**target))
             .copied()
-            .collect::<Vec<_>>();
+            .collect::<BTreeSet<_>>();
         if !unmatched.is_empty() {
-            return Err(CompileError::new(format!(
-                "ejection target{} {} emit{} no ejectable Java implementation\n       fix: eject an implementation boundary id; records and ports remain managed ABI",
-                if unmatched.len() == 1 { "" } else { "s" },
-                unmatched
-                    .iter()
-                    .map(|target| format!("`{target}`"))
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                if unmatched.len() == 1 { "s" } else { "" },
-            )));
+            return Err(refuse_ejections(
+                "ejection target",
+                "emit",
+                "no ejectable Java implementation\n       fix: eject an implementation boundary id; records and ports remain managed ABI",
+                &unmatched,
+            ));
         }
-
-        let main_source_root =
-            ProjectPath::parse(".jails/generated/main/java").map_err(CompileError::new)?;
-        let test_source_root =
-            ProjectPath::parse(".jails/generated/test/java").map_err(CompileError::new)?;
-        let test_resource_root =
-            ProjectPath::parse(".jails/generated/test/resources").map_err(CompileError::new)?;
-        let main_resource_root =
-            ProjectPath::parse(".jails/generated/main/resources").map_err(CompileError::new)?;
         // **A source root is declared only for a tree that has something in
         // it**, main included. Declaring the main root the moment a project
         // becomes canonical edits the reader's build file for a directory that
@@ -284,26 +267,40 @@ impl Compiler {
         // declaration could not restore the pom it started from. The adapter
         // removes the block when no root is wanted, which makes this the whole
         // of the inverse.
-        let has_main_sources = generated
-            .files
-            .values()
-            .any(|file| file.kind == FileKind::JavaMain);
-        let has_test_sources = generated
-            .files
-            .values()
-            .any(|file| file.kind == FileKind::JavaTest);
-        let has_test_resources = generated.files.iter().any(|(path, file)| {
-            file.kind == FileKind::Resource
-                && path
-                    .as_str()
-                    .starts_with(".jails/generated/test/resources/")
-        });
-        let has_main_resources = generated.files.iter().any(|(path, file)| {
-            file.kind == FileKind::Resource
-                && path
-                    .as_str()
-                    .starts_with(".jails/generated/main/resources/")
-        });
+        //
+        // **One walk, and both build systems read it.** Maven and Gradle
+        // declare a root differently and want the same four answers, so the
+        // question "is there anything in this tree" is asked once, here, and
+        // the two arms below only spell what they were given. Asked twice it
+        // was eight near-identical `if` blocks over four roots, which is where
+        // a fifth root gets added to one build system and not the other.
+        // Membership is the path prefix rather than the `FileKind`, because
+        // that is literally the question a source root asks.
+        let wanted_roots = [
+            (".jails/generated/main/java", JavaSourceSet::Main),
+            (".jails/generated/test/java", JavaSourceSet::Test),
+            (
+                ".jails/generated/test/resources",
+                JavaSourceSet::TestResources,
+            ),
+            (
+                ".jails/generated/main/resources",
+                JavaSourceSet::MainResources,
+            ),
+        ]
+        .into_iter()
+        .filter(|(root, _)| {
+            generated
+                .files
+                .keys()
+                .any(|path| path.as_str().starts_with(&format!("{root}/")))
+        })
+        .map(|(root, source_set)| {
+            ProjectPath::parse(root)
+                .map(|path| (path, source_set))
+                .map_err(CompileError::new)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
         let mut build_features = next_model
             .units
             .values()
@@ -328,119 +325,69 @@ impl Compiler {
         {
             build_features.insert(BuildFeature::IntegrationTests);
         }
-        // **What the reader's build already declares is already satisfied.**
-        // Everything the compiler adds below is *implied* -- by a capability,
-        // a component, an entity facet -- rather than declared, so an artifact
-        // the project states for itself answers the requirement and must not
-        // be declared a second time. Without this a Gradle project carrying
-        // `spring-boot-starter-web` of its own is refused outright the moment
-        // an entity gains an HTTP facet, over a dependency it already has.
-        //
-        // It does not cover `next_model.dependencies`: those the reader
-        // declared *through jails*, so a copy outside the marked block is two
-        // owners for one coordinate and the adapter is right to refuse it.
-        let observed = &snapshot.project.dependencies;
-        let satisfied = |required: &BuildDependency| {
-            observed.contains(&format!("{}:{}", required.group, required.artifact))
-        };
-        let mut dependencies = next_model
-            .dependencies
-            .values()
-            .map(|dependency| BuildDependency {
-                group: dependency.group.clone(),
-                artifact: dependency.artifact.clone(),
-                version: dependency.version.clone(),
-                scope: dependency.scope,
-                optional: false,
-            })
-            .collect::<Vec<_>>();
-        for required in emit_capability::dependencies(
+        let mut required = Requirements::seeded(
+            &snapshot.project.dependencies,
+            next_model
+                .dependencies
+                .values()
+                .map(|dependency| BuildDependency {
+                    group: dependency.group.clone(),
+                    artifact: dependency.artifact.clone(),
+                    version: dependency.version.clone(),
+                    scope: dependency.scope,
+                    optional: false,
+                })
+                .collect(),
+        );
+        required.extend(emit_capability::dependencies(
             &next_model,
             snapshot.project.spring_boot.as_deref(),
             snapshot.project.build_system != BuildSystem::Unknown,
-        ) {
-            if !satisfied(&required)
-                && !dependencies.iter().any(|declared| {
-                    declared.group == required.group && declared.artifact == required.artifact
-                })
-            {
-                dependencies.push(required);
-            }
-        }
-        for required in emit_component::dependencies(&next_model) {
-            if !satisfied(&required)
-                && !dependencies.iter().any(|declared| {
-                    declared.group == required.group && declared.artifact == required.artifact
-                })
-            {
-                dependencies.push(required);
-            }
-        }
-        if next_model
-            .entities
-            .values()
-            .any(|entity| entity.active && entity.facets.contains(&jails_model::Facet::Dto))
-        {
-            let required = BuildDependency {
-                group: "org.springframework.boot".to_string(),
-                artifact: "spring-boot-starter-validation".to_string(),
-                version: None,
-                scope: DependencyScope::Compile,
-                optional: false,
-            };
-            if !satisfied(&required)
-                && !dependencies.iter().any(|declared| {
-                    declared.group == required.group && declared.artifact == required.artifact
-                })
-            {
-                dependencies.push(required);
-            }
-        }
+        ));
+        required.extend(emit_component::dependencies(&next_model));
+        let declares = |kind: &str| {
+            next_model
+                .capabilities
+                .values()
+                .any(|capability| capability.kind == kind)
+        };
+        let has_facet = |facet: jails_model::Facet| {
+            next_model
+                .entities
+                .values()
+                .any(|entity| entity.active && entity.facets.contains(&facet))
+        };
+        let has_unit =
+            |kind: jails_model::UnitKind| next_model.units.values().any(|unit| unit.kind == kind);
+        required.when(
+            has_facet(jails_model::Facet::Dto),
+            spring_starter("validation", DependencyScope::Compile),
+        );
         // **Only when there is a build to declare it in.** A model with no
         // captured pom or Gradle script reaches the `BuildSystem::Unknown` arm
         // below, which refuses the moment any dependency is wanted -- so
         // adding one unconditionally turns "this project has no build file"
         // into a compile error for every scaffold.
-        if emit_architecture::applies(&next_model)
-            && snapshot.project.build_system != BuildSystem::Unknown
-        {
-            let required = emit_architecture::dependency();
-            if !satisfied(&required)
-                && !dependencies.iter().any(|declared| {
-                    declared.group == required.group && declared.artifact == required.artifact
-                })
-            {
-                dependencies.push(required);
-            }
+        required.when(
+            emit_architecture::applies(&next_model)
+                && snapshot.project.build_system != BuildSystem::Unknown,
+            emit_architecture::dependency(),
+        );
+        if declares("db") {
+            required.extend(storage::storage_dependencies(
+                snapshot.project.spring_boot.as_deref(),
+            ));
         }
-        if next_model
-            .capabilities
-            .values()
-            .any(|capability| capability.kind == "db")
-        {
-            for required in storage::storage_dependencies(snapshot.project.spring_boot.as_deref()) {
-                if !satisfied(&required)
-                    && !dependencies.iter().any(|declared| {
-                        declared.group == required.group && declared.artifact == required.artifact
-                    })
-                {
-                    dependencies.push(required);
-                }
-            }
-        }
-        if next_model
-            .capabilities
-            .values()
-            .any(|capability| capability.kind == "fast-test")
-        {
-            // **Versionless under a Boot parent, pinned without one.** A
-            // `<dependency>` with no version is correct where something
-            // manages it and *fatal* where nothing does: Maven refuses to
-            // read the pom at all, `validate` included. The pin is the
-            // project's own JUnit, because the console launcher and the tests
-            // have to be one version -- a mismatch resolves and then dies at
-            // run time with `NoSuchMethodError`.
-            let required = BuildDependency {
+        // **Versionless under a Boot parent, pinned without one.** A
+        // `<dependency>` with no version is correct where something manages it
+        // and *fatal* where nothing does: Maven refuses to read the pom at
+        // all, `validate` included. The pin is the project's own JUnit,
+        // because the console launcher and the tests have to be one version --
+        // a mismatch resolves and then dies at run time with
+        // `NoSuchMethodError`.
+        required.when(
+            declares("fast-test"),
+            BuildDependency {
                 group: "org.junit.platform".to_string(),
                 artifact: "junit-platform-console".to_string(),
                 version: match snapshot.project.spring_boot {
@@ -449,43 +396,20 @@ impl Compiler {
                 },
                 scope: DependencyScope::Test,
                 optional: false,
-            };
-            if !satisfied(&required)
-                && !dependencies.iter().any(|declared| {
-                    declared.group == required.group && declared.artifact == required.artifact
-                })
-            {
-                dependencies.push(required);
-            }
-        }
+            },
+        );
         // Boot 4 split the servlet test slice out of `spring-boot-starter-test`,
         // so `@AutoConfigureMockMvc` and `MockMvcTester` are no longer on the
         // test classpath by default -- and every controller jails emits comes
         // with a companion test that uses both. Below Boot 4 the classes are in
         // `spring-boot-test-autoconfigure`, already present, which is why this
         // is keyed on the major rather than declared unconditionally.
-        if emit_capability::boot_major(snapshot.project.spring_boot.as_deref())
-            .is_some_and(|major| major >= 4)
-            && next_model
-                .units
-                .values()
-                .any(|unit| unit.kind == jails_model::UnitKind::Controller)
-        {
-            let required = BuildDependency {
-                group: "org.springframework.boot".to_string(),
-                artifact: "spring-boot-starter-webmvc-test".to_string(),
-                version: None,
-                scope: DependencyScope::Test,
-                optional: false,
-            };
-            if !satisfied(&required)
-                && !dependencies.iter().any(|declared| {
-                    declared.group == required.group && declared.artifact == required.artifact
-                })
-            {
-                dependencies.push(required);
-            }
-        }
+        required.when(
+            emit_capability::boot_major(snapshot.project.spring_boot.as_deref())
+                .is_some_and(|major| major >= 4)
+                && has_unit(jails_model::UnitKind::Controller),
+            spring_starter("webmvc-test", DependencyScope::Test),
+        );
         // **Anything that serves HTTP declares the starter that serves it.**
         // The `api` capability's operation controllers are one source; a
         // scaffold's `http` facet is the other, and it emits a
@@ -493,101 +417,45 @@ impl Compiler {
         // Spring Web -- `package org.springframework.web.bind.annotation does
         // not exist`, on a file the reader did not write.
         //
-        // Gated on the project being Spring, because the entry is versionless:
-        // correct under `spring-boot-starter-parent`, and fatal without it,
-        // where Maven refuses to read the pom at all.
-        if next_model
-            .capabilities
-            .values()
-            .any(|capability| capability.kind == "api")
-            || (snapshot.project.spring_boot.is_some()
-                && next_model.entities.values().any(|entity| {
-                    entity.active && entity.facets.contains(&jails_model::Facet::Http)
-                }))
-        {
-            let required = BuildDependency {
-                group: "org.springframework.boot".to_string(),
-                artifact: "spring-boot-starter-web".to_string(),
-                version: None,
-                scope: DependencyScope::Compile,
-                optional: false,
-            };
-            if !satisfied(&required)
-                && !dependencies.iter().any(|declared| {
-                    declared.group == required.group && declared.artifact == required.artifact
-                })
-            {
-                dependencies.push(required);
-            }
-        }
-        dependencies.sort();
+        // Gated on the project being Spring for the facet half, because the
+        // entry is versionless: correct under `spring-boot-starter-parent`,
+        // and fatal without it, where Maven refuses to read the pom at all.
+        required.when(
+            declares("api")
+                || (snapshot.project.spring_boot.is_some() && has_facet(jails_model::Facet::Http)),
+            spring_starter("web", DependencyScope::Compile),
+        );
+        let dependencies = required.into_sorted();
         let mut reader_document_intents = match snapshot.project.build_system {
             BuildSystem::Maven => {
-                let mut roots = Vec::new();
-                if has_main_sources {
-                    roots.push(jails_contracts::MavenSourceRoot {
-                        source_set: JavaSourceSet::Main,
-                        path: main_source_root,
-                    });
-                }
-                if has_test_sources {
-                    roots.push(jails_contracts::MavenSourceRoot {
-                        source_set: JavaSourceSet::Test,
-                        path: test_source_root,
-                    });
-                }
-                if has_test_resources {
-                    roots.push(jails_contracts::MavenSourceRoot {
-                        source_set: JavaSourceSet::TestResources,
-                        path: test_resource_root,
-                    });
-                }
-                if has_main_resources {
-                    roots.push(jails_contracts::MavenSourceRoot {
-                        source_set: JavaSourceSet::MainResources,
-                        path: main_resource_root,
-                    });
-                }
+                let mut roots = wanted_roots
+                    .into_iter()
+                    .map(|(path, source_set)| jails_contracts::MavenSourceRoot { source_set, path })
+                    .collect::<Vec<_>>();
                 roots.sort();
-                let mut intents = vec![DocumentIntent::EnsureMavenSourceRoots { roots }];
-                intents.push(DocumentIntent::ReconcileBuildFeatures {
-                    features: build_features.clone(),
-                });
-                intents.push(DocumentIntent::ReconcileDependencies { dependencies });
-                intents
+                vec![
+                    DocumentIntent::EnsureMavenSourceRoots { roots },
+                    DocumentIntent::ReconcileBuildFeatures {
+                        features: build_features.clone(),
+                    },
+                    DocumentIntent::ReconcileDependencies { dependencies },
+                ]
             }
-            BuildSystem::Gradle => {
-                let mut intents = Vec::new();
-                if has_main_sources {
-                    intents.push(DocumentIntent::EnsureGradleSourceRoot {
-                        path: main_source_root,
-                        source_set: JavaSourceSet::Main,
-                    });
-                }
-                if has_test_sources {
-                    intents.push(DocumentIntent::EnsureGradleSourceRoot {
-                        path: test_source_root,
-                        source_set: JavaSourceSet::Test,
-                    });
-                }
-                if has_test_resources {
-                    intents.push(DocumentIntent::EnsureGradleSourceRoot {
-                        path: test_resource_root,
-                        source_set: JavaSourceSet::TestResources,
-                    });
-                }
-                if has_main_resources {
-                    intents.push(DocumentIntent::EnsureGradleSourceRoot {
-                        path: main_resource_root,
-                        source_set: JavaSourceSet::MainResources,
-                    });
-                }
-                intents.push(DocumentIntent::ReconcileBuildFeatures {
-                    features: build_features,
-                });
-                intents.push(DocumentIntent::ReconcileDependencies { dependencies });
-                intents
-            }
+            BuildSystem::Gradle => wanted_roots
+                .into_iter()
+                .map(
+                    |(path, source_set)| DocumentIntent::EnsureGradleSourceRoot {
+                        path,
+                        source_set,
+                    },
+                )
+                .chain([
+                    DocumentIntent::ReconcileBuildFeatures {
+                        features: build_features.clone(),
+                    },
+                    DocumentIntent::ReconcileDependencies { dependencies },
+                ])
+                .collect(),
             BuildSystem::Unknown if dependencies.is_empty() && build_features.is_empty() => {
                 Vec::new()
             }
@@ -694,6 +562,116 @@ impl Compiler {
             diagnostics,
         })
     }
+}
+
+/// The build dependencies one compile requires, each declared at most once.
+///
+/// **Two rules, and both used to be written out at every call site.**
+///
+/// **What the reader's build already declares is already satisfied.**
+/// Everything added here is *implied* -- by a capability, a component, an
+/// entity facet -- rather than declared, so an artifact the project states
+/// for itself answers the requirement and must not be declared a second time.
+/// Without it a Gradle project carrying `spring-boot-starter-web` of its own
+/// is refused outright the moment an entity gains an HTTP facet, over a
+/// dependency it already has.
+///
+/// **And a coordinate two sources imply is one entry, not two.**
+///
+/// Neither rule covers the model's *own* dependencies, which is why they are
+/// seeded rather than required: those the reader declared through jails, so a
+/// copy outside the marked block is two owners for one coordinate and the
+/// adapter is right to refuse it.
+///
+/// Eight hand-written copies of that pair was eight chances for the ninth to
+/// forget half of it, in a check whose failure is a refusal on a dependency
+/// the project already has.
+struct Requirements<'a> {
+    /// Every `group:artifact` the captured build already declares.
+    observed: &'a BTreeSet<String>,
+    declared: Vec<BuildDependency>,
+}
+
+impl<'a> Requirements<'a> {
+    fn seeded(observed: &'a BTreeSet<String>, declared: Vec<BuildDependency>) -> Self {
+        Self { observed, declared }
+    }
+
+    /// Require one coordinate, unless the build has it or something already
+    /// asked for it.
+    fn require(&mut self, required: BuildDependency) {
+        let coordinate = format!("{}:{}", required.group, required.artifact);
+        if self.observed.contains(&coordinate)
+            || self.declared.iter().any(|declared| {
+                declared.group == required.group && declared.artifact == required.artifact
+            })
+        {
+            return;
+        }
+        self.declared.push(required);
+    }
+
+    /// Require one coordinate only when the condition holds.
+    fn when(&mut self, condition: bool, required: BuildDependency) {
+        if condition {
+            self.require(required);
+        }
+    }
+
+    fn extend(&mut self, required: impl IntoIterator<Item = BuildDependency>) {
+        for dependency in required {
+            self.require(dependency);
+        }
+    }
+
+    fn into_sorted(self) -> Vec<BuildDependency> {
+        let mut declared = self.declared;
+        declared.sort();
+        declared
+    }
+}
+
+/// A Spring Boot starter, whose version the parent manages.
+///
+/// **Versionless deliberately, and only correct under the parent.** A
+/// `<dependency>` with no `<version>` is what `spring-boot-starter-parent`
+/// expects and what Maven refuses to read a pom without, so every caller
+/// gates on the project being Spring; the four that spelled the literal out
+/// could each have got the group, the prefix or the `optional` flag wrong
+/// alone.
+fn spring_starter(name: &str, scope: DependencyScope) -> BuildDependency {
+    BuildDependency {
+        group: "org.springframework.boot".to_string(),
+        artifact: format!("spring-boot-starter-{name}"),
+        version: None,
+        scope,
+        optional: false,
+    }
+}
+
+/// One refusal naming a list of ejection targets, agreeing with its own count.
+///
+/// The two ejection refusals differ in nothing but their words, and each
+/// carried its own pair of inverted pluralisation ternaries -- the shape where
+/// a copy gets the noun's `s` and the verb's `s` the same way round and reads
+/// correctly for exactly one of the two lengths.
+fn refuse_ejections<T: std::fmt::Display>(
+    noun: &str,
+    verb: &str,
+    tail: &str,
+    targets: impl IntoIterator<Item = T>,
+) -> CompileError {
+    let named = targets
+        .into_iter()
+        .map(|target| format!("`{target}`"))
+        .collect::<Vec<_>>();
+    let one = named.len() == 1;
+    CompileError::new(format!(
+        "{noun}{} {} {verb}{} {tail}",
+        if one { "" } else { "s" },
+        named.join(", "),
+        if one { "s" } else { "" },
+    ))
 }
 
 fn property_entries(
