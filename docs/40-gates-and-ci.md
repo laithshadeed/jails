@@ -90,10 +90,19 @@ tree. The empty value pins git's own default, which every git supports.
 
 # The CI budget
 
-**The whole `verify` job must finish inside five minutes** -- set-up,
+**The whole `verify` job must finish inside ten minutes** -- set-up,
 checkout, cargo restore, the gate, and the post steps -- with no test removed
 and no second job added, because the bill is per minute and a parallel job is
 billed twice.
+
+Five was the number until 2026-09-02, and this is the measurement that
+retired it: that day's run did 1003 s of subprocess work at mean concurrency
+3.47 on four cores, which is a packed runner, so the test phase alone is
+250 s at perfect packing; the compile from a warm cache took another 190 s;
+the job took 9 m 14 s end to end. Five minutes on this runner would need
+the work halved, and the levers that remain are listed at the end of this
+file. The ten-minute figure is a ceiling, not a target: a change that adds a
+minute of JVM work still has to say why.
 
 ## The arithmetic
 
@@ -171,9 +180,10 @@ What is left on this machine is the poles: three proof apps at ~95 s each
 (`app apply`, `docker build`, `mvn test`, `failsafe`), the minicom `jails
 check` at ~80 s, and the runner lifecycle test's five sequential Spring
 boots at ~80 s. Each is real work in one JVM chain; splitting a chain across
-tests needs a shared, locked fixture (P13.10 first).
+tests needs a shared fixture, and `claim_fixture` in `tests/common/mod.rs`
+already locks one for the life of the process.
 
-## What is left, if five minutes is still the target
+## What five minutes would take
 
 - **A larger runner.** The only lever that reaches 300s; it buys time rather
   than money.
@@ -184,21 +194,7 @@ tests needs a shared, locked fixture (P13.10 first).
 
 ## Open items
 
-**P13.7 The suite is `tests/cli` and nothing else.** The other binaries finish
-inside it, so only `cli` has a critical path and a budget. Profile it with
-`JAILS_TEST_PROFILE=1 -- --nocapture`; the per-subprocess lines go to stderr.
-**Exit:** the job fits its budget, or the budget is restated with the
-measurement that makes it unreachable. It is currently the second.
-
-**P13.9 A full tmpfs still reports itself as a product bug from one place.**
-`jails_support::scratch::reserve` leads with *"failed to create a scratch
-directory"*, a sentence about jails, on a storage error. The harness half
-names the disk, counts the fixtures holding it and carries a `fix:` line.
-Reproduction: fill `/tmp`, run `cargo test -p jails`.
-
-**P13.10 `cached_toolchain_dir_with_salt` takes no lock**, so two gates
-running at once race on `target/jails-e2e-cache`: one walks `remove_dir_all`
-while the other creates files underneath it, and `.jails-generated-ready` is
-written before the directory is filled, so the second process reuses a
-half-built toolbox. **Exit:** the fixture takes the same `flock` the Maven
-budget uses, and the ready marker is written last.
+None. The last three (P13.7, P13.9, P13.10) closed on 2026-09-02: the
+budget above is the restated one, `jails_support::scratch` names the disk
+on a storage error, and the toolchain fixture takes a `flock` beside its
+tree with the ready marker written last.

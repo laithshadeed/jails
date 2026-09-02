@@ -142,7 +142,9 @@ jobs:
       # meaning on another machine; drop it so the entry carries artifacts only.
       #
       # Cargo never garbage-collects `target/debug/deps` or
-      # `target/debug/incremental`: each run adds its own artifacts and
+      # `target/debug/incremental` (nor clippy's and rustdoc's copies under
+      # `target/lint` and `target/doc-check`, which `scripts/gate-build.sh`
+      # keeps apart so the three compile at once): each run adds its own artifacts and
       # sessions and removes none, so a cache carried run to run only grows.
       # Keep the newest artifact per unit and the newest session per crate.
       # Deleting incremental state outright costs a minute of recompilation a
@@ -160,50 +162,54 @@ jobs:
           import collections
           from pathlib import Path
 
-          root = Path("target/debug/deps")
-          files = [p for p in root.iterdir() if p.is_file()] if root.is_dir() else []
-          before = sum(p.stat().st_size for p in files)
-          # `libjails_model-<hash>.rlib` and `cli-<hash>` alike: the hash is
-          # the last `-` segment, and what identifies the *unit* is everything
-          # before it plus the extension.
-          newest = collections.defaultdict(list)
-          for path in files:
-              stem = path.stem.rsplit("-", 1)[0]
-              newest[(stem, path.suffix)].append(path)
-          removed = 0
-          for group in newest.values():
-              group.sort(key=lambda p: p.stat().st_mtime)
-              for stale in group[:-1]:
-                  removed += 1
-                  stale.unlink(missing_ok=True)
-          after = sum(p.stat().st_size for p in root.iterdir() if p.is_file())
-          print(
-              f"trim: dropped {removed} superseded artifacts, "
-              f"{before / 1e6:.0f} MB -> {after / 1e6:.0f} MB"
-          )
+          ROOTS = [Path("target/debug"), Path("target/lint/debug"), Path("target/doc-check/debug")]
+          for build in ROOTS:
+              root = build / "deps"
+              files = [p for p in root.iterdir() if p.is_file()] if root.is_dir() else []
+              before = sum(p.stat().st_size for p in files)
+              # `libjails_model-<hash>.rlib` and `cli-<hash>` alike: the hash is
+              # the last `-` segment, and what identifies the *unit* is everything
+              # before it plus the extension.
+              newest = collections.defaultdict(list)
+              for path in files:
+                  stem = path.stem.rsplit("-", 1)[0]
+                  newest[(stem, path.suffix)].append(path)
+              removed = 0
+              for group in newest.values():
+                  group.sort(key=lambda p: p.stat().st_mtime)
+                  for stale in group[:-1]:
+                      removed += 1
+                      stale.unlink(missing_ok=True)
+              after = sum(p.stat().st_size for p in root.iterdir() if p.is_file()) if root.is_dir() else 0
+              print(
+                  f"trim: dropped {removed} superseded artifacts, "
+                  f"{before / 1e6:.0f} MB -> {after / 1e6:.0f} MB"
+              )
           DEPS
           python3 - <<'TRIM'
           import shutil
           from pathlib import Path
 
-          root = Path("target/debug/incremental")
-          before = sum(f.stat().st_size for f in root.rglob("*") if f.is_file()) if root.is_dir() else 0
-          removed = 0
-          for crate in sorted(root.iterdir()) if root.is_dir() else []:
-              if not crate.is_dir():
-                  continue
-              sessions = sorted(
-                  (p for p in crate.iterdir() if p.is_dir()),
-                  key=lambda p: p.stat().st_mtime,
+          ROOTS = [Path("target/debug"), Path("target/lint/debug"), Path("target/doc-check/debug")]
+          for build in ROOTS:
+              root = build / "incremental"
+              before = sum(f.stat().st_size for f in root.rglob("*") if f.is_file()) if root.is_dir() else 0
+              removed = 0
+              for crate in sorted(root.iterdir()) if root.is_dir() else []:
+                  if not crate.is_dir():
+                      continue
+                  sessions = sorted(
+                      (p for p in crate.iterdir() if p.is_dir()),
+                      key=lambda p: p.stat().st_mtime,
+                  )
+                  for stale in sessions[:-1]:
+                      shutil.rmtree(stale, ignore_errors=True)
+                      removed += 1
+              after = sum(f.stat().st_size for f in root.rglob("*") if f.is_file()) if root.is_dir() else 0
+              print(
+                  f"trim: dropped {removed} superseded incremental sessions, "
+                  f"{before / 1e6:.0f} MB -> {after / 1e6:.0f} MB"
               )
-              for stale in sessions[:-1]:
-                  shutil.rmtree(stale, ignore_errors=True)
-                  removed += 1
-          after = sum(f.stat().st_size for f in root.rglob("*") if f.is_file()) if root.is_dir() else 0
-          print(
-              f"trim: dropped {removed} superseded incremental sessions, "
-              f"{before / 1e6:.0f} MB -> {after / 1e6:.0f} MB"
-          )
           TRIM
 
       # After the trim, so the entry carries artifacts and not the suite's

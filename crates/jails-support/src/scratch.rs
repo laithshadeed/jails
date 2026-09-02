@@ -40,12 +40,7 @@ impl ScratchDir {
         let inner = tempfile::Builder::new()
             .prefix(&format!("{prefix}-"))
             .tempdir_in(parent)
-            .map_err(|error| {
-                format!(
-                    "failed to create a scratch directory under {}: {error}",
-                    parent.display()
-                )
-            })?;
+            .map_err(|error| reserve_failure(parent, &error))?;
         Ok(Self { inner: Some(inner) })
     }
 
@@ -89,10 +84,56 @@ impl ScratchDir {
     }
 }
 
+/// What a failed reservation says, and which half it blames.
+///
+/// A full disk is the machine's fault and the message leads with the disk,
+/// because a sentence that starts "failed to create a scratch directory" is
+/// read as a sentence about jails: the reader looks for the bug in the tool
+/// while `/tmp` stays full. Every other error is about the reservation.
+fn reserve_failure(parent: &Path, error: &std::io::Error) -> String {
+    use std::io::ErrorKind;
+    if matches!(
+        error.kind(),
+        ErrorKind::StorageFull | ErrorKind::QuotaExceeded
+    ) {
+        format!(
+            "{} has no room left for a scratch directory: {error}\n       fix: free space there, or point TMPDIR at a disk that has some",
+            parent.display()
+        )
+    } else {
+        format!(
+            "failed to create a scratch directory under {}: {error}",
+            parent.display()
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
+
+    /// A full disk is reported as the disk, with the place to free and a
+    /// `fix:` line, never as a defect in the reservation.
+    #[test]
+    fn a_full_disk_is_blamed_on_the_disk_and_carries_a_fix() {
+        let parent = Path::new("/tmp");
+        let full = reserve_failure(
+            parent,
+            &std::io::Error::from(std::io::ErrorKind::StorageFull),
+        );
+        assert!(full.starts_with("/tmp has no room left"), "{full}");
+        assert!(full.contains("fix: free space"), "{full}");
+        let other = reserve_failure(
+            parent,
+            &std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        );
+        assert!(
+            other.starts_with("failed to create a scratch directory under /tmp"),
+            "{other}"
+        );
+        assert!(!other.contains("fix:"), "{other}");
+    }
 
     /// Two reservations never share a tree.
     #[test]
