@@ -60,22 +60,7 @@ produced. Forging a `Plan` outside the compiler is not on the list.
 
 ## Product direction that is yours
 
-**P9.2 §3.3 — frozen conflicts, `continue` and `abort`.** Three-way
-reconciliation, conflict detection and per-path reporting all work; the marker
-bytes are produced and dropped. `PendingIdentity`, `ResolutionIdentity` and
-`RestoreIdentity` exist and nothing reaches them. A refusal must never name
-`jails continue`, which does not exist.
-
 **P9.6 §5.1 — Gradle behavioural parity** for the warm test engine, `jails
 fmt` and `jails console`. **Exit:** `jails test`, `--engine build` and
 `--engine warm` discover the same tests and report the same counts on both
 build systems.
-
-**P9.7 §2.3, §2.4a, §2.4b, §2.4c — the latency work, each behind a dated
-measurement.** The incremental source/AST index, additive test-dependency
-hints, service identity labels and semantic readiness. No item in this group
-starts without a number.
-
-**P9.8 §2.7 — the Ecto-style SQL sandbox stays deliberately deferred.** Not a
-roadmap dependency and not a default. If the experiment is run, record the
-negative result rather than deleting the section.

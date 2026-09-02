@@ -1747,3 +1747,12 @@ Deferred out of v1 on purpose — this is meant to stay a small tool:
 - **Lightweight in-process presence.** `g presence` generates the
   PostgreSQL-backed, cluster-safe version. A single-node in-memory variant
   would be a different recipe and does not exist.
+- **Latency work behind a measurement.** An incremental source index for
+  `routes`, `beans` and the editor protocol, additive test-dependency hints
+  for `test --affected`, service identity labels and semantic readiness for
+  `run` are each plausible and each waits for a number showing where the
+  time goes; none starts without one.
+- **An Ecto-style SQL sandbox.** Wrapping each generated test in a
+  transaction that rolls back instead of starting a container per class is
+  not a dependency of anything and not a default. If the experiment is run,
+  the result is recorded here either way.
