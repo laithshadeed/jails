@@ -139,10 +139,11 @@ fn stage_compose_document(
 static OWED_FORMAT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Run the formatter the batched rows owed, once, if any of them did.
-pub(crate) fn run_owed_format(root: &std::path::Path, debug: bool) {
+pub(crate) fn run_owed_format(invocation: &Invocation) -> Result<()> {
     if OWED_FORMAT.swap(false, std::sync::atomic::Ordering::Relaxed) {
-        jails_drive::run::format_generated(root, debug);
+        jails_drive::run::format_generated(&invocation.root()?, invocation.debug);
     }
+    Ok(())
 }
 
 pub(crate) fn run_follow_up_effects(

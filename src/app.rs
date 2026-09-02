@@ -357,7 +357,7 @@ pub(crate) fn replay(requested: Option<&Path>, invocation: crate::Invocation) ->
     for row in rows {
         crate::model_generate_jdl::run(row, batched.clone())?;
     }
-    crate::model_generate::run_owed_format(root, invocation.debug);
+    crate::model_generate::run_owed_format(&invocation)?;
     report_undeclared(root, &declared, &invocation)
 }
 
