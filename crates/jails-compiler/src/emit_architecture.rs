@@ -60,11 +60,12 @@ pub(crate) fn applies(model: &AppModel) -> bool {
         .any(|entity| entity.active && entity.facets.contains(&Facet::Http))
 }
 
-pub(crate) fn lower(
+pub(crate) fn emit(
     model: &AppModel,
     output: &mut RenderedTree,
-    templates: &jails_contracts::TemplateOverrides,
+    snapshot: &jails_contracts::WorkspaceSnapshot,
 ) -> Result<(), CompileError> {
+    let templates = &snapshot.template_overrides;
     if !applies(model) {
         return Ok(());
     }

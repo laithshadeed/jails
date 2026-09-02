@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 const JAVA_MAIN_ROOT: &str = ".jails/generated/main/java";
 const JAVA_TEST_ROOT: &str = ".jails/generated/test/java";
 
-pub(crate) fn lower_and_emit(
+pub(crate) fn emit(
     model: &AppModel,
     output: &mut RenderedTree,
     spring_boot: Option<&str>,

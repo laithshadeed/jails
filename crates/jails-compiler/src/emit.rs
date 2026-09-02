@@ -48,21 +48,60 @@ pub(crate) fn jspecify_on_classpath(project: &ProjectFacts) -> bool {
     project.dependencies.contains("org.jspecify:jspecify")
 }
 
+/// One pass over the model, writing its part of the desired tree.
+type Pass =
+    fn(&jails_model::AppModel, &mut RenderedTree, &WorkspaceSnapshot) -> Result<(), CompileError>;
+
+/// The passes that walk [`crate::recipe::Recipe`] rows: each looks a node's
+/// recipe up and renders its files through the one loop.
+const RECIPE_WALKS: &[Pass] = &[
+    // The 22 capability packs, and the project files of ci, docker, k8s,
+    // loadtest and format beside them.
+    emit_capability::emit,
+    // Twelve component kinds as rows; http-sink and durable-job as functions.
+    emit_component::emit,
+];
+
+/// The passes that are still functions: emitters that build Java from the
+/// model's structure -- a record's components, a query's SQL, a proof's
+/// request -- and have not been reduced to rows and fragments.
+///
+/// **This is the number to watch.** Every one that becomes a recipe walk
+/// comes off this list, and `docs/60-abstraction.md` S60.3 keeps the count;
+/// the test below holds the two together.
+const FUNCTIONS: &[Pass] = &[
+    // Entity facets (record, enum, factory, dto, repository, service, http,
+    // events, search, seed), units (class, interface, service, sealed,
+    // strategy, controller, test), use cases and the repository adapters.
+    emit_java::emit,
+    // command, query and transition.
+    emit_operation::emit,
+    // association.
+    crate::emit_relation::emit,
+    // event: the publisher, the handler port, the listener and their proofs.
+    crate::emit_messaging::emit,
+    // A command's outbox: store, sink, worker.
+    emit_operation::outbox::emit,
+    // The HTTP proofs of every routed operation.
+    emit_http::emit,
+    // The architecture test.
+    crate::emit_architecture::emit,
+];
+
+/// The whole desired tree, as the passes that write it.
+///
+/// **The two tables are the answer to "what renders kind X".** Their order is
+/// free: every pass writes its own paths and a tree refuses two units at one
+/// path, so the only sequencing is that `package_infos` runs over the
+/// finished tree and `tidy_java` last.
 pub(crate) fn emit(
     model: &jails_model::AppModel,
     output: &mut RenderedTree,
     snapshot: &WorkspaceSnapshot,
 ) -> Result<(), CompileError> {
-    let templates = &snapshot.template_overrides;
-    emit_capability::lower_and_emit(model, output, snapshot)?;
-    emit_java::lower_and_emit(model, output, snapshot)?;
-    emit_operation::lower_and_emit(model, output)?;
-    crate::emit_relation::lower_and_emit(model, output)?;
-    crate::emit_messaging::lower_and_emit(model, output, templates)?;
-    emit_operation::outbox::lower_and_emit(model, output, templates)?;
-    emit_component::lower_and_emit(model, output, snapshot)?;
-    emit_http::lower_and_emit(model, output, snapshot.project.spring_boot.as_deref())?;
-    crate::emit_architecture::lower(model, output, templates)?;
+    for pass in RECIPE_WALKS.iter().chain(FUNCTIONS) {
+        pass(model, output, snapshot)?;
+    }
     package_infos(output, jspecify_on_classpath(&snapshot.project))?;
     tidy_java(output);
     Ok(())
@@ -207,4 +246,16 @@ pub(crate) fn compose_path(snapshot: &WorkspaceSnapshot) -> Result<ProjectPath, 
         }
     }
     ProjectPath::parse("compose.yaml").map_err(CompileError::new)
+}
+
+#[cfg(test)]
+mod tests {
+    /// The number `docs/60-abstraction.md` S60.3 states for the passes that
+    /// are still functions. A pass that becomes a recipe walk lowers this
+    /// beside the doc; one that grows back raises it and says why.
+    #[test]
+    fn seven_passes_are_still_functions() {
+        assert_eq!(super::FUNCTIONS.len(), 7);
+        assert_eq!(super::RECIPE_WALKS.len(), 2);
+    }
 }

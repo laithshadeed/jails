@@ -121,7 +121,7 @@ fn loadtest_paths(model: &AppModel) -> Vec<ProjectPath> {
         .collect()
 }
 
-pub(super) fn lower_and_emit(
+pub(super) fn emit(
     model: &AppModel,
     capability: &Capability,
     output: &mut RenderedTree,

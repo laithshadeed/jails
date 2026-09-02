@@ -26,11 +26,12 @@ const HANDLER: crate::Template = crate::template!("spring/event_handler_java.jav
 const LISTENER_TEST: crate::Template = crate::template!("spring/listener_test_java.java");
 const IT: crate::Template = crate::template!("spring/messaging_it_java.java");
 
-pub(crate) fn lower_and_emit(
+pub(crate) fn emit(
     model: &AppModel,
     output: &mut RenderedTree,
-    templates: &jails_contracts::TemplateOverrides,
+    snapshot: &jails_contracts::WorkspaceSnapshot,
 ) -> Result<(), CompileError> {
+    let templates = &snapshot.template_overrides;
     if !model
         .capabilities
         .values()

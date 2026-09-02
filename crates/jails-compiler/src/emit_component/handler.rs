@@ -6,7 +6,7 @@
 //! what lets the same service be driven from a CLI.
 //!
 //! **`ApiError` belongs to every handler in the model**, so it is emitted once
-//! from [`super::lower_and_emit`] rather than by each one — the same rule
+//! from [`super::emit`] rather than by each one — the same rule
 //! `SchedulingConfig` follows, and for the same reason: a managed tree refuses
 //! two units writing one path, so a per-handler emitter would compile and then
 //! fail on the second declaration.

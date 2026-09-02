@@ -28,11 +28,12 @@ enum Binding {
     Path,
 }
 
-pub(crate) fn lower_and_emit(
+pub(crate) fn emit(
     model: &AppModel,
     output: &mut RenderedTree,
-    spring_boot: Option<&str>,
+    snapshot: &jails_contracts::WorkspaceSnapshot,
 ) -> Result<(), CompileError> {
+    let spring_boot = snapshot.project.spring_boot.as_deref();
     let Some(capability) = model
         .capabilities
         .values()

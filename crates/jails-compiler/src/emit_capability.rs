@@ -189,7 +189,7 @@ pub(crate) fn build_features(model: &AppModel) -> BTreeSet<BuildFeature> {
         .collect()
 }
 
-pub(crate) fn lower_and_emit(
+pub(crate) fn emit(
     model: &AppModel,
     output: &mut RenderedTree,
     snapshot: &jails_contracts::WorkspaceSnapshot,
@@ -205,7 +205,7 @@ pub(crate) fn lower_and_emit(
                 reader_facet::emit_compose_service(output, capability, &compose_path, service)?;
             }
         }
-        project_file::lower_and_emit(
+        project_file::emit(
             model,
             capability,
             output,

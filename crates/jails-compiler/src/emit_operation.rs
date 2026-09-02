@@ -15,9 +15,10 @@ use jails_model::{
 };
 use std::collections::BTreeSet;
 
-pub(crate) fn lower_and_emit(
+pub(crate) fn emit(
     model: &AppModel,
     output: &mut RenderedTree,
+    _: &jails_contracts::WorkspaceSnapshot,
 ) -> Result<(), CompileError> {
     let Some(capability) = model
         .capabilities
@@ -205,7 +206,7 @@ pub(crate) struct FilteredQuery<'a> {
 ///
 /// A query that does not resolve is skipped rather than reported. Anything
 /// that would fail here has already refused the whole compile in
-/// [`lower_and_emit`]; a diagnostic is not the place to say it a second time,
+/// [`emit`]; a diagnostic is not the place to say it a second time,
 /// in worse words.
 pub(crate) fn filtered_queries(model: &AppModel) -> Vec<FilteredQuery<'_>> {
     model

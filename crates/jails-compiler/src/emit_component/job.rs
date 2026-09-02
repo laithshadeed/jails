@@ -2,7 +2,7 @@
 //!
 //! Two files per job and **one for the whole model**. `SchedulingConfig` turns
 //! scheduling on and sizes its pool, and every job in a project needs the same
-//! one — so it is emitted once from [`super::lower_and_emit`] rather than by
+//! one — so it is emitted once from [`super::emit`] rather than by
 //! each job, because a managed tree refuses two units writing one path and a
 //! second job would otherwise fail the compile.
 //!

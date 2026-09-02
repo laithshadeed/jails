@@ -20,9 +20,10 @@ use std::collections::BTreeSet;
 
 const JAVA_TEST_ROOT: &str = ".jails/generated/test/java";
 
-pub(crate) fn lower_and_emit(
+pub(crate) fn emit(
     model: &AppModel,
     output: &mut RenderedTree,
+    _: &jails_contracts::WorkspaceSnapshot,
 ) -> Result<(), CompileError> {
     if !model
         .capabilities

@@ -264,7 +264,7 @@ const CLIENT: Recipe<Component> = recipe(
 /// `component job <Name>`: a scheduled bean and its test.
 ///
 /// The `SchedulingConfig` it needs belongs to every job in the model rather
-/// than to one, so it is emitted once from [`lower_and_emit`] rather than by
+/// than to one, so it is emitted once from [`emit`] rather than by
 /// each row -- a managed tree refuses two units writing the same path.
 const JOB: Recipe<Component> = recipe(
     &[Key::Property],
@@ -296,7 +296,7 @@ const JOB: Recipe<Component> = recipe(
 /// what lets the same service be driven from a CLI.
 ///
 /// **`ApiError` belongs to every handler in the model**, so it is emitted once
-/// from [`lower_and_emit`] rather than by each one -- the same rule
+/// from [`emit`] rather than by each one -- the same rule
 /// `SchedulingConfig` follows, and for the same reason.
 const HANDLER: Recipe<Component> = recipe(
     &[Key::Path("/{{property}}")],
@@ -724,7 +724,7 @@ fn recipe_for(kind: ComponentKind) -> Option<&'static Recipe<Component>> {
     }
 }
 
-pub(crate) fn lower_and_emit(
+pub(crate) fn emit(
     model: &AppModel,
     output: &mut RenderedTree,
     snapshot: &jails_contracts::WorkspaceSnapshot,

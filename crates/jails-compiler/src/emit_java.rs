@@ -23,7 +23,7 @@ pub(crate) use input::{
 
 pub(crate) const JAVA_ROOT: &str = ".jails/generated/main/java";
 
-pub(crate) fn lower_and_emit(
+pub(crate) fn emit(
     model: &AppModel,
     output: &mut RenderedTree,
     snapshot: &jails_contracts::WorkspaceSnapshot,
@@ -31,7 +31,7 @@ pub(crate) fn lower_and_emit(
     let spring_boot = snapshot.project.spring_boot.as_deref();
     let templates = &snapshot.template_overrides;
     let jdbc = crate::emit::jdbc_on_classpath(&snapshot.project);
-    crate::emit_unit::lower_and_emit(model, output, spring_boot)?;
+    crate::emit_unit::emit(model, output, spring_boot)?;
     if let Some(unit) = execution_context::lower(model)? {
         output
             .insert(unit.path, unit.file)
