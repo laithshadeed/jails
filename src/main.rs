@@ -147,32 +147,30 @@ fn main() -> std::process::ExitCode {
             );
         }
         Command::Add {
-            declare:
-                Some(Declare::Dependency {
-                    coordinate,
-                    version,
-                    scope,
-                }),
-            ..
-        } => model_command::ensure_owned(invocation.clone()).and_then(|()| {
-            arguments::maven_coordinate(&coordinate).and_then(|coordinate| {
-                model_capability::add_dependency(coordinate, version, scope.canonical(), invocation)
-            })
-        }),
-        Command::Add {
             capabilities,
             name,
             no_start,
             package,
-            declare: None,
+            declare,
         } => {
             let invocation = invocation.without_starting(no_start);
-            return dispatch::finish_invocation(
-                model_command::ensure_owned(invocation.clone())
-                    .and_then(|()| model_capability::add(capabilities, name, package, invocation)),
-                failure_output,
-                &failure_path,
-            );
+            let result =
+                model_command::ensure_owned(invocation.clone()).and_then(|()| match declare {
+                    None => model_capability::add(capabilities, name, package, invocation),
+                    Some(Declare::Dependency {
+                        coordinate,
+                        version,
+                        scope,
+                    }) => arguments::maven_coordinate(&coordinate).and_then(|coordinate| {
+                        model_capability::add_dependency(
+                            coordinate,
+                            version,
+                            scope.canonical(),
+                            invocation,
+                        )
+                    }),
+                });
+            return dispatch::finish_invocation(result, failure_output, &failure_path);
         }
         Command::Sync { no_start } => model_command::ensure_owned(invocation.clone())
             .and_then(|()| model_command::sync(no_start, invocation)),

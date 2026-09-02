@@ -61,12 +61,6 @@ online and offline bodies in `spring.rs` are the same forty lines but for
 copy of "seed a project and a model": measure what it shares with `plain.rs`
 before deciding how much of it is Gradle.
 
-**S52.4 -- `cli.rs`: what the parser accepts that nothing honours.** Read every
-arm of `main.rs` for a flag that is parsed and ignored and remove it from clap
-with its help text; `resource repair --strategy` and `--output json-v1` were
-the first two. `Command::Add` has two arms for one command; `Declare` exists
-to distinguish them. Fold.
-
 **S52.5 -- The surfaces with no page.** `contract`, `editor`, `request`,
 `runner` and `setup` have inventory rows and journeys and no `jails <name>`
 in `README.md`'s `Commands` section (`editor` is what `jails.nvim` drives).
@@ -84,7 +78,7 @@ one; a split changes no line count and is done last so it does not hide the
 first.
 
 **S52.7 -- The prose.** `README.md`'s `Commands` section is yours; rewrite
-it to what is there after S52.4.
+it to what is there after S52.5.
 
 ## Traps
 
