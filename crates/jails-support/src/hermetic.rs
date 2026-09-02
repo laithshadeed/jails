@@ -30,9 +30,9 @@
 //! An inherited environment is whatever the operator happened to export, and
 //! a formatter that reads `MAVEN_OPTS` or a locale-dependent `LC_ALL` from it
 //! produces different bytes on two machines for reasons nothing records.
-//! [`RUNNER_SCHEMA`] fixes the exact key set; changing it needs a new schema
-//! value, because a tool that saw a different environment is a different
-//! tool.
+//! [`Invocation::minimal_environment`] fixes the exact key set; changing it
+//! needs a new schema value, because a tool that saw a different environment
+//! is a different tool.
 
 use crate::Result;
 use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, killpg, sigaction};

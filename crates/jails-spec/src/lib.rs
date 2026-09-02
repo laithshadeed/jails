@@ -5,7 +5,6 @@
 //! - Which build tool owns this directory, and where is its root ([`build`],
 //!   [`spec::paths`]).
 //! - What is the conventional package for each layer ([`spec::layout`]).
-//! - What does a field spec mean ([`spec::field`]).
 //!
 //! These live here rather than in `generate.rs` because everything below the
 //! generators needs them -- `model`, `config`, `compose`, `project` and

@@ -4,7 +4,6 @@
 //!
 //! - **Where is the project, and where inside it does a class go** ([`paths`]).
 //! - **What is the conventional package for each layer** ([`layout`]).
-//! - **What does a field spec mean** ([`field`]).
 //!
 //! They sit below the generators because every layer beneath them asks at
 //! least one of the three -- `model`, `config`, `compose`, `project` and

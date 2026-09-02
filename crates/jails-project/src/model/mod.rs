@@ -724,7 +724,7 @@ impl Project {
 
     /// Whether a type this project owns is an enum.
     ///
-    /// Through the same window as [`Project::record_in`], and for the same
+    /// Through the same window as `source_of`, and for the same
     /// reason: a manifest declares an enum and then a scaffold whose column
     /// is that enum, and in one transition neither has been written when the
     /// second one plans. Reading past the projection would refuse a manifest

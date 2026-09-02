@@ -6,8 +6,7 @@
 //!
 //! The files jails writes *about* a project live here too, and they divide by
 //! who owns them. [`config`] and [`compose`] are the reader's, edited by
-//! byte-preserving splice. [`generated_files`] reads jails' own bookkeeping,
-//! which is never hand-edited.
+//! byte-preserving splice.
 //!
 //! [`maven`] is how to invoke this project's Maven, deliberately separate from
 //! `jails_spec::build`, which recognises a build file and never runs one.
