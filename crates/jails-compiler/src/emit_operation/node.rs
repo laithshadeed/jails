@@ -80,8 +80,11 @@ impl Node for Operation {
         })
     }
 
-    fn file_keys(&self, _: &str, _: &str) -> Vec<(&'static str, String)> {
-        vec![("name", self.names.java_type.clone())]
+    fn file_keys(&self, _: &str, template_class: &str) -> Vec<(&'static str, String)> {
+        vec![
+            ("class", template_class.to_string()),
+            ("name", self.names.java_type.clone()),
+        ]
     }
 
     fn provenance(&self, artifact_id: String, ejectable: bool, pass: &'static str) -> Provenance {

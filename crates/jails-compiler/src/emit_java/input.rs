@@ -90,15 +90,6 @@ pub(crate) fn input_components<'a>(
     }
 }
 
-pub(crate) fn record_shape(
-    type_name: &str,
-    fields: &[&Field],
-    imports: &mut BTreeSet<String>,
-) -> String {
-    let components = field_components(fields.iter().copied());
-    record_shape_from_components(type_name, &components, imports)
-}
-
 /// The components an entity's own record declares: every field, in order.
 pub(super) fn entity_components(entity: &Entity) -> Vec<RecordComponent<'_>> {
     field_components(entity.fields.iter())
@@ -106,7 +97,9 @@ pub(super) fn entity_components(entity: &Entity) -> Vec<RecordComponent<'_>> {
 
 /// One record component per field, carrying the checks the compact
 /// constructor renders.
-fn field_components<'a>(fields: impl Iterator<Item = &'a Field>) -> Vec<RecordComponent<'a>> {
+pub(super) fn field_components<'a>(
+    fields: impl Iterator<Item = &'a Field>,
+) -> Vec<RecordComponent<'a>> {
     fields
         .map(|field| RecordComponent {
             name: field.names.java_member.clone(),
@@ -331,14 +324,6 @@ fn snake_case_wire(model: &AppModel) -> bool {
     model.settings.values().any(|setting| {
         setting.key == "spring.jackson.property-naming-strategy" && setting.value == "SNAKE_CASE"
     })
-}
-
-pub(crate) fn record_shape_from_components(
-    type_name: &str,
-    components: &[RecordComponent<'_>],
-    imports: &mut BTreeSet<String>,
-) -> String {
-    record_shape_bound(type_name, components, imports, None)
 }
 
 pub(crate) fn record_shape_bound(

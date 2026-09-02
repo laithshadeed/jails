@@ -450,8 +450,14 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // Deleting the placeholders revealed 39 comment lines that
                 // were always generated. The number is now truthful; 24 is the
                 // measurement the 23 was standing in for.
-                ceiling: 24,
-                target: 24,
+                //
+                // Lowered 24 -> 23 when the entity facets and the operation
+                // ports became recipe rows (S60.3): eleven templates joined
+                // `templates/spring/` carrying exactly the prose their
+                // `format!` bodies carried, which for most of them is none,
+                // so the share fell without a generated comment changing.
+                ceiling: 23,
+                target: 23,
                 why: "A wrong explanation is believed, and a comment restating a decision is \
                       the fastest thing in a codebase to go stale. Generated prose is worse \
                       again: it is asserted by a template that has no way to confirm it, and \

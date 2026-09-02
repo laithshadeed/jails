@@ -1,11 +1,11 @@
 //! Lower semantic facets into deterministic Java source units.
 //!
-//! The one-file facets are [`crate::recipe::Recipe`] rows over the named
-//! fragment renderers in [`fragment`] (`entity` holds the rows); what is
-//! still a function here is several files from one facet (`dto`, `http`,
-//! `seed`), the operation ports, whose `Input` record is a fragment the
-//! request binding shapes, and the repository adapters, which choose their
-//! owner and their bean by what the captured build has on its classpath.
+//! The one-file facets and the operation ports are [`crate::recipe::Recipe`]
+//! rows over named fragment renderers (`entity` and `operation` hold the
+//! rows, [`fragment`] the entity's renderers); what is still a function here
+//! is several files from one facet (`dto`, `http`, `seed`) and the repository
+//! adapters, which choose their owner and their bean by what the captured
+//! build has on its classpath.
 
 mod entity;
 mod execution_context;
@@ -23,10 +23,11 @@ use jails_model::{
 use std::collections::BTreeSet;
 
 mod input;
+mod operation;
 
 pub(crate) use input::{
     Binder, event_component_names, import_declared_type, input_components, parameter_components,
-    parameter_member, record_shape, record_shape_bound, record_shape_from_components, wire_name,
+    parameter_member, record_shape_bound, wire_name,
 };
 
 pub(crate) const JAVA_ROOT: &str = ".jails/generated/main/java";
@@ -101,10 +102,7 @@ pub(crate) fn emit(
         }
     }
     for operation in model.operations.values() {
-        let unit = lower_operation(model, operation)?;
-        output
-            .insert(unit.path, unit.file)
-            .map_err(CompileError::new)?;
+        crate::recipe::render(model, operation, &operation::PORTS, snapshot, output)?;
     }
     // **A repository port always has an implementation**, and that is the
     // scaffold's whole promise: it produces a resource that *runs*. Gating the
@@ -223,145 +221,6 @@ pub(crate) struct Unit {
     pub(crate) file: RenderedFile,
 }
 
-fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, CompileError> {
-    // **Only a form-bound route needs the annotation.** A JSON body reaches
-    // Jackson, which applies the project's naming strategy itself; a form
-    // reaches Spring's data binder, which has none.
-    let binder = operation
-        .route()
-        .is_some_and(|route| route.consumes == Some(jails_model::RequestFormat::Form))
-        .then(|| Binder {
-            model,
-            declared: operation.bindings(),
-        });
-    let (package, type_name, body, imports) = match &operation.kind {
-        OperationKind::Command(command) => {
-            let entity = entity(model, &command.on)?;
-            let mut imports = BTreeSet::from([domain_import(model, entity)]);
-            let components = input_components(model, operation, &mut imports)?;
-            let input = indent(
-                &record_shape_bound("Input", &components, &mut imports, binder),
-                4,
-            );
-            let context = operation_context(model, entity, &mut imports);
-            let type_name = with_suffix(&operation.names.java_type, "Command");
-            let route = route_constant(command.route.as_deref());
-            // **A resolved key can miss, and that is an outcome rather than a
-            // fault.** The insert selects the foreign key out of the parent's
-            // own row, so a caller naming a parent that is not there writes
-            // nothing -- which is a 404, not a 500.
-            let answer = if command.semantics.resolutions.is_empty() {
-                entity.names.java_type.clone()
-            } else {
-                imports.insert("java.util.Optional".to_string());
-                format!("Optional<{}>", entity.names.java_type)
-            };
-            let body = format!(
-                "public interface {type_name} {{\n{route}\n    {answer} execute({context}Input input);\n\n{input}\n}}"
-            );
-            (Package::ApplicationCommands, type_name, body, imports)
-        }
-        OperationKind::Query(query) => {
-            let entity = entity(model, &query.on)?;
-            let mut imports =
-                BTreeSet::from(["java.util.List".to_string(), domain_import(model, entity)]);
-            let components = input_components(model, operation, &mut imports)?;
-            let input = indent(
-                &record_shape_bound("Input", &components, &mut imports, binder),
-                4,
-            );
-            let context = operation_context(model, entity, &mut imports);
-            let type_name = with_suffix(&operation.names.java_type, "Query");
-            let route = route_constant(query.route.as_deref());
-            let limit = query.semantics.limit.map_or_else(String::new, |limit| {
-                format!("    int DEFAULT_LIMIT = {limit};\n\n")
-            });
-            let body = format!(
-                "public interface {type_name} {{\n{route}{limit}    List<{}> execute({context}Input input);\n\n{input}\n}}",
-                entity.names.java_type
-            );
-            (Package::ApplicationQueries, type_name, body, imports)
-        }
-        OperationKind::Transition(transition) => {
-            let entity = entity(model, &transition.on)?;
-            let key = transition_key(entity, transition)?;
-            let mut imports = BTreeSet::from([domain_import(model, entity)]);
-            let key_type = java_type(key, &mut imports);
-            let key_member = &key.names.java_member;
-            let components = input_components(model, operation, &mut imports)?;
-            let input = indent(
-                &record_shape_bound("Input", &components, &mut imports, binder),
-                4,
-            );
-            let context = operation_context(model, entity, &mut imports);
-            let type_name = with_suffix(&operation.names.java_type, "Transition");
-            let route = route_constant(transition.route.as_deref());
-            let expected = precondition(entity, transition)
-                .map(|precondition| precondition.parameter(&mut imports))
-                .unwrap_or_default();
-            let body = format!(
-                "public interface {type_name} {{\n{route}\n    {} execute({context}{key_type} {key_member}, Input input{expected});\n\n{input}\n}}",
-                entity.names.java_type
-            );
-            (Package::ApplicationTransitions, type_name, body, imports)
-        }
-        OperationKind::Event(event) => {
-            let mut imports = BTreeSet::new();
-            let type_name = with_suffix(&operation.names.java_type, "Event");
-            // **The linked parameters, not the flat `fields`.** The flat list
-            // can only name fields of the target entity, so an event
-            // declaring a component the row does not carry -- its own minted
-            // `id`, the moment it happened -- would render a record without
-            // it, and the emitter that stages the payload would then name an
-            // accessor no record has. The linker folds `fields` into the
-            // parameters, so this is the whole payload either way; the
-            // command's `Input` reads it the same way.
-            let body = if event.semantics.parameters.is_empty() {
-                let fields = event.on.as_ref().map_or_else(
-                    || Ok(Vec::new()),
-                    |entity_id| {
-                        let entity = entity(model, entity_id)?;
-                        fields(entity, &event.fields)
-                    },
-                )?;
-                record_shape(&type_name, &fields, &mut imports)
-            } else {
-                record_shape_from_components(
-                    &type_name,
-                    &parameter_components(model, &event.semantics.parameters, &mut imports)?,
-                    &mut imports,
-                )
-            };
-            (Package::DomainEvents, type_name, body, imports)
-        }
-    };
-    let package = model.project.package_for(package);
-    let artifact_id = format!(
-        "art_{}_{}",
-        operation.id.as_str(),
-        operation_kind_name(&operation.kind)
-    );
-    let rendered = JavaUnit::new(&package, &imports, &body).render(&artifact_id);
-    let package_path = package.replace('.', "/");
-    let path = ProjectPath::parse(format!("{JAVA_ROOT}/{package_path}/{type_name}.java"))
-        .map_err(CompileError::new)?;
-    Ok(Unit {
-        path,
-        file: RenderedFile {
-            kind: FileKind::JavaMain,
-            mode: FileMode::Regular,
-            bytes: rendered.into_bytes(),
-            provenance: Provenance {
-                artifact_id,
-                ejection_id: None,
-                ejectable: false,
-                semantic_ids: BTreeSet::from([operation.id.as_str().to_string()]),
-                compiler_pass: "java-operations".to_string(),
-            },
-        },
-    })
-}
-
 fn operation_context(model: &AppModel, entity: &Entity, imports: &mut BTreeSet<String>) -> String {
     if entity
         .fields
@@ -375,15 +234,6 @@ fn operation_context(model: &AppModel, entity: &Entity, imports: &mut BTreeSet<S
         "ExecutionContext context, ".to_string()
     } else {
         String::new()
-    }
-}
-
-fn operation_kind_name(kind: &OperationKind) -> &'static str {
-    match kind {
-        OperationKind::Command(_) => "command",
-        OperationKind::Query(_) => "query",
-        OperationKind::Transition(_) => "transition",
-        OperationKind::Event(_) => "event",
     }
 }
 
@@ -429,12 +279,6 @@ pub(crate) fn domain_import(model: &AppModel, entity: &Entity) -> String {
         crate::emit_java::entity_package(model, entity, Package::Domain),
         entity.names.java_type
     )
-}
-
-fn route_constant(route: Option<&str>) -> String {
-    route.map_or_else(String::new, |route| {
-        format!("    String ROUTE = {};\n\n", java_string(route))
-    })
 }
 
 fn java_string(value: &str) -> String {
