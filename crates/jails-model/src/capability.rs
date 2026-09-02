@@ -1,7 +1,7 @@
 //! The closed capability vocabulary, and the linking rules for a declaration
 //! of one.
 //!
-//! [`CapabilityKind`] is the closed set itself; [`link`] resolves a
+//! [`CapabilityKind`] is the closed set itself; `link` resolves a
 //! declaration that names one. The set lives here rather than beside the
 //! capability planners because the layers *below* those planners validate
 //! against it -- `jails.toml`'s `[project] capabilities`, `app.toml`'s

@@ -1,14 +1,16 @@
 //! What a jails project is made of, below anything that generates.
 //!
-//! Three questions, none of which is "what Java should I write":
+//! One question, and it is not "what Java should I write": **where is the
+//! project, and where inside it does a class go** ([`paths`]). The rest of
+//! this module is the small tables that answer it -- a Maven
+//! [`coordinate`], a generated [`constant`], the [`suffix`] a kind's
+//! principal type carries, and the typed evolution [`policy`] a rename asks
+//! for.
 //!
-//! - **Where is the project, and where inside it does a class go** ([`paths`]).
-//! - **What is the conventional package for each layer** ([`layout`]).
-//!
-//! They sit below the generators because every layer beneath them asks at
-//! least one of the three -- `model`, `config`, `compose`, `project` and
-//! `inspect` all do. Answered from the generator layer, those modules reach
-//! upward, and a cycle is a boundary nothing can enforce.
+//! It sits below the generators because every layer beneath them asks --
+//! `model`, `config`, `compose`, `project` and `inspect` all do. Answered
+//! from the generator layer, those modules reach upward, and a cycle is a
+//! boundary nothing can enforce.
 
 pub mod constant;
 pub mod coordinate;

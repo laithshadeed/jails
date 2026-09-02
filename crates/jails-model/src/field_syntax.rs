@@ -2,7 +2,7 @@
 //!
 //! **One parser, and it lives beside the alias table it answers to.**
 //! `normalize_type` canonicalizes the CLI's Java spellings onto the builtin
-//! names that [`crate::BuiltinType::from_alias`] refuses a bare alias by, and
+//! names that `BuiltinType::from_alias` refuses a bare alias by, and
 //! the case rule -- lowercase is jails' table, capitalised is a type the
 //! project owns -- is decided here and nowhere else. A second parser of this
 //! syntax is the repository's most reliable drift generator, which is why the
