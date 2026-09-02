@@ -61,11 +61,6 @@ reader, the engine choice. Do not touch the
 resident-JVM classpath split or the `--affected` index; both are measured
 and load-bearing. Agent 1's S51.4 waits on this.
 
-**S53.7 -- `jails-support`.** `identity` keeps the newtypes `jails-java`,
-`jails-report`, `jails-drive` and `jails-spec` construct and nothing else.
-`unified` (the bounded diff) has one caller and stays. `lock` has one;
-check `jails-workspace` does not carry a second.
-
 **S53.8 -- Fold the leaves.** `jails-spec` holds the closed CLI vocabularies
 and where a project is; `jails-java` is the Java reader and the template
 renderer, used by `jails-project` and the binary. When S53.4-S53.7 are done,
