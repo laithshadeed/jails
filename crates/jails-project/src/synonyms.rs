@@ -24,7 +24,7 @@
 //! only say one thing, and picking the first alphabetically would be a coin
 //! toss the reader never saw.
 
-use crate::spec::layout;
+use crate::layout::Layer;
 use std::collections::BTreeMap;
 
 /// Directory name -> the layer it means. **Closed**, for the reason above.
@@ -44,56 +44,56 @@ use std::collections::BTreeMap;
 /// line costs them a line; guessing it wrong points every later command at the
 /// wrong package. `tests/corpus/spring-renamed-layers` pins the refusal.
 const SYNONYMS: &[(&str, &str)] = &[
-    (layout::DOMAIN, layout::DOMAIN),
-    ("model", layout::DOMAIN),
-    ("models", layout::DOMAIN),
-    ("entity", layout::DOMAIN),
-    ("entities", layout::DOMAIN),
-    (layout::APP, layout::APP),
-    ("application", layout::APP),
-    ("usecase", layout::APP),
-    ("usecases", layout::APP),
-    ("port", layout::APP),
-    ("ports", layout::APP),
-    (layout::SERVICE, layout::SERVICE),
-    ("services", layout::SERVICE),
-    (layout::WEB, layout::WEB),
-    ("controller", layout::WEB),
-    ("controllers", layout::WEB),
-    ("rest", layout::WEB),
-    ("resource", layout::WEB),
-    ("resources", layout::WEB),
-    (layout::API, layout::API),
-    ("dto", layout::API),
-    ("dtos", layout::API),
-    ("contract", layout::API),
-    ("contracts", layout::API),
-    (layout::MESSAGING, layout::MESSAGING),
-    ("event", layout::MESSAGING),
-    ("events", layout::MESSAGING),
-    ("kafka", layout::MESSAGING),
-    (layout::CLI, layout::CLI),
-    ("command", layout::CLI),
-    ("commands", layout::CLI),
-    (layout::CLIENTS, layout::CLIENTS),
-    ("client", layout::CLIENTS),
-    ("gateway", layout::CLIENTS),
-    ("gateways", layout::CLIENTS),
-    (layout::JOBS, layout::JOBS),
-    ("job", layout::JOBS),
-    ("scheduler", layout::JOBS),
-    ("schedulers", layout::JOBS),
-    (layout::ADAPTERS, layout::ADAPTERS),
-    ("adapter", layout::ADAPTERS),
-    ("persistence", layout::ADAPTERS),
-    ("repository", layout::ADAPTERS),
-    ("repositories", layout::ADAPTERS),
-    ("dao", layout::ADAPTERS),
-    ("infrastructure", layout::ADAPTERS),
-    ("infra", layout::ADAPTERS),
-    (layout::TESTKIT, layout::TESTKIT),
-    ("testsupport", layout::TESTKIT),
-    ("fixtures", layout::TESTKIT),
+    (Layer::Domain.package(), Layer::Domain.package()),
+    ("model", Layer::Domain.package()),
+    ("models", Layer::Domain.package()),
+    ("entity", Layer::Domain.package()),
+    ("entities", Layer::Domain.package()),
+    (Layer::App.package(), Layer::App.package()),
+    ("application", Layer::App.package()),
+    ("usecase", Layer::App.package()),
+    ("usecases", Layer::App.package()),
+    ("port", Layer::App.package()),
+    ("ports", Layer::App.package()),
+    (Layer::Service.package(), Layer::Service.package()),
+    ("services", Layer::Service.package()),
+    (Layer::Web.package(), Layer::Web.package()),
+    ("controller", Layer::Web.package()),
+    ("controllers", Layer::Web.package()),
+    ("rest", Layer::Web.package()),
+    ("resource", Layer::Web.package()),
+    ("resources", Layer::Web.package()),
+    (Layer::Api.package(), Layer::Api.package()),
+    ("dto", Layer::Api.package()),
+    ("dtos", Layer::Api.package()),
+    ("contract", Layer::Api.package()),
+    ("contracts", Layer::Api.package()),
+    (Layer::Messaging.package(), Layer::Messaging.package()),
+    ("event", Layer::Messaging.package()),
+    ("events", Layer::Messaging.package()),
+    ("kafka", Layer::Messaging.package()),
+    (Layer::Cli.package(), Layer::Cli.package()),
+    ("command", Layer::Cli.package()),
+    ("commands", Layer::Cli.package()),
+    (Layer::Clients.package(), Layer::Clients.package()),
+    ("client", Layer::Clients.package()),
+    ("gateway", Layer::Clients.package()),
+    ("gateways", Layer::Clients.package()),
+    (Layer::Jobs.package(), Layer::Jobs.package()),
+    ("job", Layer::Jobs.package()),
+    ("scheduler", Layer::Jobs.package()),
+    ("schedulers", Layer::Jobs.package()),
+    (Layer::Adapters.package(), Layer::Adapters.package()),
+    ("adapter", Layer::Adapters.package()),
+    ("persistence", Layer::Adapters.package()),
+    ("repository", Layer::Adapters.package()),
+    ("repositories", Layer::Adapters.package()),
+    ("dao", Layer::Adapters.package()),
+    ("infrastructure", Layer::Adapters.package()),
+    ("infra", Layer::Adapters.package()),
+    (Layer::Testkit.package(), Layer::Testkit.package()),
+    ("testsupport", Layer::Testkit.package()),
+    ("fixtures", Layer::Testkit.package()),
 ];
 
 /// What one directory under the base package turned out to be.
@@ -205,7 +205,7 @@ mod tests {
             matches!(
                 readings.as_slice(),
                 [Reading::Renamed { layer, dir }]
-                    if *layer == layout::ADAPTERS && dir == "infra.persistence"
+                    if *layer == Layer::Adapters.package() && dir == "infra.persistence"
             ),
             "{readings:?}"
         );
@@ -267,14 +267,14 @@ mod tests {
             "util".to_string(),
         ]);
         assert!(readings.contains(&Reading::Renamed {
-            layer: layout::WEB,
+            layer: Layer::Web.package(),
             dir: "controllers".to_string()
         }));
         assert!(readings.contains(&Reading::Renamed {
-            layer: layout::ADAPTERS,
+            layer: Layer::Adapters.package(),
             dir: "persistence".to_string()
         }));
-        assert!(readings.contains(&Reading::Conventional(layout::DOMAIN)));
+        assert!(readings.contains(&Reading::Conventional(Layer::Domain.package())));
         assert!(readings.contains(&Reading::Unknown("util".to_string())));
     }
 }

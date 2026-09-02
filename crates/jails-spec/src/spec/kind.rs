@@ -112,23 +112,6 @@ impl Capability {
     }
 }
 
-/// Which SQL the generated DDL is written in.
-///
-/// Two, and the list is closed: a dialect jails cannot check is a string it
-/// passes through. Each entry here
-/// exists because a *specific* type name differs and the difference was
-/// verified against that database's own source -- not because a database is
-/// popular.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Default)]
-pub enum Dialect {
-    /// The default.
-    #[default]
-    Postgres,
-    /// `add h2`. In-process, and the only difference that reaches the DDL is
-    /// one type name, which `BuiltinSemantics` in `jails-model` rewrites.
-    H2,
-}
-
 /// Whether a transition insists on the caller's version, or only checks one
 /// when the caller sends it.
 ///
@@ -220,14 +203,6 @@ impl WireFormat {
             .into()),
         }
     }
-
-    /// Spring's annotation for binding the request into one parameter.
-    pub fn binding(self) -> &'static str {
-        match self {
-            Self::Json => "RequestBody",
-            Self::Form => "ModelAttribute",
-        }
-    }
 }
 
 /// The HTTP method a generated endpoint answers.
@@ -270,32 +245,6 @@ impl HttpMethod {
                 "unknown HTTP method `{other}`.\n       fix: one of get, post, put, patch, delete"
             )
             .into()),
-        }
-    }
-
-    /// Spring's mapping annotation for this method.
-    pub fn mapping(self) -> &'static str {
-        match self {
-            Self::Get => "GetMapping",
-            Self::Post => "PostMapping",
-            Self::Put => "PutMapping",
-            Self::Patch => "PatchMapping",
-            Self::Delete => "DeleteMapping",
-        }
-    }
-
-    /// Spring's declarative-client annotation for this method.
-    ///
-    /// The other half of [`Self::mapping`]: the same verb, named from the
-    /// calling end. `spring-web`'s `org.springframework.web.service.annotation`
-    /// spells all five.
-    pub fn exchange(self) -> &'static str {
-        match self {
-            Self::Get => "GetExchange",
-            Self::Post => "PostExchange",
-            Self::Put => "PutExchange",
-            Self::Patch => "PatchExchange",
-            Self::Delete => "DeleteExchange",
         }
     }
 }

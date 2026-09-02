@@ -27,21 +27,21 @@ Measured 2026-09-02 over the crates that survive the pass
 | `jails-contracts` | 44 | |
 | `jails-drive` | 38 | two test-execution vocabularies (`testing::*V1`, `testd::*V2`) |
 | `jails-project` | 31 | a second project model (`model::{Project, Layer, Layers, Artifact, Change}`) beside the snapshot's `ProjectFacts` |
-| `jails-spec` | 14 | six closed vocabularies that also exist in `jails-model` |
+| `jails-spec` | 12 | five closed vocabularies that also exist in `jails-model` |
 | `jails-compiler` | 10 | |
 | `jails-workspace` | 4 | |
 
 Five specific shapes, each measured:
 
-1. **Closed vocabularies exist in two or three crates each.** `Layer` is
-   defined in `jails-model`, `jails-spec` and `jails-project`. `Capability`,
-   `Dialect`, `HttpMethod`, `WireFormat`, `ArtifactKind` are `clap::ValueEnum`s
-   in `jails-spec`; the model spells the same sets as `CAPS`, `storage`,
-   `EndpointMethod`, `RequestFormat`, `UnitKind`/`ComponentKind`/`ProjectionKind`.
-   `Build` is in `jails-spec` and `BuildSystem` in `jails-contracts`. Every
-   pair has a translation and a test that they
-   agree, and `the_compilers_renameable_layers_are_the_engines_layers` exists
-   only because there are two.
+1. **Closed vocabularies exist in two crates each.** `Capability`,
+   `HttpMethod`, `WireFormat`, `Precondition` and `ArtifactKind` are
+   `clap::ValueEnum`s in `jails-spec`; the model spells the same sets as
+   `CAPS`, `EndpointMethod`, `RequestFormat`, `Precondition` and
+   `UnitKind`/`ComponentKind`/`ProjectionKind`. `Build` is in `jails-spec`
+   and `BuildSystem` in `jails-contracts`. Every pair has a translation at
+   the boundary between them. `Layer` is no longer one of them: the
+   `jails-spec` and `jails-project` copies are deleted and
+   `jails_model::layout::Layer` is the one list.
 2. **Generators are code, capabilities are data.** A capability is a `Pack`:
    files, dependencies, properties, compose services, build features and a
    placement rule, as one `static`. A generator kind is a `lower_and_emit`

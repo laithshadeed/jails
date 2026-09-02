@@ -916,30 +916,6 @@ fn harness_text() -> String {
     out
 }
 
-/// The two layer lists are one list, in two crates that cannot see each other.
-///
-/// `jails-model`'s `Layer::ALL` is what the compiler renames; `jails-spec`'s
-/// `Layer::ALL` is what `jails.toml`'s parser accepts. A layer in one and not
-/// the other is a rename that half of jails honours.
-///
-/// They are written out separately because `jails-model` sits below
-/// `jails-spec` and may not depend on it. This test is where they meet.
-#[test]
-fn the_compilers_renameable_layers_are_the_engines_layers() {
-    let engine: Vec<&str> = jails_spec::spec::layout::Layer::ALL
-        .iter()
-        .map(|layer| layer.package())
-        .collect();
-    let compiler: Vec<&str> = jails_model::Layer::ALL
-        .iter()
-        .map(|layer| layer.package())
-        .collect();
-    assert_eq!(
-        compiler, engine,
-        "the compiler and the engine disagree about which layers a project may rename"
-    );
-}
-
 /// **Every command path reaches at least one journey.**
 ///
 /// `cli::feature_inventory_covers_the_live_clap_tree_exactly_once` pins the

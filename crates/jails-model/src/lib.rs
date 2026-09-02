@@ -21,7 +21,7 @@ mod guard;
 mod id;
 mod index;
 mod jdl;
-mod layout;
+pub mod layout;
 mod linker;
 mod model;
 mod naming;

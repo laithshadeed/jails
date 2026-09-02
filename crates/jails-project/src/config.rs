@@ -23,7 +23,7 @@
 //!
 //! Still deliberately not a general config file -- no template overrides, no
 //! plugin hooks, no per-kind paths. All three tables are **closed sets**: the
-//! layout keys are exactly the constants in [`crate::spec::layout`], the
+//! layout keys are exactly the eleven [`crate::layout::Layer`] packages, the
 //! capability names are derived from the `Capability` enum rather than
 //! restated, and a `[[capability]]` table's keys are exactly `kind`, `name`
 //! and `package`. A name that is not one of them is a typo and is reported as
@@ -55,8 +55,8 @@ use std::fs;
 use std::path::Path;
 
 use crate::capability::Declaration;
+use crate::layout::Layer;
 use crate::spec::kind::Capability;
-use crate::spec::layout;
 
 /// The file, at the project root next to `pom.xml`.
 pub const FILE: &str = "jails.toml";
@@ -64,7 +64,7 @@ pub const FILE: &str = "jails.toml";
 /// Every layer, in the order a reader wants them -- domain first, adapters
 /// last -- with the heading `stats` prints for it.
 ///
-/// Kept as a list rather than derived from the `layout` module so that adding
+/// Kept as a list rather than derived from [`Layer::ALL`] so that adding
 /// a constant there without deciding whether it is configurable is a
 /// compile-time-visible omission rather than a silent one.
 ///
@@ -74,23 +74,23 @@ pub const FILE: &str = "jails.toml";
 /// validation list below is derived from this one rather than written out
 /// again.
 pub(crate) const LAYERS_IN_ORDER: &[(&str, &str)] = &[
-    (layout::DOMAIN, "Domain"),
-    (layout::APP, "Ports"),
-    (layout::SERVICE, "Services"),
-    (layout::WEB, "Web"),
-    (layout::API, "API"),
-    (layout::MESSAGING, "Messaging"),
-    (layout::CLI, "CLI"),
-    (layout::CLIENTS, "Clients"),
-    (layout::JOBS, "Jobs"),
-    (layout::ADAPTERS, "Adapters"),
-    (layout::TESTKIT, "Testkit"),
+    (Layer::Domain.package(), "Domain"),
+    (Layer::App.package(), "Ports"),
+    (Layer::Service.package(), "Services"),
+    (Layer::Web.package(), "Web"),
+    (Layer::Api.package(), "API"),
+    (Layer::Messaging.package(), "Messaging"),
+    (Layer::Cli.package(), "CLI"),
+    (Layer::Clients.package(), "Clients"),
+    (Layer::Jobs.package(), "Jobs"),
+    (Layer::Adapters.package(), "Adapters"),
+    (Layer::Testkit.package(), "Testkit"),
 ];
 
 #[cfg(test)]
 mod layer_list_tests {
     use super::LAYERS_IN_ORDER;
-    use jails_spec::spec::layout::Layer;
+    use crate::layout::Layer;
 
     /// One list, in one order. `LAYERS_IN_ORDER` adds the report heading;
     /// everything else about a layer comes from `Layer`, and a layer added to
@@ -690,8 +690,8 @@ mod tests {
     #[test]
     fn absent_layout_leaves_every_layer_at_its_default() {
         let config = Config::default();
-        assert_eq!(config.layer(layout::SERVICE), "service");
-        assert_eq!(config.layer(layout::ADAPTERS), "adapters");
+        assert_eq!(config.layer(Layer::Service.package()), "service");
+        assert_eq!(config.layer(Layer::Adapters.package()), "adapters");
     }
 
     #[test]
@@ -705,11 +705,11 @@ mod tests {
             "#,
         )
         .unwrap();
-        assert_eq!(config.layer(layout::SERVICE), "application");
-        assert_eq!(config.layer(layout::ADAPTERS), "persistence");
-        assert_eq!(config.layer(layout::WEB), "api");
+        assert_eq!(config.layer(Layer::Service.package()), "application");
+        assert_eq!(config.layer(Layer::Adapters.package()), "persistence");
+        assert_eq!(config.layer(Layer::Web.package()), "api");
         // Untouched layers keep the default rather than becoming empty.
-        assert_eq!(config.layer(layout::DOMAIN), "domain");
+        assert_eq!(config.layer(Layer::Domain.package()), "domain");
     }
 
     #[test]
@@ -724,7 +724,7 @@ mod tests {
             "#,
         )
         .unwrap();
-        assert_eq!(config.layer(layout::SERVICE), "application");
+        assert_eq!(config.layer(Layer::Service.package()), "application");
     }
 
     /// The whole reason the keys are a closed set: a near-miss spelling that
@@ -743,7 +743,7 @@ mod tests {
     #[test]
     fn an_empty_value_means_the_base_package() {
         let config = Config::parse("[layout]\nservice = \"\"\n").unwrap();
-        assert_eq!(config.layer(layout::SERVICE), "");
+        assert_eq!(config.layer(Layer::Service.package()), "");
     }
 
     #[test]
@@ -760,7 +760,7 @@ mod tests {
     #[test]
     fn a_dotted_value_is_a_nested_subpackage() {
         let config = Config::parse("[layout]\nadapters = \"infra.jdbc\"\n").unwrap();
-        assert_eq!(config.layer(layout::ADAPTERS), "infra.jdbc");
+        assert_eq!(config.layer(Layer::Adapters.package()), "infra.jdbc");
     }
 
     #[test]
@@ -769,7 +769,7 @@ mod tests {
             "# how this project is laid out\n\n[layout]\nservice = \"application\" # not `service`\n",
         )
         .unwrap();
-        assert_eq!(config.layer(layout::SERVICE), "application");
+        assert_eq!(config.layer(Layer::Service.package()), "application");
     }
 
     #[test]

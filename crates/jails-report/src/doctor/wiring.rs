@@ -179,7 +179,7 @@ pub(super) fn duplicate_key_check(project: &Project) -> Check {
 
 /// Where `add api` put the advice, honouring a `jails.toml` layer rename.
 fn api_advice(project: &Project) -> Option<std::path::PathBuf> {
-    let package = project.package_named(jails_spec::spec::layout::API, None);
+    let package = project.package_named(crate::layout::Layer::Api.package(), None);
     let path = project
         .root()
         .join("src/main/java")

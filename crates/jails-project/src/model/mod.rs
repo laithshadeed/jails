@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use crate::build::Build;
 use crate::compose::Service as ComposeService;
 use crate::config::Config;
+use crate::layout::Layer;
 use crate::pom;
 use jails_support::Result;
 
@@ -236,55 +237,6 @@ impl Change {
     }
 }
 
-/// The conventional package roles understood by jails.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Layer {
-    Domain,
-    App,
-    Service,
-    Web,
-    Api,
-    Messaging,
-    Cli,
-    Clients,
-    Jobs,
-    Adapters,
-    Testkit,
-}
-
-impl Layer {
-    const ALL: [Self; 11] = [
-        Self::Domain,
-        Self::App,
-        Self::Service,
-        Self::Web,
-        Self::Api,
-        Self::Messaging,
-        Self::Cli,
-        Self::Clients,
-        Self::Jobs,
-        Self::Adapters,
-        Self::Testkit,
-    ];
-
-    pub const fn key(self) -> &'static str {
-        use crate::spec::layout;
-        match self {
-            Self::Domain => layout::DOMAIN,
-            Self::App => layout::APP,
-            Self::Service => layout::SERVICE,
-            Self::Web => layout::WEB,
-            Self::Api => layout::API,
-            Self::Messaging => layout::MESSAGING,
-            Self::Cli => layout::CLI,
-            Self::Clients => layout::CLIENTS,
-            Self::Jobs => layout::JOBS,
-            Self::Adapters => layout::ADAPTERS,
-            Self::Testkit => layout::TESTKIT,
-        }
-    }
-}
-
 /// Layer package names with every `jails.toml` override already applied.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Layers {
@@ -298,8 +250,8 @@ impl Layers {
                 .into_iter()
                 .map(|layer| {
                     (
-                        layer.key().to_string(),
-                        config.layer(layer.key()).to_string(),
+                        layer.package().to_string(),
+                        config.layer(layer.package()).to_string(),
                     )
                 })
                 .collect(),
@@ -308,7 +260,7 @@ impl Layers {
 
     /// Resolve a typed conventional layer.
     pub fn get(&self, layer: Layer) -> &str {
-        self.named(layer.key())
+        self.named(layer.package())
     }
 
     /// The string-key form, for recipe code expressed with the public layer

@@ -179,7 +179,7 @@ to** -- this is the prose, and prose goes stale.
 | `jails-workspace` | capture, exact materialization, verification and the single executor |
 | `jails-codemod` | the marked block, the `@Import` splice, `blanked`; **no dependencies at all**, so both `jails-compiler` and `jails-project` can reach it |
 | `jails-support` | write, run, hash and name: `apply` (the only module that writes), `process`, `hermetic`, `scratch`, `git`, `unified`, `lock`, `digest` (SHA-256, domain separation and hex, re-exported at the root), the validating newtypes, `Result` and `Failure` |
-| `jails-spec` | the closed CLI vocabularies (`spec::kind`, `policy`, `coordinate`, `constant`, `suffix`), `find_project_root`, the eleven layers, `release` (the three version pins a generated project carries), and `build` -- which build tool a directory uses and nothing more |
+| `jails-spec` | the closed CLI vocabularies (`spec::kind`, `policy`, `coordinate`, `constant`, `suffix`), `find_project_root`, `release` (the three version pins a generated project carries), and `build` -- which build tool a directory uses and nothing more |
 | `jails-java` | the small Java reader, the class-file constant-pool reader, template rendering |
 | `jails-testkit` | `hold_cwd()`, taken as a `[dev-dependency]`; not `#[cfg(test)]`, because a dependent crate's tests cannot see one |
 | `jails-project` | one resolved `Project`, and every reader-owned file jails reads or edits: `config` (`jails.toml`), `compose`, `gradle`, `inspect`; `pom` is re-exported from `jails-workspace`, which owns the one Maven reader |
@@ -357,8 +357,9 @@ Five things to know before touching the workspace:
   `[layout]` table of `key = "value"` pairs, and the keys are a **closed set**
   matching the eleven layers: an unknown one is an error, because a file
   saying `adapter = "persistence"` that silently kept writing to `adapters`
-  would be worse than no file. `config::LAYERS_IN_ORDER` is the one owner of
-  the layer list, and **anything reporting per layer goes through
+  would be worse than no file. `jails_model::layout::Layer` is the one owner of
+  the layer list and `config::LAYERS_IN_ORDER` adds each layer's report
+  heading to it; **anything reporting per layer goes through
   `Config::layers()`**, which applies the renames; layer matching is on whole
   path segments in sequence, so `webshop` is not `web` and a nested
   `adapters = "infra.jdbc"` still matches. `[project] capabilities` is what
@@ -655,9 +656,8 @@ The rules, each measured rather than guessed:
 Generated code does not all land in the base package. Each kind renders into
 the subpackage its layer owns; the eleven layers are `domain`, `app`,
 `service`, `web`, `api`, `messaging`, `cli`, `clients`, `jobs`, `adapters`,
-`testkit`, listed once in `jails_spec::spec::layout` and mirrored as
-`jails_model::layout::Layer` (a duplication `docs/60-abstraction.md` S60.2
-removes). A `jails.toml` `[layout]` rename is applied through
+`testkit`, listed once as `jails_model::layout::Layer` -- the crate that owns
+every closed vocabulary. A `jails.toml` `[layout]` rename is applied through
 `Config::layers()` and reaches the model as `Layout`; six emitted packages
 sit under heads the convention does not close and are reported as
 `convention.facet.*` by `jails model explain` rather than moved. `--package`

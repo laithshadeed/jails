@@ -42,5 +42,8 @@ pub mod synonyms;
 pub use jails_workspace::pom;
 
 pub use jails_java::{java, template};
+/// The eleven layers, from the crate that owns every closed vocabulary.
+/// Module code says `crate::layout`.
+pub use jails_model::layout;
 pub use jails_spec::{build, release, spec};
 pub(crate) use jails_support::{json, process};
