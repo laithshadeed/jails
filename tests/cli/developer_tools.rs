@@ -832,6 +832,67 @@ fn every_advertised_command_path_has_a_journey() {
     );
 }
 
+/// Every top-level command the binary accepts has a `jails <name>` entry in
+/// `README.md`, so a command cannot be added -- or kept -- without a page
+/// saying what it is for. The README is the spec (`CLAUDE.md`), and
+/// `jails commands --json` is the oracle, so the two cannot drift apart.
+#[test]
+fn every_top_level_command_has_a_readme_entry() {
+    /// Names clap adds, which are not jails commands.
+    const NOT_A_COMMAND: [&str; 1] = ["help"];
+
+    let surface = jails_cmd(&temp_dir("readme-coverage"), None)
+        .args(["commands", "--json"])
+        .output()
+        .unwrap();
+    assert!(surface.status.success());
+    let surface: serde_json::Value = serde_json::from_slice(&surface.stdout).unwrap();
+    let commands = surface["subcommands"].as_array().unwrap();
+    assert!(
+        commands.len() > 30,
+        "the catalog reported only {} top-level commands -- it has stopped \
+         describing the surface, and this gate would pass over anything",
+        commands.len()
+    );
+
+    // The whole file, not the `Commands` section alone: `jails app`,
+    // `jails adopt` and `jails modernize` each have a section of their own.
+    let section =
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md")).unwrap();
+
+    let mut undocumented = Vec::new();
+    for command in commands {
+        let name = command["name"].as_str().unwrap();
+        // The catalog is flat: `app init` sits beside `app`. A page for the
+        // parent is the page for its verbs.
+        if NOT_A_COMMAND.contains(&name) || name.contains(' ') {
+            continue;
+        }
+        let mut spellings = vec![name.to_string()];
+        if let Some(aliases) = command["aliases"].as_array() {
+            spellings.extend(
+                aliases
+                    .iter()
+                    .filter_map(|alias| alias.as_str().map(str::to_string)),
+            );
+        }
+        let documented = spellings.iter().any(|spelling| {
+            section.contains(&format!("`jails {spelling} "))
+                || section.contains(&format!("`jails {spelling}`"))
+                || section.contains(&format!("`jails {spelling}|"))
+        });
+        if !documented {
+            undocumented.push(name.to_string());
+        }
+    }
+    assert!(
+        undocumented.is_empty(),
+        "these commands exist and README.md does not mention them: \
+         {undocumented:?}\n       fix: write the entry, or \
+         remove the command"
+    );
+}
+
 /// Every `tests/**/*.rs`, with `//` comments removed.
 fn test_sources_without_comments() -> String {
     fn walk(dir: &std::path::Path, out: &mut String) {

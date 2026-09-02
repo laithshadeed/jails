@@ -125,6 +125,17 @@ their exit codes, so `jails doctor --json && deploy` behaves like
   flag jails accepts, derived from the same definition that parses the
   arguments, so it cannot drift from the binary. `--json` is what the Neovim
   plugin reads instead of keeping its own completion tables.
+- `jails editor <handshake|complete|symbols|diagnostics> --output json` — the
+  versioned, read-only protocol `jails.nvim` speaks, and any other editor
+  adapter can. `handshake` negotiates the protocol version and reports the
+  project root, its build and its release; `complete` finishes one
+  already-tokenized argument at a byte offset; `symbols routes|beans|tests|types
+  [query]` returns project symbols with stable identities (a route's is
+  `route:<METHOD>:<path>:<handler>`, which `jails request` accepts as a
+  target); `diagnostics --scope project|buffer [--file <path>]` returns
+  structured diagnostics, each tagged with the evidence it rests on. It
+  refuses without `--output json`, because an adapter must never parse
+  human output.
 - `jails new <name> [--deps web,jdbc] [--java 26] [--no-git] [--no-devtools]`
   — new Spring Boot project via start.spring.io. `git init` + `.gitignore`
   and `spring-boot-devtools` (needed for `run --watch`) are on by default.
@@ -754,6 +765,14 @@ there the unit is a whole service block rather than a setting.)
   starts, stops or writes anything, so it is safe mid-debug. Each failing line
   carries the command that fixes it, and a failure exits non-zero so
   `jails doctor && jails run` works.
+- `jails setup` — the one machine-level step: permit Testcontainers to reuse
+  containers between test runs by writing `testcontainers.reuse.enable=true`
+  into `~/.testcontainers.properties`. It is the largest saving available to
+  a suite that starts PostgreSQL, and it cannot live in the project: the flag
+  is read from the home file or the environment, and a copy on the classpath
+  does nothing. An existing setting, including an explicit `false`, is left
+  alone; `jails doctor` reports which it is. `--pretend` prints what it would
+  add.
 - `jails why [log]` — translate a failure into what it actually means. Reads a
   log file, or stdin (`jails test 2>&1 | jails why`), or with neither it starts
   the app and reads what it prints. Every rule was written against a failure
@@ -766,6 +785,27 @@ there the unit is a whole service block rather than a setting.)
   `@GetMapping`/`@PostMapping`/… with the type-level `@RequestMapping` prefix
   applied, plus `generate handler`'s `HttpHandler` types and their `PATH`
   constant. Read from source, so it answers on a project that does not start.
+- `jails contract emit [--format openapi|json-schema] [--out <path>]` and
+  `jails contract check --against <file|git-rev> [--scope source|declared]`
+  — a portable HTTP contract projected from the routes the source declares:
+  an OpenAPI 3.1 document, or a JSON Schema enumerating `METHOD /path`,
+  marked `source-observed` because it is read off the controllers and never
+  off a running app. `check` compares the current projection with a
+  committed document, or with the one at a git revision, and exits non-zero
+  naming every route the baseline had that the source no longer does — the
+  CI step for "did this change break a client". `--out` writes the document
+  into the project and honours `--pretend`.
+- `jails request <METHOD> <target> --base-url <origin> [--param k=v]
+  [--query k=v] [--header k=v] [--header-env k=VAR] [--json <body>|--data
+  <body>] [--timeout <s>] [--follow] [--print]` — resolve a route and hand
+  the request to `curl`. The target is an origin-relative `/path`, a handler
+  (`TicketController#show`), or the `route:<METHOD>:<path>:<handler>`
+  identity `jails routes` prints; path parameters come from `--param`.
+  Headers travel in a private curl config file rather than on argv, and
+  `--header-env Authorization=TOKEN` reads the value out of the environment,
+  so a secret never appears in `ps` or in `--debug` output. `--print` shows
+  the exact, redacted `curl` line and runs nothing. `--profile` names an
+  origin the manifest declares and refuses by name when none is.
 - `jails beans [pattern] [--json]` — every `@Component`/`@Service`/`@Repository`/
   `@Controller`/`@Configuration` and every `@Bean` method, with each
   constructor dependency marked resolvable or not. A dependency naming a type
@@ -829,6 +869,17 @@ there the unit is a whole service block rather than a setting.)
   compiled classes and Maven runtime classpath. This is not a Spring-booted
   REPL (Java has no `rails console`); it is a JDK shell that can see your
   types. `--no-build` skips `mvn compile`.
+- `jails runner --file <script.jsh|-> [--profile <p>] [--main <Class>]
+  [--web none|random|configured] [--compile] [--yes]` — `rails runner`: a
+  project-relative JShell script, or stdin with `-`, run non-interactively
+  inside a booted Spring context. jails writes a private startup script that
+  boots the project's `main` (or `--main`) with the given profiles and web
+  mode, appends the shutdown to the script, and runs `jshell` over the Maven
+  runtime classpath; a failed snippet fails the command. A boot outside the
+  `dev` and `test` profiles, or one that binds the configured port, prints a
+  preflight first and needs a terminal's confirmation or `--yes`. Absolute
+  paths and `..` are refused: the script is trusted code and lives in the
+  project.
 - `jails destroy|d <type> <Name> [--force]` — deletes exactly what the
   matching `generate` call would have created.
 - `jails test [filter] [--failed] [--fail-fast] [--slowest N]` — uses `./mvnw`

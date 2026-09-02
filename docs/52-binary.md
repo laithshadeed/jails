@@ -54,17 +54,6 @@ grep -rn 'parse(&next\|parse(&requested' src --include=*.rs | wc -l
 
 ## Steps
 
-**S52.5 -- The surfaces with no page.** `contract`, `editor`, `request`,
-`runner` and `setup` have inventory rows and journeys and no `jails <name>`
-in `README.md`'s `Commands` section (`editor` is what `jails.nvim` drives).
-A command with a section and a journey stays (R7). These five are **listed
-for the user**; do not delete a command on your own reading of whether it is
-used. When the answer comes back, either write the section or remove the
-command with its inventory row and journey.
-
-**S52.7 -- The prose.** `README.md`'s `Commands` section is yours; rewrite
-it to what is there after S52.5.
-
 ## Traps
 
 - **`Invocation` carries the root, and every model function takes it or the
