@@ -33,6 +33,48 @@ The bar, stated once so every item below can be checked against it:
 - **Milliseconds.** Every operation that starts no JVM finishes under 50 ms
   on a 30-entity project, and the number is measured, not assumed.
 
+## Start here
+
+Four walks and thirty-nine items is a list, not a plan. Ranked by what a
+reader feels against what it costs to land, these are the ten to do
+first; each is one commit or one small series, and none reopens a
+contract.
+
+1. **I70.12** -- stop printing the `storage-absent` warning on every
+   command, once per entity, with the error prefix. One condition; the
+   most-seen line in the tool.
+2. **I70.1 and I71.13** -- the report is the delta, and one command is one
+   report. Counts equal lists; a manifest prints one `applied` line.
+3. **I71.35 and I70.19** -- consent is `--yes`, nothing else, and JSON has
+   no shortcut past it.
+4. **I70.13 and I71.16** -- write `@id` only when pinned, and document the
+   JDL-first path (`edit the model, jails sync`) as the first path. The
+   model a reader sees becomes the model the specification shows.
+5. **I70.22, I71.3, I71.4** -- the lock as a tree of files, the executor's
+   work proportional to the change, the bundle carrying only what changed.
+   Fixes the 15× lock, the 42,000-line diff, the 9.6 MB plan file and most
+   of the 800 ms execute at a hundred entities, and I71.5 gives it a
+   number first.
+6. **I71.40, I71.24 and I71.25** -- every tool-side scanner sees the
+   managed tree. Five of them read `src/` alone today, and the worst case
+   is `test --affected` selecting zero tests for a change to a generated
+   record and exiting green.
+7. **I70.2** -- one JSON encoding carrying the same value as the human
+   report, `--json` gone.
+8. **I70.8 and I70.9** -- a one-screen `jails --help` and global flags
+   printed once. Twenty words instead of fifty; 12 lines of help instead
+   of 45.
+9. **I71.29, I71.26, I71.28** -- README, the specification and the binary
+   agree: no phantom `history`/`show`/`undo`, collections either exist or
+   are not advertised, `--package` has one story.
+10. **I71.14** -- print the JDL hunk each mutation wrote. The tool teaches
+    the language by use, and every other CLI verb becomes visibly sugar.
+
+Worth a prototype before a decision: `jails undo` (I71.15, the bundle
+already has the before-images), `sync --watch` (I71.16), bare `jails` as
+status (I71.17), the LSP (I71.19) and the MCP server (I71.20), and folding
+the manifest into the model (I71.21).
+
 ## 1. What was measured
 
 All on 2026-09-02, `cargo build --release` of this tree (`target/release/jails`,
@@ -1078,9 +1120,8 @@ names the project.
 
 ## 16. Not measured in the third walk
 
-The Kafka tools against a broker, `jails db` and `jails console` (both
-interactive), `bench`, `test --affected` on a tree with real changes, and
-Neovim.
+`bench`, and Neovim; §18 takes the Kafka tools, `db`, `console` and
+`--affected`.
 
 ## 17. The corners of consent, names and concurrency
 
@@ -1162,3 +1203,89 @@ written*: the two good refusals above are the template every other
 `fix:` line is measured against by I70.5's gate. **Exit:** the audit in
 §14 finds no `fix:` line without a command, a file or an imperative
 sentence.
+
+## 18. Five scanners, one blind spot
+
+The remaining container- and JVM-backed commands, and the pattern they
+share with §12.
+
+### 18.1 Kafka against a broker
+
+On the twelve-capability project plus `kafka` and a scaffold: `g event
+OrderPlaced id:uuid total:long --on Order` 112 ms and 8 files; `jails
+start kafka` **14.0 s**; `kafka topics` 2.3 s and printed nothing; `kafka
+describe` 625 ms and refused with *no topic given, and none found in the
+source -- pass one, or generate a slice with `jails g event <Name>`*, on a
+project where that slice had just been generated; `kafka lag` 4.2 s
+printing a raw `java.util.concurrent.ExecutionException:
+GroupIdNotFoundException: Group many not found` with exit 0; `stop kafka`
+1.0 s. `kafka.rs` finds a topic by walking `src/main/java` and the event's
+`TOPIC` constant is under `.jails/generated/main/java`.
+
+### 18.2 `test --affected` runs nothing and passes
+
+In a committed copy of the one-entity project, append a comment to the
+generated `Note.java` (the domain record every generated test depends on)
+and run `jails test --affected --explain-selection`:
+
+```
+  TestdV2: all tests in scope
+    reason: Scope(Unit)
+testd: no affected tests in epoch 1
+```
+
+27 ms, exit 0, no JVM started, no test run. The same command after a
+change under `src/main/java` widens (*compiled test outputs are stale*)
+and runs everything in 7.9 s; with `--engine build` it runs the 17 tests
+in 7.7 s. `affected.rs` maps a changed path to a class only under
+`src/main/java/` and `src/test/java/`, so a change under
+`.jails/generated` is not unknown -- which README says *widens* -- but
+*nothing*, which selects nothing. This is the *green build proving
+nothing* README's own paragraph on `--affected` promises cannot happen.
+
+### 18.3 The pattern
+
+| scanner | file | root it reads |
+|---|---|---|
+| warm test universe | `run/isolation.rs` | `src/test/java` |
+| staleness fingerprint | `run/fingerprint.rs` | `src/{main,test}/{java,resources}` |
+| affected index | `affected.rs` | `src/main/java`, `src/test/java` |
+| Kafka topic scan | `kafka.rs` | `src/main/java` |
+| editor handshake `source_roots` | `editor` protocol | the same four `src/` roots |
+
+Method: `grep -n 'src/main/java\|src/test/java' crates/jails-drive/src
+-r`. Every generated file lives under `.jails/generated`, so each of the
+five answers a question about a scaffolded project as if the scaffold
+were not there. S60.7 dissolves the split; until then the answer is one
+function.
+
+### 18.4 The rest
+
+`jails console` with a script on stdin: 4.9 s to `jshell> two=2` with the
+Spring context up. `jails db -- -c '\dt'` with the container started:
+688 ms, psql's own output. Both are the tool doing exactly what it says.
+
+**I71.40 -- a change with no known root widens to everything.** In
+`affected.rs`, a changed path that maps to no class is *unknown*, and
+unknown widens, as README says it must; the epoch report says which path
+widened it. **Exit:** the §18.2 run executes every test and prints the
+path as its reason.
+
+**I71.41 -- one answer to "where is the source".** A `source_roots()` on
+the project (the `build-helper` block and the Gradle source set already
+list them, and `editor handshake` already prints the shape) consumed by
+all five scanners, so a root added in one place is seen by every command.
+**Exit:** the table in §18.3 has one row, and `kafka describe` on §18.1's
+project finds `OrderPlaced`'s topic.
+
+**I71.42 -- a broker's exception is a refusal, not output.** `kafka lag`
+on a group that does not exist yet says *no consumer group `many` has
+committed yet; run the application once* and exits non-zero, instead of
+printing the Java exception with exit 0. **Exit:** the §18.1 `lag` line
+is one sentence.
+
+## 19. Not measured
+
+`bench` (k6 is not installed here), Neovim (not installed), and `jails
+new` with `--gradle` against a network for the wrapper jar.
+
