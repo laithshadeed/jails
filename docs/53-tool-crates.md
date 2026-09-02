@@ -27,8 +27,9 @@ The `CLAUDE.md` entries for these crates.
 ## What you do not touch
 
 `jails-spec` is agent 1's; its closed vocabularies have moved into
-`jails-model` (`docs/60-abstraction.md` S60.2) and what is left is yours to
-*shrink* under S53.8. `jails-model` and `jails-compiler` are not yours;
+`jails-model` and what is left -- where a project is, and what builds it --
+is yours to *shrink* under S53.8. `jails-model` and `jails-compiler` are not
+yours;
 where a deletion here needs a fact from the compiler you ask agent 5 for the
 function and wait.
 

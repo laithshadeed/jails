@@ -41,7 +41,8 @@ a fact about the tree, re-measured by the command beside it.
 
 | registry | where | spec | count by |
 |---|---|---|---|
-| capability kinds (`cap`) | `CAPS`, `jdl/v1/parser/declaration.rs` | §15.1 | `grep -n 'const CAPS' -A 32 crates/jails-model/src/jdl/v1/parser/declaration.rs` |
+| capability kinds (`cap`) | `CapabilityKind`, `capability.rs`; the parser asks `declared_in_source` | §15.1 | `awk '/^pub enum CapabilityKind/,/^}/' crates/jails-model/src/capability.rs \| grep -cE '^    [A-Z]'` (26 total; §15.1 closes the 24 with `declarable_in_source`) |
+| layers | `Layer::ALL`, `layout.rs` | §9.7 | `awk '/^pub enum Layer/,/^}/' crates/jails-model/src/layout.rs \| grep -cE '^    [A-Z]'` |
 | component kinds | `ComponentKind::parse`, `component.rs`; rules in `linker/component/registry.rs` | §14.2 | `grep -c '=> Ok(Self::' crates/jails-model/src/component.rs` |
 | builtin scalars | `ALL`, `builtin.rs` -- one `BuiltinSemantics` row each | §9.2 | `grep -c 'token: "' crates/jails-model/src/builtin.rs` |
 | field attributes | `parse_field`'s unknown-attribute refusal, `jdl/v1/parser/declaration.rs` | §9.4 | read the match |

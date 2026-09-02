@@ -173,13 +173,13 @@ to** -- this is the prose, and prose goes stale.
 
 | crate | contract |
 |---|---|
-| `jails-model` | closed source schema, stable IDs, linking, semantic diagnostics, `AppModel`, `Evolution` and the removal guards |
+| `jails-model` | closed source schema, stable IDs, linking, semantic diagnostics, `AppModel`, `Evolution`, the removal guards, **and every closed vocabulary** -- `Layer`, `CapabilityKind`, `ArtifactKind`, `EndpointMethod`, `RequestFormat`, `Precondition`, `BuildSystem` and the compact field syntax |
 | `jails-contracts` | portable `WorkspaceSnapshot`, `PlanDraft`, exact `Plan`, operations, trees and blobs |
 | `jails-compiler` | pure semantic lowering; no filesystem, environment or subprocess access |
 | `jails-workspace` | capture, exact materialization, verification and the single executor |
 | `jails-codemod` | the marked block, the `@Import` splice, `blanked`; **no dependencies at all**, so both `jails-compiler` and `jails-project` can reach it |
 | `jails-support` | write, run, hash and name: `apply` (the only module that writes), `process`, `hermetic`, `scratch`, `git`, `unified`, `lock`, `digest` (SHA-256, domain separation and hex, re-exported at the root), the validating newtypes, `Result` and `Failure` |
-| `jails-spec` | the closed CLI vocabularies (`spec::kind`, `policy`, `coordinate`, `constant`, `suffix`), `find_project_root`, `release` (the three version pins a generated project carries), and `build` -- which build tool a directory uses and nothing more |
+| `jails-spec` | where a project is and what builds it: `find_project_root`, `build`, plus `policy`, `coordinate`, `constant`, `suffix` and `release` (the three version pins a generated project carries). No vocabulary of its own and no clap |
 | `jails-java` | the small Java reader, the class-file constant-pool reader, template rendering |
 | `jails-testkit` | `hold_cwd()`, taken as a `[dev-dependency]`; not `#[cfg(test)]`, because a dependent crate's tests cannot see one |
 | `jails-project` | one resolved `Project`, and every reader-owned file jails reads or edits: `config` (`jails.toml`), `compose`, `gradle`, `inspect`; `pom` is re-exported from `jails-workspace`, which owns the one Maven reader |
@@ -204,6 +204,32 @@ Five things to know before touching the workspace:
   file count, because a scanner that has lost the code reports the same clean
   result as one that read it all. Path-matching scanners accept any
   visibility.
+
+
+## One owner per closed vocabulary, and it is `jails-model`
+
+`Layer`, `CapabilityKind`, `ArtifactKind`, `EndpointMethod`,
+`RequestFormat`, `Precondition` and `BuildSystem` are each defined once, in
+`jails-model`, and **the CLI's `clap::ValueEnum`s are those same enums**
+rather than copies with a `From` at the boundary. The crate carries a `cli`
+feature (`cli = ["dep:clap"]`) that the binary and `jails-report` enable and
+the compiler ladder leaves off, so `jails-model` still builds with no clap at
+all. `jails-contracts` re-exports `BuildSystem`; `jails-project` re-exports
+`layout` through its facade.
+
+A member the CLI must not offer is `#[value(skip)]` with the reason beside
+it, never a second list: `CapabilityKind::FastTest` is declared by `jails
+test --fast`, and `Precondition::None` is a word JDL states and no flag
+chooses. Where two closed sets genuinely differ, the difference is a
+predicate on the one enum -- `CapabilityKind::addable` for what `jails add`
+and `jails.toml` name, `declarable_in_source` for what a JDL `cap` may spell
+(JDL v1 §12 makes `db` and `h2` selections of `app.storage`).
+
+`label()` exists where a *file* stores the word: `CapabilityKind` has one
+because `jails.toml`, `app.toml` and JDL all write it. `ArtifactKind`
+deliberately has none -- nothing stores a generator kind, so clap's canonical
+name is the only spelling and a hand-written table beside `value(name = ...)`
+would be the second copy.
 
 ## Layout
 
@@ -344,7 +370,11 @@ Five things to know before touching the workspace:
   not from memory: generated code targets APIs that move, and the failure is
   silent because it compiles against the version you had.
 - **`crates/jails-spec/src/build.rs`** -- which build tool a directory uses,
-  and nothing more. The door is any recognised marker, nearest wins, and the
+  and nothing more. **Not the same question as `jails_model::BuildSystem`**,
+  which is a module's `build` axis: `Build` answers what a directory looks
+  like from outside, and its `Foreign(name)` -- a build file jails recognises
+  by name and refuses to read -- is the half a two-member set cannot carry.
+  The door is any recognised marker, nearest wins, and the
   Maven-inherent commands refuse themselves through `require_maven` with a
   refusal that can say what still works. jails never reads, writes, parses or
   invokes a foreign build file; recognising a filename is not understanding a

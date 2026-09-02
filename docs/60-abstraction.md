@@ -22,26 +22,26 @@ Measured 2026-09-02 over the crates that survive the pass
 
 | crate | public types | of which |
 |---|---:|---|
-| `jails-model` | 139 | 43 are `source.rs`, the unlinked wire shape the parser builds and the linker consumes -- a deliberate second copy, held by nothing else |
-| root binary | 63 | 18 are clap argument types; the rest are per-command request bags |
-| `jails-contracts` | 44 | |
-| `jails-drive` | 38 | two test-execution vocabularies (`testing::*V1`, `testd::*V2`) |
-| `jails-project` | 31 | a second project model (`model::{Project, Layer, Layers, Artifact, Change}`) beside the snapshot's `ProjectFacts` |
-| `jails-spec` | 12 | five closed vocabularies that also exist in `jails-model` |
-| `jails-compiler` | 10 | |
-| `jails-workspace` | 4 | |
+| `jails-model` | 143 | 43 are `source.rs`, the unlinked wire shape the parser builds and the linker consumes -- a deliberate second copy, held by nothing else; the closed vocabularies every other crate reads are here |
+| root binary | 59 | 15 are clap argument types; the rest are per-command request bags |
+| `jails-contracts` | 43 | |
+| `jails-drive` | 39 | |
+| `jails-project` | 28 | a second project model (`model::{Project, Layers, Artifact, Change}`) beside the snapshot's `ProjectFacts` |
+| `jails-compiler` | 11 | |
+| `jails-spec` | 7 | where a project is and what builds it; no vocabulary at all |
+| `jails-workspace` | 5 | |
 
 Five specific shapes, each measured:
 
-1. **Closed vocabularies exist in two crates each.** `Capability`,
-   `HttpMethod`, `WireFormat`, `Precondition` and `ArtifactKind` are
-   `clap::ValueEnum`s in `jails-spec`; the model spells the same sets as
-   `CAPS`, `EndpointMethod`, `RequestFormat`, `Precondition` and
-   `UnitKind`/`ComponentKind`/`ProjectionKind`. `Build` is in `jails-spec`
-   and `BuildSystem` in `jails-contracts`. Every pair has a translation at
-   the boundary between them. `Layer` is no longer one of them: the
-   `jails-spec` and `jails-project` copies are deleted and
-   `jails_model::layout::Layer` is the one list.
+1. **Every closed vocabulary has one owner, and it is `jails-model`.**
+   `Layer`, `CapabilityKind`, `ArtifactKind`, `EndpointMethod`,
+   `RequestFormat`, `Precondition` and `BuildSystem` are defined once, and
+   the CLI's `clap::ValueEnum`s are those same enums under the model crate's
+   `cli` feature rather than copies with a `From` at the boundary. One set
+   is deliberately not folded: `jails_spec::build::Build` answers what a
+   *directory* looks like from outside -- including a build file jails
+   recognises by name and refuses to read -- which is a different question
+   from a module's `build` axis, and its `Foreign(name)` reaches a refusal.
 2. **Generators are code, capabilities are data.** A capability is a `Pack`:
    files, dependencies, properties, compose services, build features and a
    placement rule, as one `static`. A generator kind is a `lower_and_emit`
@@ -97,24 +97,6 @@ because nothing consumes the edit as a value: the plan records the source
 before- and after-image, and the evolution is the only input the compiler
 needs beside the model. `Evolution` is one closed enum in `jails-model`,
 passed to `compile` and read by `emit_sql::derive`.
-
-### S60.2 — one owner per closed vocabulary
-
-Every closed set lives in `jails-model` and nowhere else: layers, capability
-kinds, artifact kinds, dialects, HTTP methods, wire formats, build systems,
-platforms. The CLI's `clap::ValueEnum`s are those enums, not copies: the
-model crate gains a `cli` feature that derives `ValueEnum` on them, or
-`jails-spec` becomes a generated table read *from* `jails-model`'s `ALL`
-lists. Either way there is one list and a `label()` per member.
-
-`jails-spec` then holds two things the model does not: where a project is
-(`find_project_root`, `build`) and the compact field syntax's parser -- and
-the parser's output is a model `Field`, so it moves next to
-`BuiltinType::from_alias`. What remains of `jails-spec` is
-small enough to question.
-
-**Exit:** one definition of each set; the tests that check two copies agree
-are deleted with the second copy.
 
 ### S60.3 — `Recipe` generalises `Pack` to every kind
 
@@ -196,7 +178,7 @@ What changes, in order of dependency:
    compiler stops checking `baseline.root != root` and `ejectable.rs` stops
    translating `.jails/generated/main/java/…` into `src/main/java/…`, because
    the emitted path *is* the reader path. Every emitter's `*_ROOT` constant
-   collapses onto the §9.7 table, which then has one owner (S60.2's rule).
+   collapses onto the §9.7 table, which then has one owner.
 2. **Capture reads the lock first and walks the paths it names**, plus the
    reader trees `ReaderTrees` already selects. Today's wholesale walk of the
    managed root becomes a walk of the accepted projection's paths, and the
@@ -250,7 +232,7 @@ BASE/OURS/THEIRS rule; `PlanBundle`, `PlannedOperation` (six kinds is right),
 |---|---|---|
 | S60.3 `Recipe` | 55 | S55.2 (the shell) and S55.5 (packs as data) are its first two rungs |
 | S60.4 the snapshot | 53 | S53.2; the one Maven reader is `jails-workspace/src/documents/pom.rs`, which `jails-project` re-exports -- S60.4 flips that edge, so the reader sits in the crate that produces `ProjectFacts` |
-| S60.7 managed output in `src/` | none yet | after S60.2 (one owner for the §9.7 table) and S60.4 (capture is the one reader); needs `jails model relocate` |
+| S60.7 managed output in `src/` | none yet | after S60.4 (capture is the one reader); needs `jails model relocate` |
 
 A plan step that lands a deletion without moving toward one of these is
 still worth landing; a step that adds a *new* shape -- a fourth vocabulary, a
