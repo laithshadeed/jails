@@ -14,7 +14,7 @@ Item numbers are stable and never reused.
 ## What you own
 
 `crates/jails-model/**` -- the closed source schema, stable IDs, linking,
-semantic diagnostics, `AppModel` and `ModelPatch`. Above it, the JDL front ends
+semantic diagnostics, `AppModel` and `Evolution`. Above it, the JDL front ends
 in the binary: `src/model_generate_jdl*`, `src/model_jdl_edit.rs`,
 `src/model_explain.rs`. You are the only workstream that may change what a
 `.jails/model.jdl` means.
@@ -47,7 +47,7 @@ a fact about the tree, re-measured by the command beside it.
 | field attributes | `parse_field`'s unknown-attribute refusal, `jdl/v1/parser/declaration.rs` | §9.4 | read the match |
 | projection spellings (`use`) | `projection_list`, `jdl/v1/parser/projection.rs` | §11.1 | `grep -o '"[a-z-]*"' crates/jails-model/src/jdl/v1/parser/projection.rs \| sort -u` |
 | operation statements | `parse_operation_member`, `jdl/v1/parser/operation.rs` | §12 | read the match |
-| `ModelPatch` variants | `patch.rs` | §16 | `awk '/^pub enum ModelPatch/,/^}/' crates/jails-model/src/patch.rs \| grep -cE '^    [A-Z]'` |
+| `EvolutionStep` variants | `evolution.rs` | §16 | `awk '/^pub enum EvolutionStep/,/^}/' crates/jails-model/src/evolution.rs \| grep -cE '^    [A-Z]'` |
 | syntax diagnostics (`JDL*`) | `jdl/v1/` | §18 | `grep -rho '"JDL[0-9]*"' crates/jails-model/src/jdl/v1/ \| sort -u \| wc -l` |
 | semantic diagnostics (`model-*`) | the linker | §18.2 | `grep -rho '"model-[a-z0-9-]*"' crates/jails-model/src/ \| sort -u \| wc -l` |
 

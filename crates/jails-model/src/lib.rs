@@ -15,7 +15,9 @@ mod derived;
 mod diagnostic;
 mod ejection;
 mod enum_constant;
+mod evolution;
 mod facet;
+mod guard;
 mod id;
 mod index;
 mod jdl;
@@ -28,7 +30,6 @@ mod naming;
 /// cannot depend on.
 pub use naming::{lower_camel_case, plural_snake_case};
 mod operation;
-mod patch;
 mod projection;
 mod relation;
 mod setting;
@@ -44,6 +45,10 @@ pub use constraint::{ConstraintKind, EntityConstraint};
 pub use derived::{DerivedRole, DerivedRoleKey, DerivedValue};
 pub use diagnostic::{Diagnostic, Diagnostics, Severity};
 pub use enum_constant::EnumConstant;
+pub use evolution::{
+    ColumnRenamePolicy, Evolution, EvolutionStep, FieldAddPolicy, FieldEvolutionPolicy,
+    StorageRetirementPolicy, TypeChangeStrategy,
+};
 pub use id::{
     CapabilityId, ComponentId, ComponentVariantId, ConstraintId, DependencyId, EjectionId,
     EntityId, FieldId, IndexId, OperationId, ProjectId, ProjectionId, RelationId, SettingId,
@@ -71,10 +76,6 @@ pub use operation::{
     OperationRoute, Ordering, ParameterBinding, ParameterConstraints, ParameterSource,
     Precondition, Query, QuerySemantics, Resolution, SortDirection, Transition,
     TransitionSemantics, Value, VisibleField,
-};
-pub use patch::{
-    ColumnRenamePolicy, FieldAddPolicy, FieldEvolutionPolicy, FieldPlacement, ModelPatch,
-    StorageRetirementPolicy, TypeChangeStrategy,
 };
 pub use projection::{Projection, ProjectionKind};
 pub use relation::{ReferentialAction, Relation, RelationCardinality, RelationMapping};

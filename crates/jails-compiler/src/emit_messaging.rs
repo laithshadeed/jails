@@ -387,18 +387,22 @@ mod tests {
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.spring_boot = Some("4.1.0".to_string());
         snapshot.project.build_system = BuildSystem::Maven;
-        crate::Compiler::compile(&snapshot, None)
-            .unwrap()
-            .generated
-            .files
-            .values()
-            .map(|file| {
-                (
-                    file.provenance.artifact_id.clone(),
-                    String::from_utf8(file.bytes.clone()).unwrap(),
-                )
-            })
-            .collect()
+        crate::Compiler::compile(
+            &snapshot,
+            &snapshot.model.model,
+            &jails_model::Evolution::none(),
+        )
+        .unwrap()
+        .generated
+        .files
+        .values()
+        .map(|file| {
+            (
+                file.provenance.artifact_id.clone(),
+                String::from_utf8(file.bytes.clone()).unwrap(),
+            )
+        })
+        .collect()
     }
 
     const NO_ID: &str = "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage none\n}\n\ncap kafka\n\nentity Task @id(ent_task) {\n  id: uuid @id(fld_task_id) @pk\n  title: string @id(fld_task_title)\n\n  event Closed(title) @id(op_closed)\n}\n";
@@ -463,7 +467,12 @@ mod tests {
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.spring_boot = Some("4.1.0".to_string());
         snapshot.project.build_system = BuildSystem::Maven;
-        let draft = crate::Compiler::compile(&snapshot, None).unwrap();
+        let draft = crate::Compiler::compile(
+            &snapshot,
+            &snapshot.model.model,
+            &jails_model::Evolution::none(),
+        )
+        .unwrap();
         let handler = draft
             .generated
             .files

@@ -22,7 +22,7 @@ refusing. The Gradle adapter appends one marked block and touches nothing else.
 
 ```text
 .jails/model.jdl / CLI sugar
-        -> ModelPatch
+        -> edited JDL source (+ Evolution)
         -> AppModel + WorkspaceSnapshot
         -> pure Compiler
         -> PlanDraft
@@ -36,8 +36,8 @@ The five contracts are authoritative and `docs/00-contracts.md` carries them:
   route and configuration names are projections.
 - `WorkspaceSnapshot` captures every external fact once. Code below the
   compiler may observe the filesystem; the compiler may not.
-- `Compiler` is pure. Equal snapshot, patch and compiler version produce equal
-  desired artifacts.
+- `Compiler` is pure. Equal snapshot, model, evolution and compiler version
+  produce equal desired artifacts.
 - `PlanBundle` is the exact reviewed transition. Preview, export, confirmation
   and apply refer to its digest; apply never replans.
 - `jails-workspace::execute` is the only project writer. It locks, rechecks
@@ -81,11 +81,12 @@ JDL v1 §9.7 does not close, so a `jails.toml` layer rename does not reach them;
 they are displayed as `convention.facet.*` rather than corrected, because
 moving them would move files in every project generated so far.
 
-**Rename and field evolution are projection patches, not lifecycle replay.**
-`rename resource --strategy preserve-table` keeps the entity ID and SQL table,
-pairs BASE and THEIRS by artifact ID even when paths move, and merges the old
-live file into the new path. `resource field rename|type|nullability|drop` are
-`ReplaceField` patches with exactly one typed policy: preserve-column rename
+**Rename and field evolution are source edits plus one `Evolution` step, not
+lifecycle replay.** `rename resource --strategy preserve-table` keeps the
+entity ID and SQL table, pairs BASE and THEIRS by artifact ID even when paths
+move, and merges the old live file into the new path. `resource field
+rename|type|nullability|drop` edit the field and carry exactly one typed
+policy in the evolution: preserve-column rename
 emits no migration; single-cutover changes the SQL projection explicitly; safe
 type change accepts only proven PostgreSQL widenings; required nullability
 captures the reader-owned backfill file as a precondition; drop requires the
@@ -159,7 +160,7 @@ to** -- this is the prose, and prose goes stale.
 
 | crate | contract |
 |---|---|
-| `jails-model` | closed source schema, stable IDs, linking, semantic diagnostics, `AppModel` and `ModelPatch` |
+| `jails-model` | closed source schema, stable IDs, linking, semantic diagnostics, `AppModel`, `Evolution` and the removal guards |
 | `jails-contracts` | portable `WorkspaceSnapshot`, `PlanDraft`, exact `Plan`, operations, trees and blobs |
 | `jails-compiler` | pure semantic lowering; no filesystem, environment or subprocess access |
 | `jails-workspace` | capture, exact materialization, verification and the single executor |
@@ -211,12 +212,18 @@ Five things to know before touching the workspace:
   `model_migration`, `model_setting`, `model_eject`, `model_init`,
   `model_explain`, `model_doctor`, `model_status`. Each starts from
   `model_command::Current::load` (the one read of the invocation's model),
-  edits the JDL text, builds the typed `ModelPatch` for the same change, and
-  hands a `PreparedMutation` to `model_generate::finish_generation`, which
-  captures over the intended model, compiles, materializes and then either
-  reports the bundle or executes *that* bundle -- one computation for
-  preview and apply. The plan's input bytes are the patch serialised; no
-  frontend writes an encoding of its own. `src/model_command.rs` is the one owner
+  runs its own exact-shape checks and the model's removal guards
+  (`refuse_entity_removal` and kin, `jails_model::guard`), edits the JDL
+  text, and hands a `PreparedMutation` -- the edited source plus an
+  `Evolution` -- to `model_generate::finish_generation`. **The model is
+  decided once there**: it is whatever the edited source links to, captured
+  over, compiled beside the evolution, materialized and then either reported
+  or executed as *that* bundle -- one computation for preview and apply. The
+  plan's input bytes are the evolution serialised (`PlanInput`); the edit
+  itself is in the plan as the model file's before- and after-image. A
+  frontend that re-parses its edited source does so to *check* something
+  (that a facet linked, that an index is gone), never to build a second
+  description of the change. `src/model_command.rs` is the one owner
   of *which directory a model command is about*: `project_root` walks up to
   the nearest build file or model marker, nearest wins, and every model path
   stays project-relative because the same value becomes a `ProjectPath` in the

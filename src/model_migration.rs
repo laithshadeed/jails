@@ -24,7 +24,7 @@ use crate::Invocation;
 use crate::cli::GenerateArgs;
 use crate::model_generate::{PreparedMutation, finish_generation};
 use jails_contracts::RenderedMigration;
-use jails_model::ModelPatch;
+use jails_model::Evolution;
 use jails_support::{Failure, Result};
 use std::collections::BTreeSet;
 
@@ -43,7 +43,7 @@ pub(crate) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
         // anyway -- a `migration` node -- is what JDL v1 §2.1 forbids.
         next_source: current.source.clone(),
         current,
-        patch: ModelPatch::Batch(Vec::new()),
+        evolution: Evolution::none(),
         authored_migration: Some(RenderedMigration {
             logical_name: description,
             bytes: BODY.as_bytes().to_vec(),

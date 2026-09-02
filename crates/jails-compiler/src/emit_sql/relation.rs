@@ -150,7 +150,12 @@ use repo for Author\nuse repo for Book\n";
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.1.0".to_string());
-        let draft = crate::Compiler::compile(&snapshot, None).expect("the fixture compiles");
+        let draft = crate::Compiler::compile(
+            &snapshot,
+            &snapshot.model.model,
+            &jails_model::Evolution::none(),
+        )
+        .expect("the fixture compiles");
         String::from_utf8(
             draft
                 .migrations

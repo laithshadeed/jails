@@ -10,8 +10,9 @@ Item numbers `S54.n` are stable and never reused.
 # 54 — Language: one front end, one way to change a model
 
 **Read `docs/50-simplify.md` first.** You are agent 4. Your subject is
-`jails-model`, 11,942 production lines: the `jdl 1` front end, the linker,
-and a second way to change a model.
+`jails-model`: the `jdl 1` front end and the linker. There is one way to
+change a model now -- edit the source -- and `Evolution` carries what the
+source cannot say.
 
 ## What you own
 
@@ -21,8 +22,8 @@ not this pass unless listed below.
 ## What you do not touch
 
 `src/model_generate_jdl*` and the other frontends are agent 2's this time,
-because their restructuring (S52.1) is about the binary's pipeline rather
-than the language; you supply the `jails-model` functions it needs. The
+because their restructuring is about the binary's pipeline rather than the
+language; you supply the `jails-model` functions it needs. The
 compiler is agent 5's. Where S53.4 lands the field-syntax parser in your
 crate, agent 3 writes the move and you review it.
 
@@ -32,29 +33,8 @@ crate, agent 3 writes the move and you review it.
 |---|---:|
 | `jdl/v1/**` (the `jdl 1` front end) | 5,312 |
 | `linker/**` | 3,458 |
-| `model_apply.rs` | 736 |
-| `patch.rs` (`ModelPatch`, 34 variants) | -- |
 
 ## Steps
-
-**S54.2 -- There is a second way to change a model, and it goes.** The
-frontends edit JDL *text* and re-parse; `ModelPatch` has 34 variants and
-`model_apply.rs` (736 lines) applies one to a linked model. Measured
-2026-09-02:
-
-```
-grep -rn 'ModelPatch::' src crates/*/src --include=*.rs | grep -v '^crates/jails-model' | grep -v '^\s*//' | wc -l
-```
-
-77 sites, all in the binary's frontends, and every one sits beside the text
-edit for the same change: two encodings of one mutation, which
-`docs/00-contracts.md` §1.1 names as the original defect. The text edit is
-the surviving one. `docs/60-abstraction.md` S60.1 is the shape: an `Edit`
-enum over the CST in this crate, `jdl/v1/edit.rs` as its one implementation,
-the seven one-shot policies the patch carries today as an `Evolution` the
-compiler takes beside the model, and `ModelPatch`, `AppModel::apply` and
-`model_apply.rs` deleted. Agent 2's S52.1 is the same change seen from the
-binary; agree `Edit`'s variants before either starts.
 
 **S54.3 -- `jdl/v1`: what the parser says three times.** `parser/declaration.rs`
 (540), `parser/operation.rs` (669) and `parser/projection.rs` each carry
@@ -81,12 +61,9 @@ S54.3.
 
 ## Traps
 
-- **`FieldPlacement` has to agree with re-parsing.** A record's positional
-  constructor is ABI; read the comment in `patch.rs` before touching the
-  sort-by-label branch.
 - **`derived` is recomputed, never accumulated**, and `pinned` is decided by
-  comparison with the convention. Anything in S54.2 that carries a flag off
-  the source breaks `jails model explain`.
+  comparison with the convention. Anything that carries a flag off the
+  source breaks `jails model explain`.
 - **`the_specification_complete_example_links_except_its_one_recorded_gap`
   pins both halves of §4.** It must keep passing through every step, and the
   one recorded gap (`eject Task.repo.fake`) stays recorded -- A3.15 is not
@@ -94,11 +71,6 @@ S54.3.
 - **A count with no method is a count that cannot be re-measured.** The
   registry table in `docs/10-language.md` carries its greps; keep them
   beside any number you change.
-
-## Items you close elsewhere
-
-`docs/00-contracts.md` §1.7's *sixteen copies of one frontend pipeline* row
-shares its exit with S52.1.
 
 ## Green
 

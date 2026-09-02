@@ -64,7 +64,7 @@ scanner* row reads one. `docs/53-tool-crates.md` S53.3 is the plan.
 
 Both write reader-owned files on projects with no model, `apply::` is banned
 outside the write layer, and `execute` takes a `PlanBundle` whose `Plan`
-carries a `CanonicalModelPatch`. So either the layout and release become model
+carries a `PlanInput`. So either the layout and release become model
 nodes, or `jails-workspace` gains an explicit reader-file operation no compiler
 produced. Forging a `Plan` outside the compiler is not on the list.
 

@@ -1,4 +1,4 @@
-//! Compatibility lowering from familiar generation syntax into `ModelPatch`.
+//! The one mutation pipeline, and the familiar generation syntax in front of it.
 
 #[path = "model_field_parse.rs"]
 mod field_parse;
@@ -21,15 +21,15 @@ use crate::ArtifactKind;
 use crate::cli::GenerateArgs;
 use crate::model_resource::java_to_label;
 use crate::{Invocation, Output};
-use jails_contracts::{CanonicalModelPatch, ModelFileUpdate, ProjectPath};
-use jails_model::{AppModel, ModelPatch};
+use jails_contracts::{ModelFileUpdate, PlanInput, ProjectPath};
+use jails_model::{AppModel, Evolution};
 use jails_support::{Failure, Result};
 use std::path::Path;
 
 /// One model mutation, ready for the pipeline every frontend shares.
 ///
-/// A frontend decides *what* changes -- the edited source and the typed
-/// patch -- and nothing else: capture, compilation, materialization, the
+/// A frontend decides *what* changes -- the edited source and the evolution
+/// -- and nothing else: capture, compilation, materialization, the
 /// preview and the execution are one computation here, so `--pretend` and
 /// the real run cannot describe the transition differently.
 pub(crate) struct PreparedMutation {
@@ -40,9 +40,10 @@ pub(crate) struct PreparedMutation {
     /// The source after the frontend's edit; equal to `current.source` for a
     /// mutation that declares nothing.
     pub(crate) next_source: String,
-    /// The same change as a typed patch, which is what the compiler applies
-    /// and what the plan records as its input.
-    pub(crate) patch: ModelPatch,
+    /// What the edited source cannot say: the one-shot policies about how the
+    /// accepted schema reaches the next model. The plan records it as its
+    /// input; the model itself is whatever `next_source` links to.
+    pub(crate) evolution: Evolution,
     /// A migration the *reader* authored, rather than one the compiler
     /// derived from a schema change.
     ///
@@ -115,7 +116,7 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
         invocation,
         current,
         next_source,
-        patch,
+        evolution,
         authored_migration,
         reader_paths,
     } = prepared;
@@ -125,10 +126,10 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
     // project it is creating rather than into whatever encloses the directory
     // the reader is standing in.
     let root = invocation.root()?;
-    let mut next_model = current.model.clone();
-    next_model
-        .apply(patch.clone())
-        .map_err(|error| Failure::Told(format!("could not prepare model capture: {error}")))?;
+    // **The model is what the edited source links to**, decided once here
+    // and nowhere else: the frontend wrote the bytes, and the linker says
+    // what they mean.
+    let next_model = crate::model_command::parse(&next_source)?;
     let mut capture_paths = reader_paths;
     capture_paths.extend(jails_compiler::external_project_paths(&next_model));
     capture_paths.sort();
@@ -148,16 +149,16 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
     // applies all of them or none, and a reader who is not told that has to
     // work out by hand which half to retry. Nothing has been written at this
     // point by construction: the executor has not run.
-    // **The plan records the patch as its input**, so two mutations that edit
-    // the source identically but mean different things -- a rename that
+    // **The plan records the evolution as its input**, so two mutations that
+    // edit the source identically but mean different things -- a rename that
     // preserves the column and one that cuts over -- have different digests.
-    let patch_bytes = serde_json::to_vec(&patch)
-        .map_err(|error| Failure::Told(format!("could not encode model patch: {error}")))?;
-    let mut draft = jails_compiler::Compiler::compile(&snapshot, Some(patch)).map_err(|error| {
-        Failure::Told(format!(
-            "could not compile model patch: {error}\n       nothing was written"
-        ))
-    })?;
+    let input = PlanInput::evolution(&evolution).map_err(Failure::Told)?;
+    let mut draft =
+        jails_compiler::Compiler::compile(&snapshot, &next_model, &evolution).map_err(|error| {
+            Failure::Told(format!(
+                "could not compile model change: {error}\n       nothing was written"
+            ))
+        })?;
     // After the compile, because it is not derived from the model: see
     // `PreparedMutation::authored_migration`. It is still the plan's, not a
     // side effect -- the materializer allocates its version from the observed
@@ -177,10 +178,7 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
     }
     let bundle = jails_workspace::materialize(
         &snapshot,
-        CanonicalModelPatch {
-            schema: "jails.model-patch.v1".to_string(),
-            bytes: patch_bytes,
-        },
+        input,
         draft,
         Some(ModelFileUpdate {
             path: ProjectPath::parse(crate::model_command::JDL_PATH).map_err(Failure::Told)?,

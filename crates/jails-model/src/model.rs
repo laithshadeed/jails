@@ -12,14 +12,12 @@
 //! deterministic so the compiler's output is, and a rename touches a label
 //! while the key stays put.
 //!
-//! Mutation is `model_apply.rs`'s (re-exported here as `mutation`), applying
-//! one `ModelPatch` at a time and refusing rather than repairing. There is no
-//! setter path: a caller that could edit a field in place could edit it into a
-//! state no patch describes, and the plan's recorded input would then no
-//! longer explain the model it produced.
-
-#[path = "model_apply.rs"]
-mod mutation;
+//! There is no mutation path. A model is whatever its source parses and
+//! links to (`parse_jdl`), and a command changes the model by editing the
+//! source; what the source cannot say about how to get there is an
+//! [`crate::Evolution`] passed to the compiler beside the model. A setter
+//! here could edit a model into a state no source describes, and the plan's
+//! recorded input would then no longer explain the model it produced.
 
 use crate::EnumConstant;
 use crate::Operation;
@@ -34,8 +32,6 @@ use crate::projection::Projection;
 use crate::relation::Relation;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-
-pub(crate) use mutation::refuse_ejected_target;
 
 /// The only desired-state value consumed by the application compiler.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -438,14 +434,17 @@ impl TypeRef {
     }
 }
 
-pub(crate) fn refuse_retired_entity(entity: &Entity) -> Result<(), String> {
-    if entity.active {
-        return Ok(());
+impl Entity {
+    /// Refuse to evolve a retired entity: its table is preserved, not live.
+    pub fn refuse_retired(&self) -> Result<(), String> {
+        if self.active {
+            return Ok(());
+        }
+        Err(format!(
+            "entity id `{}` is retired\n       fix: revive the preserved entity before evolving it",
+            self.id
+        ))
     }
-    Err(format!(
-        "entity id `{}` is retired\n       fix: revive the preserved entity before evolving it",
-        entity.id
-    ))
 }
 
 #[cfg(test)]

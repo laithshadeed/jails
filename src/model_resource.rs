@@ -3,7 +3,7 @@
 use crate::Invocation;
 use crate::cli::{GenerateArgs, ResourceFieldCommand};
 use crate::model_generate::{PreparedMutation, finish_generation, parse_field};
-use jails_model::{Facet, FieldAddPolicy, FieldId, ModelPatch};
+use jails_model::{Evolution, EvolutionStep, Facet, FieldAddPolicy, FieldId};
 use jails_support::{Failure, Result};
 
 pub(crate) fn run(command: ResourceFieldCommand, invocation: Invocation) -> Result<()> {
@@ -173,7 +173,7 @@ pub(crate) fn add_field(request: AddFieldRequest, invocation: Invocation) -> Res
     // `g record` then `g field` must not depend on an unrelated project
     // property.
     let stored = has_database && entity.facets.contains(&Facet::Repository);
-    let entity_id = entity.id.clone();
+    entity.refuse_retired().map_err(Failure::Told)?;
     let entity_label = entity.label.clone();
     let entity_java_name = entity.names.java_type.clone();
     let parsed = parse_field(&request.field_spec)?;
@@ -234,33 +234,20 @@ pub(crate) fn add_field(request: AddFieldRequest, invocation: Invocation) -> Res
                 .to_string(),
         )),
     };
-    // Where re-parsing the source we are about to write will put this field:
-    // v1's parser records the order its CST walked, so an appended
-    // declaration stays appended.
-    let placement = jails_model::FieldPlacement::Last;
     let line = crate::model_generate_jdl::render_v1_field_line(&entity_label, &parsed);
     let next_source =
         crate::model_generate_jdl::insert_field(&current.source, &entity_java_name, &line)?;
-    let next_model = crate::model_command::parse(&next_source)?;
     let field_id =
         FieldId::parse(format!("fld_{entity_label}_{}", parsed.label)).map_err(Failure::Told)?;
-    let field = next_model
-        .entities
-        .get(&entity_id)
-        .and_then(|entity| entity.field(&field_id))
-        .cloned()
-        .ok_or_else(|| Failure::Told(format!("new field `{field_id}` did not link")))?;
     finish_generation(PreparedMutation {
         name: format!("{}.{}", request.entity, parsed.java_name),
         invocation,
         current,
         next_source,
-        patch: ModelPatch::AddField {
-            entity: entity_id,
-            field,
+        evolution: Evolution::one(EvolutionStep::AddField {
+            field: field_id,
             policy,
-            placement,
-        },
+        }),
         authored_migration: None,
         reader_paths,
     })

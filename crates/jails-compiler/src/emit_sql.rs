@@ -17,9 +17,9 @@ use crate::CompileError;
 use jails_contracts::{RenderedMigration, WorkspaceSnapshot};
 use jails_model::LiteralKind;
 use jails_model::{
-    AppModel, ColumnRenamePolicy, Entity, Facet, Field, FieldAddPolicy, FieldEvolutionPolicy,
-    Index, IndexDirection, ModelPatch, StableId, StorageRetirementPolicy, TypeChangeStrategy,
-    TypeRef,
+    AppModel, ColumnRenamePolicy, Entity, Evolution, EvolutionStep, Facet, Field, FieldAddPolicy,
+    FieldEvolutionPolicy, Index, IndexDirection, StableId, StorageRetirementPolicy,
+    TypeChangeStrategy, TypeRef,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -30,7 +30,7 @@ pub(crate) use index::leading_fields as leading_index_fields;
 pub(crate) fn derive(
     snapshot: &WorkspaceSnapshot,
     next: &AppModel,
-    patch: Option<&ModelPatch>,
+    evolution: &Evolution,
 ) -> Result<Vec<RenderedMigration>, CompileError> {
     let next_database = has_database(next);
     let accepted = snapshot.accepted_model.as_ref();
@@ -88,7 +88,7 @@ pub(crate) fn derive(
     } else {
         &empty
     };
-    let policies = evolution_policies(patch);
+    let policies = evolution_policies(evolution);
     let mut statements = Vec::new();
     let mut semantic_ids = BTreeSet::new();
     let mut descriptions = Vec::new();

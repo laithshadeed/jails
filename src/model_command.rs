@@ -380,7 +380,7 @@ fn format(check: bool, invocation: Invocation) -> Result<()> {
         invocation,
         current,
         next_source,
-        patch: jails_model::ModelPatch::Batch(Vec::new()),
+        evolution: jails_model::Evolution::none(),
         authored_migration: None,
         reader_paths: Vec::new(),
     })
@@ -664,8 +664,12 @@ fn compile_at(
     let reader_paths = jails_compiler::external_project_paths(&model);
     let snapshot = jails_workspace::capture(root, manifest, source, model, &reader_paths)
         .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
-    let draft = jails_compiler::Compiler::compile(&snapshot, None)
-        .map_err(|error| Failure::Told(format!("could not compile application model: {error}")))?;
+    let draft = jails_compiler::Compiler::compile(
+        &snapshot,
+        &snapshot.model.model,
+        &jails_model::Evolution::none(),
+    )
+    .map_err(|error| Failure::Told(format!("could not compile application model: {error}")))?;
     if notice == Notice::Print {
         for diagnostic in &draft.diagnostics {
             eprintln!("jails: {}", diagnostic.message);
@@ -676,7 +680,7 @@ fn compile_at(
     // materialization does about a managed file that is no longer on disk.
     jails_workspace::materialize(
         &snapshot,
-        jails_contracts::CanonicalModelPatch::reconcile(),
+        jails_contracts::PlanInput::reconcile(),
         draft,
         None,
         jails_compiler::COMPILER_VERSION,

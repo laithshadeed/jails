@@ -10,7 +10,7 @@ use crate::Invocation;
 use crate::cli::GenerateArgs;
 use crate::model_command::parse;
 use crate::model_generate::{PreparedMutation, finish_generation};
-use jails_model::{ComponentId, ModelPatch, StableId, UnitId, UnitKind};
+use jails_model::{ComponentId, Evolution, StableId, UnitId, UnitKind};
 use jails_support::{Failure, Result};
 
 pub(super) fn run(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
@@ -110,21 +110,9 @@ fn run_v1(
             invocation,
             next_source: current.source.clone(),
             current,
-            patch: ModelPatch::Batch(Vec::new()),
+            evolution: Evolution::none(),
             authored_migration: None,
             reader_paths: Vec::new(),
-        });
-    }
-    let mut patches = if existing.is_some() {
-        vec![ModelPatch::ReplaceComponent(component.clone())]
-    } else {
-        vec![ModelPatch::AddComponent(component.clone())]
-    };
-    if let Some(unit) = unit.clone() {
-        patches.push(if existing.is_some() {
-            ModelPatch::ReplaceUnit(unit)
-        } else {
-            ModelPatch::AddUnit(unit)
         });
     }
     finish_generation(PreparedMutation {
@@ -132,7 +120,7 @@ fn run_v1(
         invocation,
         current,
         next_source,
-        patch: ModelPatch::Batch(patches),
+        evolution: Evolution::none(),
         authored_migration: None,
         reader_paths: Vec::new(),
     })

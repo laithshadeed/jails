@@ -61,13 +61,12 @@ about 13,800); `templates/` is 142 files, every one named by a Rust source.
 The facts below seed the plans. Every one was read off the tree, and each
 plan carries the command that re-checks it.
 
-1. **Every mutating frontend starts and ends in one place.** `model_command::Current::load`
-   is the one read of the model and `model_generate::finish_generation` the
-   one pipeline behind it; the plan's patch bytes are the typed `ModelPatch`
-   serialised, not a third hand-written encoding. What each frontend still
-   does twice is *decide the change*: it edits the JDL text and builds a
-   `ModelPatch` describing the same change, `ModelPatch::` at 77 sites in 17
-   files under `src/`. `docs/60-abstraction.md` S60.1 is the deletion.
+1. **Every mutating frontend starts and ends in one place, and decides its
+   change once.** `model_command::Current::load` is the one read of the model
+   and `model_generate::finish_generation` the one pipeline behind it: a
+   frontend edits the JDL text and names an `Evolution`, the model is what
+   the edited source links to, and the plan's input bytes are the evolution
+   serialised. `ModelPatch` and `model_apply.rs` are gone (S60.1, closed).
 
 2. **The compiler assembles Java in 834 `format!(` sites.** The package
    line, import block and class shell are rendered by `emit_java::render` at
@@ -125,7 +124,7 @@ adds a new shape is not progress.
 | `docs/51-kernel.md` | **1 -- kernel** | `crates/jails-codec-derive/**`, `crates/jails-support/src/codec*`, `crates/jails-spec/**`, `src/dispatch.rs`, `tests/protocol-golden/**`, `docs/30-cutover.md` | the codec, once the test-execution wire is one protocol |
 | `docs/52-binary.md` | **2 -- binary** | `src/**` except `src/dispatch.rs`, `tests/cli/**` except `generate.rs`, `capabilities.rs`, `tooling.rs`, `examples.rs`, `reports.rs`, `docs/feature-inventory.tsv`, `README.md`'s command sections | the second decision of each mutation, `new`'s three seeds, the unread flags |
 | `docs/53-tool-crates.md` | **3 -- tool crates** | `crates/jails-{project,java,drive,report,workspace,support,codemod,contracts}/**` (minus plan 1's files), `tests/cli/{tooling,capabilities,reports,examples}.rs`, `tests/corpus/**`, `tests/baseline.rs`, `tests/architecture_allowances.rs` | the second Maven parser, the second project model, the two test-execution vocabularies |
-| `docs/54-language.md` | **4 -- language** | `crates/jails-model/**`, `docs/10-language.md` | `ModelPatch` and `model_apply.rs`, the parser's repeated attribute handling |
+| `docs/54-language.md` | **4 -- language** | `crates/jails-model/**`, `docs/10-language.md` | the parser's repeated attribute handling |
 | `docs/55-compiler.md` | **5 -- compiler** | `crates/jails-compiler/**`, `templates/**`, `tests/golden/**`, `tests/golden.rs`, `tests/agreement.rs`, `tests/cli/generate.rs`, `docs/20-generated-java.md` | the remaining copies of the Java shell, the second proof renderer |
 
 **A plan that lands fewer lines than it expected reports the number and why;
@@ -150,9 +149,6 @@ agent's path while there. Whoever lands second resolves the trivial conflict.
 
 - Plan `51`'s codec decision (S51.4) waits on plan `53`'s S53.5, because the
   test-execution wire is the codec's last user.
-- Plan `54`'s `ModelPatch` decision (S54.2) and `docs/60-abstraction.md`
-  S60.1 are the same change seen from two crates; the binary's frontends
-  become functions from arguments to an `Edit` in the same step.
 - Plan `53`'s S53.3 and plan `55`'s S55.6 both touch what `doctor` compares
   migrations against; land S55.6 first.
 

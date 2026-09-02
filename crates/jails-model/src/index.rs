@@ -1,58 +1,10 @@
 //! Linking for composite and ordered database indexes.
 
-use crate::id::{EntityId, FieldId, IndexId};
+use crate::id::{FieldId, IndexId};
 use crate::linker::Linker;
-use crate::model::{AppModel, Field, Index, IndexColumn, IndexDirection};
+use crate::model::{Field, Index, IndexColumn, IndexDirection};
 use crate::source;
 use std::collections::{BTreeMap, BTreeSet};
-
-pub(crate) fn add(model: &mut AppModel, entity: EntityId, index: Index) -> Result<(), String> {
-    let target = model
-        .entities
-        .get_mut(&entity)
-        .ok_or_else(|| format!("entity id `{entity}` does not exist"))?;
-    crate::model::refuse_retired_entity(target)?;
-    let id = index.id.clone();
-    if target.indexes.contains_key(&id) {
-        return Err(format!("index id `{id}` already exists on `{entity}`"));
-    }
-    if target
-        .indexes
-        .values()
-        .any(|existing| existing.columns == index.columns)
-    {
-        return Err(format!(
-            "entity `{entity}` already declares the same index columns"
-        ));
-    }
-    target.indexes.insert(id, index);
-    Ok(())
-}
-
-pub(crate) fn remove(
-    model: &mut AppModel,
-    entity: EntityId,
-    index: IndexId,
-    confirmed_name: String,
-) -> Result<(), String> {
-    let target = model
-        .entities
-        .get_mut(&entity)
-        .ok_or_else(|| format!("entity id `{entity}` does not exist"))?;
-    crate::model::refuse_retired_entity(target)?;
-    let existing = target
-        .indexes
-        .get(&index)
-        .ok_or_else(|| format!("index id `{index}` does not exist on `{entity}`"))?;
-    if existing.sql_name != confirmed_name {
-        return Err(format!(
-            "confirmed index `{confirmed_name}` is not `{}` for `{index}`\n       fix: pass `--confirm-index {}` exactly",
-            existing.sql_name, existing.sql_name
-        ));
-    }
-    target.indexes.remove(&index);
-    Ok(())
-}
 
 pub(crate) fn link(
     linker: &mut Linker,

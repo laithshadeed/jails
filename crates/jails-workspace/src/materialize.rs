@@ -29,9 +29,9 @@
 //! deltas; a conflict refuses before any write.
 
 use jails_contracts::{
-    CanonicalModelPatch, ContentDigest, DocumentIntent, FileImageRef, FileKind, FileMode,
-    ModelFileUpdate, Plan, PlanBundle, PlanDraft, PlannedOperation, ProjectPath, TreeEntry,
-    TreeManifest, WorkspaceSnapshot,
+    ContentDigest, DocumentIntent, FileImageRef, FileKind, FileMode, ModelFileUpdate, Plan,
+    PlanBundle, PlanDraft, PlanInput, PlannedOperation, ProjectPath, TreeEntry, TreeManifest,
+    WorkspaceSnapshot,
 };
 use jails_support::codec::{hex, sha256};
 use serde::Serialize;
@@ -114,7 +114,7 @@ pub enum Restore {
 /// `plan`, `repair`).
 pub fn materialize(
     snapshot: &WorkspaceSnapshot,
-    input: CanonicalModelPatch,
+    input: PlanInput,
     draft: PlanDraft,
     model_update: Option<ModelFileUpdate>,
     compiler_version: &str,
@@ -732,7 +732,7 @@ pub(crate) fn tree_id(tree: &TreeManifest) -> Result<ContentDigest, String> {
 pub(crate) fn plan_digest(
     compiler: &str,
     base: &jails_contracts::SnapshotPreconditions,
-    input: &CanonicalModelPatch,
+    input: &PlanInput,
     summary: &jails_contracts::SemanticPlan,
     operations: &[PlannedOperation],
     effects: &[jails_contracts::EffectIntent],
@@ -949,10 +949,15 @@ mod tests {
                 executable: false,
             },
         );
-        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let draft = Compiler::compile(
+            &snapshot,
+            &snapshot.model.model,
+            &jails_model::Evolution::none(),
+        )
+        .unwrap();
         materialize(
             &snapshot,
-            CanonicalModelPatch::reconcile(),
+            PlanInput::reconcile(),
             draft,
             None,
             // Pinned rather than `COMPILER_VERSION`: the version is *meant* to
@@ -1064,10 +1069,15 @@ mod tests {
     fn a_partially_published_tree_converges_before_lock_acceptance() {
         let model = jails_model::parse_jdl(MODEL).unwrap();
         let snapshot = WorkspaceSnapshot::detached(model);
-        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let draft = Compiler::compile(
+            &snapshot,
+            &snapshot.model.model,
+            &jails_model::Evolution::none(),
+        )
+        .unwrap();
         let bundle = materialize(
             &snapshot,
-            CanonicalModelPatch::reconcile(),
+            PlanInput::reconcile(),
             draft,
             None,
             jails_compiler::COMPILER_VERSION,
@@ -1106,10 +1116,15 @@ mod tests {
         let source = MODEL.split("\nentity Note").next().unwrap();
         let model = jails_model::parse_jdl(source).unwrap();
         let snapshot = WorkspaceSnapshot::detached(model);
-        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let draft = Compiler::compile(
+            &snapshot,
+            &snapshot.model.model,
+            &jails_model::Evolution::none(),
+        )
+        .unwrap();
         let bundle = materialize(
             &snapshot,
-            CanonicalModelPatch::reconcile(),
+            PlanInput::reconcile(),
             draft,
             None,
             jails_compiler::COMPILER_VERSION,
@@ -1133,8 +1148,13 @@ mod tests {
     fn a_different_patch_input_is_a_different_plan() {
         let model = jails_model::parse_jdl(MODEL).unwrap();
         let snapshot = WorkspaceSnapshot::detached(model);
-        let digest = |input: CanonicalModelPatch| {
-            let draft = Compiler::compile(&snapshot, None).unwrap();
+        let digest = |input: PlanInput| {
+            let draft = Compiler::compile(
+                &snapshot,
+                &snapshot.model.model,
+                &jails_model::Evolution::none(),
+            )
+            .unwrap();
             materialize(
                 &snapshot,
                 input,
@@ -1148,11 +1168,8 @@ mod tests {
             .digest
         };
         assert_ne!(
-            digest(CanonicalModelPatch::reconcile()),
-            digest(CanonicalModelPatch {
-                schema: "jails.model-patch.v1".to_string(),
-                bytes: br#"{"kind":"batch","patches":[]}"#.to_vec(),
-            })
+            digest(PlanInput::reconcile()),
+            digest(PlanInput::evolution(&jails_model::Evolution::none()).unwrap())
         );
     }
 
@@ -1168,10 +1185,15 @@ mod tests {
         let model = jails_model::parse_jdl(MODEL).unwrap();
         let snapshot = WorkspaceSnapshot::detached(model);
         let digest = |version: &str| {
-            let draft = Compiler::compile(&snapshot, None).unwrap();
+            let draft = Compiler::compile(
+                &snapshot,
+                &snapshot.model.model,
+                &jails_model::Evolution::none(),
+            )
+            .unwrap();
             materialize(
                 &snapshot,
-                CanonicalModelPatch::reconcile(),
+                PlanInput::reconcile(),
                 draft,
                 None,
                 version,
@@ -1189,7 +1211,7 @@ mod tests {
 
     /// **The property `apply never replans` rests on.**
     ///
-    /// Identical `WorkspaceSnapshot + CanonicalModelPatch + CompilerVersion`
+    /// Identical `WorkspaceSnapshot + PlanInput + CompilerVersion`
     /// yields an identical plan digest. Every other guarantee in the protocol
     /// is downstream of it --
     /// preview shows a digest, the reader confirms that digest, and the
@@ -1207,10 +1229,15 @@ mod tests {
         let model = jails_model::parse_jdl(MODEL).unwrap();
         let snapshot = WorkspaceSnapshot::detached(model);
         let digest = || {
-            let draft = Compiler::compile(&snapshot, None).unwrap();
+            let draft = Compiler::compile(
+                &snapshot,
+                &snapshot.model.model,
+                &jails_model::Evolution::none(),
+            )
+            .unwrap();
             materialize(
                 &snapshot,
-                CanonicalModelPatch::reconcile(),
+                PlanInput::reconcile(),
                 draft,
                 None,
                 jails_compiler::COMPILER_VERSION,
@@ -1227,10 +1254,15 @@ mod tests {
     fn materialization_is_exact_and_self_verifying() {
         let model = jails_model::parse_jdl(MODEL).unwrap();
         let snapshot = WorkspaceSnapshot::detached(model);
-        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let draft = Compiler::compile(
+            &snapshot,
+            &snapshot.model.model,
+            &jails_model::Evolution::none(),
+        )
+        .unwrap();
         let bundle = materialize(
             &snapshot,
-            CanonicalModelPatch::reconcile(),
+            PlanInput::reconcile(),
             draft,
             None,
             jails_compiler::COMPILER_VERSION,

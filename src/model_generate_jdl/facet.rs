@@ -6,7 +6,7 @@ use crate::cli::GenerateArgs;
 use crate::model_command::parse;
 use crate::model_generate::{PreparedMutation, finish_generation};
 use crate::model_resource::java_to_label;
-use jails_model::{EntityId, Facet, ModelPatch};
+use jails_model::{EntityId, Evolution, Facet};
 use jails_support::{Failure, Result};
 
 #[derive(Clone, Copy)]
@@ -206,7 +206,7 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation, kind: Kind) -> Res
             invocation,
             next_source: current.source.clone(),
             current,
-            patch: ModelPatch::Batch(Vec::new()),
+            evolution: Evolution::none(),
             authored_migration: None,
             reader_paths: Vec::new(),
         });
@@ -231,16 +231,12 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation, kind: Kind) -> Res
             kind.marker()
         )));
     }
-    let patch = ModelPatch::AddFacet {
-        entity: entity_id.clone(),
-        facet,
-    };
     finish_generation(PreparedMutation {
         name: args.name,
         invocation,
         current,
         next_source,
-        patch,
+        evolution: Evolution::none(),
         authored_migration: None,
         reader_paths: Vec::new(),
     })
@@ -257,7 +253,7 @@ pub(super) fn add_facets(
     source: &str,
     entity: &jails_model::Entity,
     wanted: &std::collections::BTreeSet<Facet>,
-) -> Result<Option<(String, Vec<ModelPatch>)>> {
+) -> Result<Option<String>> {
     let missing = wanted
         .iter()
         .filter(|facet| !entity.facets.contains(facet))
@@ -267,7 +263,6 @@ pub(super) fn add_facets(
         return Ok(None);
     }
     let mut next = source.to_string();
-    let mut patches = Vec::new();
     // **`service` and `http` have no marker of their own**, because a scaffold
     // is the one profile that declares them -- so a request that wants either
     // is asking for `use scaffold`, which supplies the rest of the profile it
@@ -282,12 +277,8 @@ pub(super) fn add_facets(
         if !profile && let Some(marker) = marker_of(facet) {
             next = set_projection(&next, &entity.names.java_type, marker, "")?;
         }
-        patches.push(ModelPatch::AddFacet {
-            entity: entity.id.clone(),
-            facet,
-        });
     }
-    Ok(Some((next, patches)))
+    Ok(Some(next))
 }
 
 /// Widen a declared closed set, when the request extends it in order.
@@ -306,7 +297,7 @@ pub(super) fn widen_enum(
     source: &str,
     entity: &jails_model::Entity,
     requested: &[jails_model::EnumConstant],
-) -> Result<Option<(String, Vec<ModelPatch>)>> {
+) -> Result<Option<String>> {
     if requested == entity.enum_constants {
         return Ok(None);
     }
@@ -347,13 +338,7 @@ pub(super) fn widen_enum(
         next = jails_model::insert_jdl_enum_constant(&next, &entity.names.java_type, &member)
             .map_err(super::jdl_edit_failure)?;
     }
-    Ok(Some((
-        next,
-        vec![ModelPatch::AddEnumConstants {
-            entity: entity.id.clone(),
-            constants: tail.to_vec(),
-        }],
-    )))
+    Ok(Some(next))
 }
 
 /// The `use` marker that declares one facet, where a marker declares it.

@@ -145,7 +145,7 @@ next is a defect, and every refusal carries a `fix:` line.
   SQL, route and configuration names are projections of it.
 - **`WorkspaceSnapshot` captures every external fact once.** Code below the
   compiler may observe the filesystem; the compiler may not.
-- **`Compiler` is pure.** Equal snapshot, patch and compiler version produce
+- **`Compiler` is pure.** Equal snapshot, model, evolution and compiler version produce
   equal desired artifacts.
 - **`PlanBundle` is the exact reviewed transition.** Preview, export,
   confirmation and apply all refer to its digest; apply never replans.
@@ -156,7 +156,7 @@ next is a defect, and every refusal carries a `fix:` line.
 
 ```text
 .jails/model.jdl / CLI sugar
-        -> ModelPatch
+        -> edited JDL source (+ Evolution)
         -> AppModel + WorkspaceSnapshot
         -> pure Compiler
         -> PlanDraft
@@ -164,8 +164,8 @@ next is a defect, and every refusal carries a `fix:` line.
         -> preview or the one Executor
 ```
 
-The passes, in the order JDL v1 §20.1 specifies them: capture; parse front
-ends to `ModelPatch`; link, resolve and validate; normalize facets and derive
+The passes, in the order JDL v1 §20.1 specifies them: capture; edit the
+source and link it; resolve and validate; normalize facets and derive
 the dependency graph; lower to typed artifact IR; derive schema and evolution;
 emit a draft, then materialize one exact plan.
 
@@ -178,7 +178,7 @@ authority on which crate a module belongs to.
 
 | crate | contract |
 |---|---|
-| `jails-model` | closed source schema, stable IDs, linking, semantic diagnostics, `AppModel` and `ModelPatch` |
+| `jails-model` | closed source schema, stable IDs, linking, semantic diagnostics, `AppModel` and `Evolution` |
 | `jails-contracts` | portable `WorkspaceSnapshot`, `PlanDraft`, exact `Plan`, operations, trees and blobs |
 | `jails-compiler` | pure semantic lowering to a desired artifact tree; no filesystem, environment or subprocess access |
 | `jails-workspace` | capture, exact materialization, verification and the single executor |
@@ -218,7 +218,6 @@ against this list.
 | `#[derive(Codec)]` on the test-execution wire | one `serde` protocol (S60.6) | the codec and its derive crate |
 | `Project`/`ProjectContext`/snapshot overlap | a snapshot-backed project view | post-capture disk reads |
 | duplicate Maven XML scanners | one document backend in `jails-workspace` | `pom.rs`'s scanner |
-| one decision per mutation | an `Edit` per frontend, the model re-linked from the edited source | the `ModelPatch` built beside every text edit |
 | per-emitter copies of the Java shell | one `JavaUnit` | the copies |
 
 The largest deletion does not come from shorter render functions. It comes
@@ -237,7 +236,7 @@ be satisfied while every duplicated concept survives.
 | rule | held by |
 |---|---|
 | after capture, no compiler module reaches `std::fs`, a project root or a process runner | `rules::canonical_compiler_is_pure_after_capture`, and structurally: the compiler crates depend on nothing that can read a disk |
-| identical snapshot + patch + compiler version yields an identical plan digest | `materialize::the_same_snapshot_patch_and_compiler_produce_the_same_plan_digest`, plus the two negatives |
+| identical snapshot + evolution + compiler version yields an identical plan digest | `materialize::the_same_snapshot_patch_and_compiler_produce_the_same_plan_digest`, plus the two negatives |
 | preview, export, confirmation and apply reference one digest | `preview_export_and_apply_all_name_one_plan_digest` |
 | every command and alias resolves through one generated catalog | `commands.rs` walks the live `clap::Command`; `every_command_a_message_tells_the_reader_to_run_is_one_that_exists` checks messages against it |
 | every builtin type has one semantics row | `BuiltinSemantics` is one exhaustive match, held by the *largest table of per-builtin knowledge outside its row* ratchet |

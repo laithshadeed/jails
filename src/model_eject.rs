@@ -2,7 +2,7 @@
 
 use crate::Invocation;
 use crate::model_generate::{PreparedMutation, finish_generation};
-use jails_model::{EjectionId, ModelPatch, StableId};
+use jails_model::{EjectionId, Evolution, StableId};
 use jails_support::codec::{hex, sha256};
 use jails_support::{Failure, Result};
 
@@ -48,18 +48,12 @@ pub(crate) fn run(semantic_id: String, invocation: Invocation) -> Result<()> {
         next_source.push('\n');
     }
     next_source.push_str(&format!("\neject {semantic_id} @id({})\n", id.as_str()));
-    let next_model = crate::model_command::parse(&next_source)?;
-    let ejection = next_model
-        .ejections
-        .get(&id)
-        .cloned()
-        .ok_or_else(|| Failure::Told(format!("new ejection `{id}` did not link")))?;
     finish_generation(PreparedMutation {
         name: semantic_id,
         invocation,
         current,
         next_source,
-        patch: ModelPatch::AddEjection(ejection),
+        evolution: Evolution::none(),
         authored_migration: None,
         reader_paths,
     })

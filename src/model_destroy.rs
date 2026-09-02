@@ -5,7 +5,9 @@ use crate::Invocation;
 use crate::cli::StoragePolicy;
 use crate::model_generate::{PreparedMutation, finish_generation};
 use crate::model_resource::java_to_label;
-use jails_model::{Facet, ModelPatch, OperationKind, StableId, StorageRetirementPolicy, UnitKind};
+use jails_model::{
+    Evolution, EvolutionStep, Facet, OperationKind, StableId, StorageRetirementPolicy, UnitKind,
+};
 use jails_support::{Failure, Result};
 
 pub(crate) struct Request {
@@ -27,7 +29,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
 
     let current = crate::model_command::Current::load(&invocation)?;
     let label = java_to_label(&request.name);
-    let (patch, next_source) = if request.kind == ArtifactKind::Association {
+    let (evolution, next_source) = if request.kind == ArtifactKind::Association {
         // **Retiring a foreign key is a forward migration, not the un-running
         // of one.** Refusing the verb would leave both halves of an
         // association permanently undestroyable, so the command exists and
@@ -75,11 +77,11 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             None,
         )
         .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))?;
-        let patch = ModelPatch::RemoveRelation {
+        let evolution = Evolution::one(EvolutionStep::RemoveRelation {
             relation: relation.id.clone(),
             confirmed_name: relation.sql_name.clone(),
-        };
-        (patch, next)
+        });
+        (evolution, next)
     } else if matches!(
         request.kind,
         ArtifactKind::Record | ArtifactKind::Value | ArtifactKind::Enum | ArtifactKind::Scaffold
@@ -101,7 +103,16 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             .values()
             .any(|capability| capability.kind == "db")
             && entity.facets.contains(&Facet::Repository);
-        let (patch, next) = if stored {
+        current
+            .model
+            .refuse_entity_removal(&id, if stored { "retiring" } else { "removing" })
+            .map_err(Failure::Told)?;
+        let (evolution, next) = if stored {
+            if !entity.active {
+                return Err(Failure::Told(format!(
+                    "entity id `{id}` is already retired\n       fix: revive it or choose an active entity"
+                )));
+            }
             match (request.storage, request.confirm_table.as_deref()) {
                 (None, _) => {
                     return Err(Failure::Told(format!(
@@ -119,10 +130,10 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                     ));
                 }
                 (Some(StoragePolicy::Preserve), None) => (
-                    ModelPatch::RetireEntity {
+                    Evolution::one(EvolutionStep::RetireEntity {
                         entity: id.clone(),
                         policy: StorageRetirementPolicy::Preserve,
-                    },
+                    }),
                     crate::model_generate_jdl::set_entity_active(
                         &current.source,
                         &entity.names.java_type,
@@ -135,13 +146,21 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                         entity.names.java_type, entity.names.sql_table
                     )));
                 }
+                (Some(StoragePolicy::Drop), Some(confirmed))
+                    if confirmed != entity.names.sql_table =>
+                {
+                    return Err(Failure::Told(format!(
+                        "confirmed table `{confirmed}` is not `{}` for `{}`\n       fix: pass `--confirm-table {}` exactly, or use `--storage preserve`",
+                        entity.names.sql_table, entity.label, entity.names.sql_table
+                    )));
+                }
                 (Some(StoragePolicy::Drop), Some(confirmed)) => (
-                    ModelPatch::RetireEntity {
+                    Evolution::one(EvolutionStep::RetireEntity {
                         entity: id.clone(),
                         policy: StorageRetirementPolicy::Drop {
                             confirmed_table: confirmed.to_string(),
                         },
-                    },
+                    }),
                     crate::model_generate_jdl::remove_entity(
                         &current.source,
                         &entity.names.java_type,
@@ -156,13 +175,11 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                 )));
             }
             (
-                ModelPatch::RemoveEntity(id.clone()),
+                Evolution::none(),
                 crate::model_generate_jdl::remove_entity(&current.source, &entity.names.java_type)?,
             )
         };
-        let mut proof = current.model.clone();
-        proof.apply(patch.clone()).map_err(Failure::Told)?;
-        (patch, next)
+        (evolution, next)
     } else if matches!(
         request.kind,
         ArtifactKind::Factory
@@ -206,6 +223,10 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                 ))
             })?;
         let id = entity.id.clone();
+        current
+            .model
+            .refuse_ejected_target(id.as_str())
+            .map_err(Failure::Told)?;
         let (facet, marker, name) = match request.kind {
             ArtifactKind::Factory => (Facet::Factory, "@factory", "factory"),
             ArtifactKind::Dto => (Facet::Dto, "@dto", "dto"),
@@ -232,13 +253,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                 "the `{name}` facet is implied by another entity profile.\n       fix: change that profile explicitly instead of destroying one implied facet"
             )));
         }
-        let patch = ModelPatch::RemoveFacet {
-            entity: id.clone(),
-            facet,
-        };
-        let mut proof = current.model.clone();
-        proof.apply(patch.clone()).map_err(Failure::Told)?;
-        (patch, next)
+        (Evolution::none(), next)
     } else if crate::model_generate_jdl::component_kind(request.kind).is_some() {
         if request.storage.is_some() || request.confirm_table.is_some() {
             return Err(Failure::Told(
@@ -276,15 +291,18 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             .values()
             .find(|unit| unit.id.as_str() == id.as_str())
             .map(|unit| unit.id.clone());
-        let next = crate::model_generate_jdl::remove_unit(&current.source, &component.name)?;
-        let mut patches = vec![ModelPatch::RemoveComponent(id.clone())];
-        if let Some(unit) = unit.clone() {
-            patches.push(ModelPatch::RemoveUnit(unit));
+        current
+            .model
+            .refuse_component_removal(&id)
+            .map_err(Failure::Told)?;
+        if let Some(unit) = &unit {
+            current
+                .model
+                .refuse_ejected_target(unit.as_str())
+                .map_err(Failure::Told)?;
         }
-        let patch = ModelPatch::Batch(patches);
-        let mut proof = current.model.clone();
-        proof.apply(patch.clone()).map_err(Failure::Told)?;
-        (patch, next)
+        let next = crate::model_generate_jdl::remove_unit(&current.source, &component.name)?;
+        (Evolution::none(), next)
     } else if matches!(
         request.kind,
         ArtifactKind::Class
@@ -337,17 +355,18 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             .values()
             .find(|component| component.id.as_str() == id.as_str())
             .map(|component| component.id.clone());
+        match component {
+            Some(component) => current
+                .model
+                .refuse_component_removal(&component)
+                .map_err(Failure::Told)?,
+            None => current
+                .model
+                .refuse_unit_removal(&id)
+                .map_err(Failure::Told)?,
+        }
         let next = crate::model_generate_jdl::remove_unit(&current.source, &stem)?;
-        let patch = component.map_or_else(
-            || ModelPatch::RemoveUnit(id.clone()),
-            |component| {
-                ModelPatch::Batch(vec![
-                    ModelPatch::RemoveComponent(component),
-                    ModelPatch::RemoveUnit(id.clone()),
-                ])
-            },
-        );
-        (patch, next)
+        (Evolution::none(), next)
     } else if operation_kind(request.kind).is_some() {
         let operation = current.model
             .operations
@@ -363,29 +382,27 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                     request.name
                 ))
             })?;
-        let id = operation.id.clone();
-        let mut proof = current.model.clone();
-        proof
-            .apply(ModelPatch::RemoveOperation(id.clone()))
+        current
+            .model
+            .refuse_operation_removal(&operation.id)
             .map_err(Failure::Told)?;
         let next = crate::model_generate_jdl::remove_operation(
             &current.source,
             &operation.names.java_type,
         )?;
-        (ModelPatch::RemoveOperation(id), next)
+        (Evolution::none(), next)
     } else {
         return Err(Failure::Told(format!(
             "canonical destroy does not map `{}` to a semantic declaration.\n       fix: destroy `record`, `value`, `enum`, `sealed`, `strategy`, `controller`, `scaffold`, `factory`, `dto`, `repo`, `search`, `seed`, `association`, `class`, `interface`, `service`, `test`, `integration-test`, `usecase`, `query`, `transition`, or `event`, or edit the application model",
             kind_name(request.kind)
         )));
     };
-    crate::model_command::parse(&next_source)?;
     finish_generation(PreparedMutation {
         name: request.name,
         invocation,
         current,
         next_source,
-        patch,
+        evolution,
         authored_migration: None,
         reader_paths: Vec::new(),
     })
@@ -432,24 +449,32 @@ pub(crate) fn revive(selector: String, table: String, invocation: Invocation) ->
             ))
         })?;
     let id = entity.id.clone();
+    if entity.active {
+        return Err(Failure::Told(format!(
+            "entity id `{id}` is already active\n       fix: evolve the active entity directly"
+        )));
+    }
+    if table != entity.names.sql_table {
+        return Err(Failure::Told(format!(
+            "confirmed table `{table}` is not the preserved table `{}`\n       fix: pass `--table {}` exactly",
+            entity.names.sql_table, entity.names.sql_table
+        )));
+    }
     let next_source = crate::model_generate_jdl::set_entity_active(
         &current.source,
         &entity.names.java_type,
         true,
     )?;
-    let patch = ModelPatch::ReviveEntity {
+    let evolution = Evolution::one(EvolutionStep::ReviveEntity {
         entity: id.clone(),
         confirmed_table: table.clone(),
-    };
-    let mut proof = current.model.clone();
-    proof.apply(patch.clone()).map_err(Failure::Told)?;
-    crate::model_command::parse(&next_source)?;
+    });
     finish_generation(PreparedMutation {
         name: selector,
         invocation,
         current,
         next_source,
-        patch,
+        evolution,
         authored_migration: None,
         reader_paths: Vec::new(),
     })

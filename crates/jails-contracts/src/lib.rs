@@ -18,8 +18,8 @@ pub use draft::{
 pub use jails_model::{Head, Layer, Layout, Package};
 pub use path::ProjectPath;
 pub use plan::{
-    CanonicalModelPatch, FileImageRef, ModelFileUpdate, Plan, PlanBundle, PlannedOperation,
-    TreeEntry, TreeManifest,
+    FileImageRef, ModelFileUpdate, Plan, PlanBundle, PlanInput, PlannedOperation, TreeEntry,
+    TreeManifest,
 };
 pub use snapshot::{
     BuildSystem, CapturedFile, ContentDigest, DirectoryPrecondition, ExternalType,

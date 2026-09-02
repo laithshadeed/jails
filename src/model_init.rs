@@ -53,16 +53,15 @@ fn run_as(invocation: Invocation) -> Result<()> {
     let snapshot =
         jails_workspace::capture_import(&root, model_path, source.as_bytes(), model, &[])
             .map_err(|error| Failure::Told(format!("could not capture this project: {error}")))?;
-    let draft = jails_compiler::Compiler::compile(&snapshot, None)
-        .map_err(|error| Failure::Told(format!("could not compile the new model: {error}")))?;
-    let patch_bytes = serde_json::to_vec(&serde_json::json!({"kind": "init-model"}))
-        .map_err(|error| Failure::Told(format!("could not encode init patch: {error}")))?;
+    let draft = jails_compiler::Compiler::compile(
+        &snapshot,
+        &snapshot.model.model,
+        &jails_model::Evolution::none(),
+    )
+    .map_err(|error| Failure::Told(format!("could not compile the new model: {error}")))?;
     let bundle = jails_workspace::materialize(
         &snapshot,
-        jails_contracts::CanonicalModelPatch {
-            schema: "jails.model-patch.v1".to_string(),
-            bytes: patch_bytes,
-        },
+        jails_contracts::PlanInput::init_model(),
         draft,
         Some(jails_contracts::ModelFileUpdate {
             retire: Vec::new(),

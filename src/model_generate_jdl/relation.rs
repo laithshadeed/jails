@@ -20,7 +20,7 @@ use crate::cli::GenerateArgs;
 use crate::model_command::parse;
 use crate::model_generate::{PreparedMutation, finish_generation};
 use crate::model_resource::java_to_label;
-use jails_model::{Entity, Facet, ModelPatch};
+use jails_model::{Entity, Evolution, Facet};
 use jails_support::{Failure, Result};
 
 pub(super) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
@@ -90,23 +90,22 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
     )
     .map_err(super::jdl_edit_failure)?;
     let next_model = parse(&next_source)?;
-    let relation = next_model
+    if !next_model
         .relations
         .values()
-        .find(|relation| relation.label == label && relation.child == child.id)
-        .cloned()
-        .ok_or_else(|| {
-            Failure::Told(format!(
-                "association `{}` did not link\n       fix: check that `{}` and `{}` are both declared in `{MODEL_PATH}`",
-                args.name, child.label, parent.label
-            ))
-        })?;
+        .any(|relation| relation.label == label && relation.child == child.id)
+    {
+        return Err(Failure::Told(format!(
+            "association `{}` did not link\n       fix: check that `{}` and `{}` are both declared in `{MODEL_PATH}`",
+            args.name, child.label, parent.label
+        )));
+    }
     finish_generation(PreparedMutation {
         name: args.name,
         invocation,
         current,
         next_source,
-        patch: ModelPatch::AddRelation(relation),
+        evolution: Evolution::none(),
         authored_migration: None,
         reader_paths: Vec::new(),
     })

@@ -1,7 +1,8 @@
 //! The pure Jails application compiler.
 //!
 //! This crate has no workspace path, filesystem, process, clock, network, or
-//! transaction API. Equal snapshots and patches produce equal drafts.
+//! transaction API. Equal snapshots, models and evolutions produce equal
+//! drafts.
 
 mod template;
 pub(crate) use template::{Template, template};
@@ -33,7 +34,7 @@ use jails_contracts::{
     BuildDependency, BuildFeature, BuildSystem, DocumentIntent, FileKind, JavaSourceSet, PlanDraft,
     ProjectPath, PropertyEntry, RenderedTree, SemanticPlan, WorkspaceSnapshot,
 };
-use jails_model::{DependencyScope, ModelPatch, SettingTarget};
+use jails_model::{DependencyScope, Evolution, SettingTarget};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Display, Formatter};
 
@@ -85,20 +86,24 @@ mod storage;
 pub struct Compiler;
 
 impl Compiler {
+    /// Lower one model to the tree, reader-file intents and migrations it
+    /// implies.
+    ///
+    /// `next` is the model the edited source links to; `evolution` is what
+    /// the source cannot say about how the accepted schema reaches it. The
+    /// snapshot supplies every external fact, including the accepted model
+    /// the migrations are derived against.
     pub fn compile(
         snapshot: &WorkspaceSnapshot,
-        patch: Option<ModelPatch>,
+        next: &jails_model::AppModel,
+        evolution: &Evolution,
     ) -> Result<PlanDraft, CompileError> {
-        let mut next_model = snapshot.model.model.clone();
-        let schema_patch = patch.clone();
-        if let Some(patch) = patch {
-            next_model.apply(patch).map_err(CompileError::new)?;
-        }
+        let mut next_model = next.clone();
         // Why the layout arrives here rather than beside the model at each emit
         // site: `ProjectIntent::layout`, which has the whole argument.
         next_model.project.layout = snapshot.project.layout.clone();
-        // After both, because both move projections: a patch can add an entity
-        // and the layout renames the packages every artifact lands in. The
+        // After the layout, because it moves projections: the edit can add an
+        // entity and the layout renames the packages every artifact lands in. The
         // records are in the model, so they are in the plan digest -- a
         // convention that moves has to change one.
         next_model.refresh_derived();
@@ -108,7 +113,7 @@ impl Compiler {
         // A missing backfill or retirement policy is the root semantic error;
         // reporting a downstream constructor/SQL consequence first hides the
         // action the reader must take.
-        let mut migrations = emit_sql::derive(snapshot, &next_model, schema_patch.as_ref())?;
+        let mut migrations = emit_sql::derive(snapshot, &next_model, evolution)?;
         migrations.extend(emit_component::migrations(
             snapshot.accepted_model.as_ref(),
             &next_model,
@@ -723,6 +728,12 @@ fn property_entries(
 
 #[cfg(test)]
 mod tests {
+    /// Compile the snapshot's own model with no evolution: the shape every
+    /// test that is not about schema evolution wants.
+    fn compile_current(snapshot: &WorkspaceSnapshot) -> Result<PlanDraft, CompileError> {
+        Compiler::compile(snapshot, &snapshot.model.model, &Evolution::none())
+    }
+
     /// Every closed component kind is either emitted or refused, and never
     /// silently dropped (JDL v1 §20.2).
     ///
@@ -757,8 +768,7 @@ mod tests {
                     .unwrap(),
                 component(*kind),
             );
-            let error =
-                Compiler::compile(&next, None).expect_err("an unserved component kind must refuse");
+            let error = compile_current(&next).expect_err("an unserved component kind must refuse");
             assert!(
                 error.to_string().contains("has no compiler backend yet"),
                 "{kind:?}: {error}"
@@ -785,7 +795,7 @@ mod tests {
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.0.0".to_string());
-        let plan = Compiler::compile(&snapshot, None).expect("`deliver outbox` has a backend");
+        let plan = compile_current(&snapshot).expect("`deliver outbox` has a backend");
         let file = |suffix: &str| {
             let file = plan
                 .generated
@@ -850,7 +860,7 @@ mod tests {
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.0.0".to_string());
         snapshot.accepted_model = Some(model);
-        let plan = Compiler::compile(&snapshot, None).expect("`deliver outbox` has a backend");
+        let plan = compile_current(&snapshot).expect("`deliver outbox` has a backend");
         assert!(
             !plan
                 .migrations
@@ -873,8 +883,8 @@ mod tests {
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.0.0".to_string());
-        let error = Compiler::compile(&snapshot, None)
-            .expect_err("an event id taken from the row must refuse");
+        let error =
+            compile_current(&snapshot).expect_err("an event id taken from the row must refuse");
         assert!(
             error
                 .to_string()
@@ -901,8 +911,8 @@ mod tests {
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.0.0".to_string());
-        let error = Compiler::compile(&snapshot, None)
-            .expect_err("two events through one outbox must refuse");
+        let error =
+            compile_current(&snapshot).expect_err("two events through one outbox must refuse");
         assert!(
             error
                 .to_string()
@@ -920,8 +930,7 @@ mod tests {
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.0.0".to_string());
-        let error =
-            Compiler::compile(&snapshot, None).expect_err("an outbox without `Json` must refuse");
+        let error = compile_current(&snapshot).expect_err("an outbox without `Json` must refuse");
         assert!(
             error.to_string().contains("fix: declare `cap json`"),
             "{error}"
@@ -943,7 +952,7 @@ mod tests {
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.0.0".to_string());
-        let plan = Compiler::compile(&snapshot, None).expect("an http sink has a backend");
+        let plan = compile_current(&snapshot).expect("an http sink has a backend");
         let file = |suffix: &str| {
             let file = plan
                 .generated
@@ -988,8 +997,8 @@ mod tests {
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.0.0".to_string());
-        let error = Compiler::compile(&snapshot, None)
-            .expect_err("a sink with no outbox behind it must refuse");
+        let error =
+            compile_current(&snapshot).expect_err("a sink with no outbox behind it must refuse");
         assert!(
             error.to_string().contains("which publishes directly"),
             "{error}"
@@ -1009,7 +1018,7 @@ mod tests {
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.0.0".to_string());
-        let plan = Compiler::compile(&snapshot, None).expect("an http workflow has a backend");
+        let plan = compile_current(&snapshot).expect("an http workflow has a backend");
         let file = |suffix: &str| {
             let file = plan
                 .generated
@@ -1050,7 +1059,7 @@ mod tests {
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.0.0".to_string());
-        let error = Compiler::compile(&snapshot, None)
+        let error = compile_current(&snapshot)
             .expect_err("a traversal through an unbounded client must refuse");
         assert!(
             error
@@ -1082,7 +1091,7 @@ mod tests {
         snapshot.project.layout =
             jails_model::Layout::parse("[layout]\ndomain = \"core\"\nservice = \"usecases\"\n")
                 .unwrap();
-        let plan = Compiler::compile(&snapshot, None).expect("a renamed layout still compiles");
+        let plan = compile_current(&snapshot).expect("a renamed layout still compiles");
         let paths = plan
             .generated
             .files
@@ -1135,7 +1144,7 @@ mod tests {
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.0.0".to_string());
-        let plan = Compiler::compile(&snapshot, None).expect("a durable job has a backend");
+        let plan = compile_current(&snapshot).expect("a durable job has a backend");
         let file = |suffix: &str| {
             let file = plan
                 .generated
@@ -1199,7 +1208,7 @@ mod tests {
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.0.0".to_string());
-        let error = Compiler::compile(&snapshot, None)
+        let error = compile_current(&snapshot)
             .expect_err("a durable job with no recovery proof must refuse");
         assert!(
             error.to_string().contains("which has no repository"),
@@ -1259,7 +1268,7 @@ mod tests {
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.1.0".to_string());
-        let plan = Compiler::compile(&snapshot, None).expect("`use seed` has a backend");
+        let plan = compile_current(&snapshot).expect("`use seed` has a backend");
         let file = |suffix: &str| {
             let file = plan
                 .generated
@@ -1305,8 +1314,7 @@ mod tests {
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.1.0".to_string());
-        let error =
-            Compiler::compile(&snapshot, None).expect_err("a seed with no reader must refuse");
+        let error = compile_current(&snapshot).expect_err("a seed with no reader must refuse");
         assert!(
             error.to_string().contains("fix: declare `cap json`"),
             "{error}"
@@ -1336,7 +1344,7 @@ mod tests {
         // `use seed` wants Spring on the build -- the capture says so, not the
         // model.
         snapshot.project.spring_boot = Some("4.1.0".to_string());
-        let plan = Compiler::compile(&snapshot, None).expect("`use seed` has a backend");
+        let plan = compile_current(&snapshot).expect("`use seed` has a backend");
         let paths = plan
             .generated
             .files
@@ -1463,7 +1471,7 @@ mod tests {
         snapshot.project.spring_boot = Some("4.0.0".to_string());
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.0.0".to_string());
-        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let draft = compile_current(&snapshot).unwrap();
         let packs = draft
             .generated
             .files
@@ -1522,7 +1530,7 @@ mod tests {
         // Deliberately no Spring Boot: these packs are the plain-Maven ones,
         // and the pinned AssertJ version below is what a project with no
         // parent to manage it must receive.
-        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let draft = compile_current(&snapshot).unwrap();
         let expected = [
             ".jails/generated/test/java/com/example/demo/testkit/Fake.java",
             ".jails/generated/test/java/com/example/demo/testkit/FakeTest.java",
@@ -1589,7 +1597,7 @@ mod tests {
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.0.0".to_string());
-        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let draft = compile_current(&snapshot).unwrap();
         let expected = [
             ".jails/generated/main/java/com/example/demo/adapters/StoreDatabase.java",
             ".jails/generated/main/java/com/example/demo/adapters/StoreMigrations.java",
@@ -1643,7 +1651,7 @@ mod tests {
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.1.0".to_string());
-        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let draft = compile_current(&snapshot).unwrap();
         let test = draft
             .generated
             .files
@@ -1716,7 +1724,7 @@ mod tests {
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.1.0".to_string());
-        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let draft = compile_current(&snapshot).unwrap();
         let test = draft
             .generated
             .files
@@ -1780,7 +1788,7 @@ mod tests {
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.1.0".to_string());
-        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let draft = compile_current(&snapshot).unwrap();
         for path in [
             ".jails/generated/main/java/com/example/demo/CacheConfig.java",
             ".jails/generated/test/java/com/example/demo/CacheConfigTest.java",
@@ -1844,7 +1852,7 @@ mod tests {
             snapshot.project.build_system = BuildSystem::Maven;
             snapshot.project.spring_boot = Some("4.0.0".to_string());
             snapshot.project.spring_boot = Some(version.to_string());
-            Compiler::compile(&snapshot, None).unwrap()
+            compile_current(&snapshot).unwrap()
         };
 
         let modern = compile("4.1.0");
@@ -1947,7 +1955,7 @@ mod tests {
             snapshot.project.build_system = BuildSystem::Maven;
             snapshot.project.spring_boot = Some("4.0.0".to_string());
             snapshot.project.spring_boot = Some(version.to_string());
-            Compiler::compile(&snapshot, None).unwrap()
+            compile_current(&snapshot).unwrap()
         };
         let modern = compile("4.1.0");
         let classic = compile("3.4.0");
@@ -2043,7 +2051,7 @@ mod tests {
             snapshot.project.build_system = BuildSystem::Maven;
             snapshot.project.spring_boot = Some("4.0.0".to_string());
             snapshot.project.spring_boot = Some(version.to_string());
-            Compiler::compile(&snapshot, None)
+            compile_current(&snapshot)
         };
         let refused = compile("2.7.18").unwrap_err().to_string();
         assert!(refused.contains("needs Spring Boot 3"), "{refused}");
@@ -2125,7 +2133,7 @@ mod tests {
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.1.0".to_string());
-        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let draft = compile_current(&snapshot).unwrap();
 
         for path in [
             ".jails/generated/main/java/com/example/demo/EventHub.java",
@@ -2195,7 +2203,7 @@ mod tests {
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.1.0".to_string());
-        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let draft = compile_current(&snapshot).unwrap();
 
         for path in [
             ".jails/generated/main/java/com/example/demo/adapters/KeyValueStore.java",
@@ -2267,7 +2275,7 @@ mod tests {
         let mut spring = WorkspaceSnapshot::detached(model.clone());
         spring.project.build_system = BuildSystem::Maven;
         spring.project.spring_boot = Some("4.1.0".to_string());
-        let draft = Compiler::compile(&spring, None).unwrap();
+        let draft = compile_current(&spring).unwrap();
 
         for path in [
             ".jails/generated/main/java/com/example/demo/messaging/KafkaConfig.java",
@@ -2336,7 +2344,7 @@ mod tests {
 
         let mut plain = WorkspaceSnapshot::detached(model);
         plain.project.build_system = BuildSystem::Maven;
-        let draft = Compiler::compile(&plain, None).unwrap();
+        let draft = compile_current(&plain).unwrap();
         assert!(draft.generated.files.is_empty());
         assert!(
             draft
@@ -2366,7 +2374,7 @@ mod tests {
         let mut snapshot = WorkspaceSnapshot::detached(model.clone());
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.1.0".to_string());
-        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let draft = compile_current(&snapshot).unwrap();
 
         for path in [
             ".jails/generated/main/java/com/example/demo/Mailer.java",
@@ -2445,7 +2453,7 @@ mod tests {
         }
 
         snapshot.project.spring_boot = Some("3.5.0".to_string());
-        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let draft = compile_current(&snapshot).unwrap();
         let dependencies = draft
             .reader_document_intents
             .iter()
@@ -2475,7 +2483,7 @@ mod tests {
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.0.0".to_string());
-        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let draft = compile_current(&snapshot).unwrap();
 
         for path in [
             ".jails/generated/test/java/com/example/demo/testkit/Faults.java",
@@ -2528,7 +2536,7 @@ mod tests {
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.0.0".to_string());
-        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let draft = compile_current(&snapshot).unwrap();
 
         assert!(draft.generated.files.is_empty());
         assert!(draft.generated.reader_facets.is_empty());
@@ -2548,7 +2556,7 @@ mod tests {
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.0.0".to_string());
-        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let draft = compile_current(&snapshot).unwrap();
 
         assert_eq!(draft.generated.reader_facets.len(), 6);
         assert!(
@@ -2588,7 +2596,7 @@ mod tests {
         .unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
-        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let draft = compile_current(&snapshot).unwrap();
         let (path, file) = draft
             .generated
             .files
@@ -2618,7 +2626,7 @@ mod tests {
         snapshot.project.spring_boot = Some("4.0.0".to_string());
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.0.0".to_string());
-        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let draft = compile_current(&snapshot).unwrap();
         let dto = draft
             .generated
             .files
@@ -2695,7 +2703,7 @@ mod tests {
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.spring_boot = Some("4.0.0".to_string());
         snapshot.project.build_system = BuildSystem::Maven;
-        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let draft = compile_current(&snapshot).unwrap();
         let face = |artifact: &str| {
             draft
                 .generated
@@ -2759,7 +2767,7 @@ entity Metric {
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.0.0".to_string());
-        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let draft = compile_current(&snapshot).unwrap();
 
         let record = draft
             .generated
@@ -2890,7 +2898,7 @@ entity Task {
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.1.0".to_string());
-        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let draft = compile_current(&snapshot).unwrap();
         let source = |suffix: &str| {
             draft
                 .generated
@@ -3002,7 +3010,7 @@ entity Task {
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.0.0".to_string());
-        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let draft = compile_current(&snapshot).unwrap();
         let source = |suffix: &str| {
             draft
                 .generated
@@ -3035,13 +3043,15 @@ entity Task {
     fn a_new_ejection_transfers_matching_units_and_removes_them_from_the_tree() {
         let model = jails_model::parse_jdl(MODEL).unwrap();
         let snapshot = WorkspaceSnapshot::detached(model);
-        let before = Compiler::compile(&snapshot, None).unwrap();
+        let before = compile_current(&snapshot).unwrap();
         let ejection = jails_model::Ejection {
             id: jails_model::EjectionId::parse("eject_ent_note").unwrap(),
             label: "note".to_string(),
             target: "art_ent_note_repository_memory".to_string(),
         };
-        let draft = Compiler::compile(&snapshot, Some(ModelPatch::AddEjection(ejection))).unwrap();
+        let mut next = snapshot.model.model.clone();
+        next.ejections.insert(ejection.id.clone(), ejection);
+        let draft = Compiler::compile(&snapshot, &next, &Evolution::none()).unwrap();
         assert_eq!(
             draft.generated.files.len() + 1,
             before.generated.files.len()
@@ -3070,14 +3080,14 @@ entity Task {
         let model = jails_model::parse_jdl(MODEL).unwrap();
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.java_release = 21;
-        let error = Compiler::compile(&snapshot, None).unwrap_err();
+        let error = compile_current(&snapshot).unwrap_err();
         assert!(error.to_string().contains("disagrees"));
     }
 
     #[test]
     fn accepted_projection_is_the_exact_merge_base_across_emitter_versions() {
         let model = jails_model::parse_jdl(MODEL).unwrap();
-        let first = Compiler::compile(&WorkspaceSnapshot::detached(model.clone()), None).unwrap();
+        let first = compile_current(&WorkspaceSnapshot::detached(model.clone())).unwrap();
         let mut old_projection = first.generated.clone();
         let record = old_projection
             .files
@@ -3092,7 +3102,7 @@ entity Task {
         upgraded.accepted_model = Some(model);
         upgraded.accepted_projection = Some(old_projection.clone());
         upgraded.accepted_compiler = Some("0.0.0-old".to_string());
-        let draft = Compiler::compile(&upgraded, None).unwrap();
+        let draft = compile_current(&upgraded).unwrap();
 
         assert_eq!(draft.baseline, old_projection);
         assert_ne!(draft.baseline, draft.generated);
@@ -3106,7 +3116,7 @@ entity Task {
         snapshot.project.spring_boot = Some("4.0.0".to_string());
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.0.0".to_string());
-        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let draft = compile_current(&snapshot).unwrap();
         let (path, file) = draft
             .generated
             .files
@@ -3191,8 +3201,8 @@ entity Task {
     fn equal_inputs_produce_equal_drafts() {
         let model = jails_model::parse_jdl(MODEL).unwrap();
         let snapshot = WorkspaceSnapshot::detached(model);
-        let first = Compiler::compile(&snapshot, None).unwrap();
-        let second = Compiler::compile(&snapshot, None).unwrap();
+        let first = compile_current(&snapshot).unwrap();
+        let second = compile_current(&snapshot).unwrap();
         assert_eq!(first, second);
         assert!(
             first
@@ -3230,7 +3240,7 @@ entity Task {
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.0.0".to_string());
         snapshot.accepted_model = Some(accepted);
-        let error = Compiler::compile(&snapshot, None).unwrap_err();
+        let error = compile_current(&snapshot).unwrap_err();
         assert!(error.to_string().contains("needs a backfill"), "{error}");
     }
 
@@ -3239,12 +3249,6 @@ entity Task {
         let model = jails_model::parse_jdl(&stored_model()).unwrap();
         let next = jails_model::parse_jdl(&stored_model_with_summary("summary: string?")).unwrap();
         let field_id = FieldId::parse("fld_note_summary").unwrap();
-        let field = next
-            .entities
-            .values()
-            .find_map(|entity| entity.field(&field_id))
-            .unwrap()
-            .clone();
         let mut snapshot = WorkspaceSnapshot::detached(model.clone());
         snapshot.project.build_system = BuildSystem::Maven;
         snapshot.project.spring_boot = Some("4.0.0".to_string());
@@ -3255,14 +3259,12 @@ entity Task {
                 .unwrap(),
             digest: ContentDigest::parse(format!("sha256:{}", "0".repeat(64))).unwrap(),
         });
-        let entity = next.entities.values().next().unwrap().id.clone();
         let draft = Compiler::compile(
             &snapshot,
-            Some(ModelPatch::AddField {
-                entity,
-                field,
+            &next,
+            &Evolution::one(jails_model::EvolutionStep::AddField {
+                field: field_id,
                 policy: FieldAddPolicy::Nullable,
-                placement: jails_model::FieldPlacement::Last,
             }),
         )
         .unwrap();
@@ -3285,7 +3287,7 @@ entity Task {
         // into; without a parent, a versionless dependency set reaches a pom
         // nothing manages.
         snapshot.project.spring_boot = Some("4.0.0".to_string());
-        let draft = Compiler::compile(&snapshot, None).unwrap();
+        let draft = compile_current(&snapshot).unwrap();
         assert_eq!(draft.migrations.len(), 1);
         assert_eq!(draft.migrations[0].logical_name, "create_notes");
         let sql = String::from_utf8(draft.migrations[0].bytes.clone()).unwrap();
@@ -3306,7 +3308,7 @@ entity Task {
         let source = format!("{MODEL}\neject id(art_ent_note_record) @id(eject_ent_note)\n");
         let model = jails_model::parse_jdl(&source).unwrap();
         let snapshot = WorkspaceSnapshot::detached(model);
-        let error = Compiler::compile(&snapshot, None).unwrap_err();
+        let error = compile_current(&snapshot).unwrap_err();
         assert!(error.to_string().contains("managed ABI"), "{error}");
     }
 
@@ -3315,7 +3317,7 @@ entity Task {
         let source = format!("{MODEL}\neject id(art_missing_repository) @id(eject_database)\n");
         let model = jails_model::parse_jdl(&source).unwrap();
         let snapshot = WorkspaceSnapshot::detached(model);
-        let error = Compiler::compile(&snapshot, None).unwrap_err();
+        let error = compile_current(&snapshot).unwrap_err();
         assert!(
             error.to_string().contains("emits no ejectable Java"),
             "{error}"

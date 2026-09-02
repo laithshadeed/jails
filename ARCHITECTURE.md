@@ -13,10 +13,11 @@ open work. This file is the map.
 
 ```mermaid
 flowchart LR
-    FRONT[".jails/model.jdl / CLI sugar"] --> PATCH["ModelPatch"]
-    PATCH --> MODEL["AppModel"]
+    FRONT[".jails/model.jdl / CLI sugar"] --> EDIT["edited JDL source"]
+    EDIT --> MODEL["AppModel (linked)"]
     SNAP["WorkspaceSnapshot"] --> COMPILER["pure Compiler"]
     MODEL --> COMPILER
+    EVOLUTION["Evolution"] --> COMPILER
     COMPILER --> DRAFT["PlanDraft"]
     DRAFT --> MATERIALIZE["exact materializer"]
     MATERIALIZE --> PLAN["PlanBundle: digest + operations + blobs"]
@@ -26,9 +27,11 @@ flowchart LR
 ```
 
 Capture reads every external fact once into a `WorkspaceSnapshot`. The front
-ends turn `.jails/model.jdl` and the CLI's sugar into a `ModelPatch`. The linker
-resolves and validates the model. The compiler lowers it to a desired artifact
-tree without touching the filesystem. Materialization freezes that tree into
+ends turn the CLI's sugar into an edit of `.jails/model.jdl`, and the model is
+whatever the edited source links to; what the source cannot say -- how the
+accepted schema reaches the next model -- is an `Evolution` passed beside it.
+The linker resolves and validates the model. The compiler lowers it to a
+desired artifact tree without touching the filesystem. Materialization freezes that tree into
 one content-addressed `PlanBundle`. Preview renders the bundle; apply executes
 it and never plans again.
 
@@ -38,7 +41,7 @@ it and never plans again.
   SQL, route and configuration names are projections of it.
 - **`WorkspaceSnapshot` captures every external fact once.** Code below the
   compiler may observe the filesystem; the compiler may not.
-- **`Compiler` is pure.** Equal snapshot, patch and compiler version produce
+- **`Compiler` is pure.** Equal snapshot, model, evolution and compiler version produce
   equal desired artifacts.
 - **`PlanBundle` is the exact reviewed transition.** Preview, export,
   confirmation and apply all refer to its digest.
@@ -74,7 +77,7 @@ crate a module belongs to.
 
 | crate | contract |
 |---|---|
-| `jails-model` | closed source schema, stable IDs, linking, semantic diagnostics, `AppModel` and `ModelPatch` |
+| `jails-model` | closed source schema, stable IDs, linking, semantic diagnostics, `AppModel` and `Evolution` |
 | `jails-contracts` | portable `WorkspaceSnapshot`, `PlanDraft`, exact `Plan`, operations, trees and blobs |
 | `jails-compiler` | pure semantic lowering to a desired artifact tree; no filesystem, environment or subprocess access |
 | `jails-workspace` | capture, exact materialization, verification and the single executor |

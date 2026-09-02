@@ -542,17 +542,15 @@ entity Note @id(ent_note) {
 
     #[test]
     fn semantic_removal_refuses_dangling_operation_edges() {
-        let mut model = crate::parse_jdl(VALID).unwrap();
+        let model = crate::parse_jdl(VALID).unwrap();
         let event = OperationId::parse("op_note_created").unwrap();
-        let error = model
-            .apply(crate::ModelPatch::RemoveOperation(event))
-            .unwrap_err();
+        let error = model.refuse_operation_removal(&event).unwrap_err();
         assert!(error.contains("rename_note"), "{error}");
         assert!(error.contains("remove those transitions"), "{error}");
 
         let entity = EntityId::parse("ent_note").unwrap();
         let error = model
-            .apply(crate::ModelPatch::RemoveEntity(entity))
+            .refuse_entity_removal(&entity, "removing")
             .unwrap_err();
         // `refuse_dependents` names each dependent the way a reader wrote it in
         // the model -- `operation CreateNote` -- rather than by its stable-id
@@ -561,78 +559,18 @@ entity Note @id(ent_note) {
         assert!(error.contains("operation OpenNotes"), "{error}");
     }
 
-    /// **A projection is the entity's child, not a dependent of it.**
-    ///
-    /// `dependents` deliberately does not count one -- `use repo` says
-    /// something about `note` and has no meaning without it -- so a removal
-    /// that forgets them leaves the patched model carrying projections
-    /// pointing at nothing. Nothing reads them, so the emitted tree is right
-    /// and the *accepted* model is not, and `model check --frozen` reports
-    /// the project as diverged from its own source, permanently: re-linking
-    /// the source yields no projections and the lock still has them.
-    #[test]
-    fn removing_an_entity_removes_the_projections_that_are_its_children() {
-        const SOURCE: &str = r#"jdl 1
-
-app Notes @id(project_notes) {
-  pkg com.example.notes
-  java 26
-  platform spring
-  build maven
-  storage none
-}
-
-entity Note @id(ent_note) {
-  use repo
-  use service
-  use http
-
-  id: uuid @id(fld_note_id) @pk
-}
-"#;
-        for patch in [
-            crate::ModelPatch::RemoveEntity(EntityId::parse("ent_note").unwrap()),
-            // The other removal: a confirmed storage drop takes the entity out
-            // too.
-            crate::ModelPatch::RetireEntity {
-                entity: EntityId::parse("ent_note").unwrap(),
-                policy: crate::StorageRetirementPolicy::Drop {
-                    confirmed_table: "notes".to_string(),
-                },
-            },
-        ] {
-            let mut model = crate::parse_jdl(SOURCE).unwrap();
-            assert_eq!(model.projections.len(), 3);
-            model.apply(patch).unwrap();
-            assert!(model.entities.is_empty());
-            assert!(
-                model.projections.is_empty(),
-                "projections outlived their entity: {:?}",
-                model.projections
-            );
-        }
-    }
-
     #[test]
     fn ejection_is_a_semantic_ownership_edge() {
         // The `id(...)` escape: the boundary path (`Note.repo.postgres`) is
         // the specification's one recorded gap and does not link yet.
         let source =
             format!("{VALID}\neject id(art_cap_db_ent_note_repository) @id(eject_database)\n");
-        let mut model = crate::parse_jdl(&source).unwrap();
+        let model = crate::parse_jdl(&source).unwrap();
         let capability = CapabilityId::parse("cap_db").unwrap();
         let error = model
-            .apply(crate::ModelPatch::RemoveCapability(capability))
+            .refuse_ejected_target(capability.as_str())
             .unwrap_err();
         assert!(error.contains("reader-owned"), "{error}");
-
-        let error = model
-            .apply(crate::ModelPatch::AddEjection(crate::Ejection {
-                id: EjectionId::parse("eject_missing").unwrap(),
-                label: "missing".to_string(),
-                target: "missing".to_string(),
-            }))
-            .unwrap_err();
-        assert!(error.contains("does not exist"), "{error}");
+        assert!(!model.is_ejectable_target("missing"));
     }
 }

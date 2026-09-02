@@ -9,7 +9,7 @@ use crate::model_generate::{PreparedMutation, finish_generation, normalize_type}
 use crate::model_resource::java_to_label;
 use jails_contracts::ProjectPath;
 use jails_model::{
-    ColumnRenamePolicy, EntityId, Field, FieldEvolutionPolicy, FieldId, ModelPatch, StableId,
+    ColumnRenamePolicy, Evolution, EvolutionStep, FieldEvolutionPolicy, FieldId, StableId,
     TypeChangeStrategy,
 };
 use jails_support::{Failure, Result};
@@ -162,23 +162,27 @@ pub(crate) struct DropRequest {
 pub(crate) fn drop_field(request: DropRequest, invocation: Invocation) -> Result<()> {
     reject_package(request.package.as_deref())?;
     let resolved = resolve(&request.entity, &request.field, &invocation)?;
+    resolved
+        .current
+        .model
+        .refuse_field_removal(&resolved.field_id)
+        .map_err(Failure::Told)?;
     let next_source = jdl_edit::remove_field(
         &resolved.current.source,
         &resolved.entity_java_name,
         &resolved.field_java_name,
         resolved.field_id.as_str(),
     )?;
-    let patch = ModelPatch::RemoveField {
-        entity: resolved.entity_id.clone(),
+    let evolution = Evolution::one(EvolutionStep::RemoveField {
         field: resolved.field_id.clone(),
         confirmed_column: request.confirm_column.clone(),
-    };
+    });
     finish_generation(PreparedMutation {
         name: format!("{}.{}", request.entity, request.field),
         invocation,
         current: resolved.current,
         next_source,
-        patch,
+        evolution,
         authored_migration: None,
         reader_paths: Vec::new(),
     })
@@ -186,7 +190,6 @@ pub(crate) fn drop_field(request: DropRequest, invocation: Invocation) -> Result
 
 struct ResolvedField {
     current: crate::model_command::Current,
-    entity_id: EntityId,
     entity_label: String,
     entity_java_name: String,
     field_id: FieldId,
@@ -219,8 +222,8 @@ fn resolve(entity_name: &str, field_name: &str, invocation: &Invocation) -> Resu
                 entity.label
             ))
         })?;
+    entity.refuse_retired().map_err(Failure::Told)?;
     let resolved = ResolvedField {
-        entity_id: entity.id.clone(),
         entity_label: entity.label.clone(),
         entity_java_name: entity.names.java_type.clone(),
         field_id: field.id.clone(),
@@ -245,30 +248,16 @@ fn finish_replace(
     invocation: Invocation,
     reader_paths: &[ProjectPath],
 ) -> Result<()> {
-    let next_model = crate::model_command::parse(next_source)?;
-    let replacement: Field = next_model
-        .entities
-        .get(&resolved.entity_id)
-        .and_then(|entity| entity.field(&resolved.field_id))
-        .cloned()
-        .ok_or_else(|| {
-            Failure::Told(format!(
-                "evolved field `{}` did not link",
-                resolved.field_id
-            ))
-        })?;
-    let patch = ModelPatch::ReplaceField {
-        entity: resolved.entity_id.clone(),
+    let evolution = Evolution::one(EvolutionStep::ReplaceField {
         field: resolved.field_id.clone(),
-        replacement: replacement.clone(),
         policy,
-    };
+    });
     finish_generation(PreparedMutation {
         name: format!("{}.{}", resolved.entity_label, display_name),
         invocation,
         current: resolved.current,
         next_source: std::mem::take(next_source),
-        patch,
+        evolution,
         authored_migration: None,
         reader_paths: reader_paths.to_vec(),
     })

@@ -3,7 +3,7 @@
 use crate::Capability as CliCapability;
 use crate::Invocation;
 use crate::model_generate::{PreparedMutation, finish_generation};
-use jails_model::{CapabilityId, DependencyId, DependencyScope, ModelPatch, StableId};
+use jails_model::{CapabilityId, DependencyId, DependencyScope, Evolution, StableId};
 use jails_support::codec::{hex, sha256};
 use jails_support::{Failure, Result};
 
@@ -51,7 +51,6 @@ pub(crate) fn add(
         ));
     }
     let mut next_source = current.source.clone();
-    let mut patches = Vec::new();
     for capability in capabilities {
         let label = capability.label();
         let identity_label = name.as_ref().map_or_else(
@@ -89,18 +88,6 @@ pub(crate) fn add(
             // of these is one.
             next_source = jails_model::set_jdl_app_property(&next_source, "storage", storage)
                 .map_err(crate::model_generate_jdl::jdl_edit_failure)?;
-            // **The patch has to carry the axis too.** The source is what the
-            // model is re-read from next time; the patch is what *this*
-            // transition compiles. Without it `add db` on a project that
-            // already has entities lowers them against `dialect none` and
-            // refuses.
-            let dialect = jails_model::parse_jdl(&next_source)
-                .map_err(|diagnostics| {
-                    Failure::Told(diagnostics.to_string().trim_end().to_string())
-                })?
-                .project
-                .dialect;
-            patches.push(ModelPatch::SetDialect(dialect.clone()));
         } else {
             let declaration = format!(
                 "cap {label}{} @id({})",
@@ -112,20 +99,13 @@ pub(crate) fn add(
             next_source = jails_model::append_jdl_declaration(&next_source, &declaration)
                 .map_err(crate::model_generate_jdl::jdl_edit_failure)?;
         }
-        let next_model = crate::model_command::parse(&next_source)?;
-        let declaration = next_model
-            .capabilities
-            .get(&id)
-            .cloned()
-            .ok_or_else(|| Failure::Told(format!("new capability `{id}` did not link")))?;
-        patches.push(ModelPatch::AddCapability(declaration));
     }
     finish_generation(PreparedMutation {
         name: format!("capability {requested}"),
         invocation,
         current,
         next_source,
-        patch: ModelPatch::Batch(patches),
+        evolution: Evolution::none(),
         authored_migration: None,
         reader_paths: Vec::new(),
     })
@@ -145,7 +125,6 @@ pub(crate) fn remove(
         .join(", ");
     let current = crate::model_command::Current::load(&invocation)?;
     let mut next_source = current.source.clone();
-    let mut patches = Vec::new();
     for capability in capabilities {
         let label = capability.label();
         let declaration = current.model
@@ -192,15 +171,13 @@ pub(crate) fn remove(
         } else {
             crate::model_generate_jdl::remove_capability(&next_source, &declaration.label)?
         };
-        patches.push(ModelPatch::RemoveCapability(declaration.id.clone()));
     }
-    crate::model_command::parse(&next_source)?;
     finish_generation(PreparedMutation {
         name: format!("capability {requested}"),
         invocation,
         current,
         next_source,
-        patch: ModelPatch::Batch(patches),
+        evolution: Evolution::none(),
         authored_migration: None,
         reader_paths: Vec::new(),
     })
@@ -233,7 +210,7 @@ pub(crate) fn add_dependency(
             invocation,
             next_source: current.source.clone(),
             current,
-            patch: ModelPatch::Batch(Vec::new()),
+            evolution: Evolution::none(),
             authored_migration: None,
             reader_paths: Vec::new(),
         });
@@ -261,18 +238,12 @@ pub(crate) fn add_dependency(
         next_source = jails_model::append_jdl_declaration(&next_source, &declaration)
             .map_err(crate::model_generate_jdl::jdl_edit_failure)?;
     }
-    let next_model = crate::model_command::parse(&next_source)?;
-    let dependency = next_model
-        .dependencies
-        .get(&id)
-        .cloned()
-        .ok_or_else(|| Failure::Told(format!("new dependency `{id}` did not link")))?;
     finish_generation(PreparedMutation {
         name: coordinate,
         invocation,
         current,
         next_source,
-        patch: ModelPatch::AddDependency(dependency),
+        evolution: Evolution::none(),
         authored_migration: None,
         reader_paths: Vec::new(),
     })
@@ -299,13 +270,12 @@ pub(crate) fn remove_dependency(
         })?;
     let next_source =
         crate::model_generate_jdl::remove_dependency(&current.source, &dependency.label)?;
-    crate::model_command::parse(&next_source)?;
     finish_generation(PreparedMutation {
         name: coordinate,
         invocation,
         current,
         next_source,
-        patch: ModelPatch::RemoveDependency(dependency.id),
+        evolution: Evolution::none(),
         authored_migration: None,
         reader_paths: Vec::new(),
     })
@@ -332,28 +302,18 @@ fn set_tool_capability(
         .values()
         .find(|capability| capability.kind == kind)
         .cloned();
-    let (next_source, patch) = match (present, existing) {
-        (true, Some(_)) | (false, None) => (current.source.clone(), ModelPatch::Batch(Vec::new())),
+    let next_source = match (present, existing) {
+        (true, Some(_)) | (false, None) => current.source.clone(),
         (true, None) => {
             let id = CapabilityId::parse(format!("cap_{label}")).map_err(Failure::Told)?;
-            let next = jails_model::append_jdl_declaration(
+            jails_model::append_jdl_declaration(
                 &current.source,
                 &format!("cap {kind} @id({})", id.as_str()),
             )
-            .map_err(crate::model_generate_jdl::jdl_edit_failure)?;
-            let linked = crate::model_command::parse(&next)?;
-            let capability = linked
-                .capabilities
-                .get(&id)
-                .cloned()
-                .ok_or_else(|| Failure::Told(format!("new capability `{id}` did not link")))?;
-            (next, ModelPatch::AddCapability(capability))
+            .map_err(crate::model_generate_jdl::jdl_edit_failure)?
         }
         (false, Some(capability)) => {
-            let next =
-                crate::model_generate_jdl::remove_capability(&current.source, &capability.label)?;
-            crate::model_command::parse(&next)?;
-            (next, ModelPatch::RemoveCapability(capability.id))
+            crate::model_generate_jdl::remove_capability(&current.source, &capability.label)?
         }
     };
     finish_generation(PreparedMutation {
@@ -361,7 +321,7 @@ fn set_tool_capability(
         invocation,
         current,
         next_source,
-        patch,
+        evolution: Evolution::none(),
         authored_migration: None,
         reader_paths: Vec::new(),
     })

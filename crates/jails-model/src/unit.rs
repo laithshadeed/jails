@@ -2,7 +2,6 @@
 
 use crate::UnitId;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SourceUnit {
@@ -115,39 +114,4 @@ pub enum UnitKind {
     Sealed,
     Strategy,
     Controller,
-}
-
-pub(crate) fn insert(
-    units: &mut BTreeMap<UnitId, SourceUnit>,
-    unit: SourceUnit,
-) -> Result<(), String> {
-    let id = unit.id.clone();
-    if units.contains_key(&id) {
-        return Err(format!("source unit id `{id}` already exists"));
-    }
-    if units.values().any(|existing| {
-        existing.java_package == unit.java_package && existing.java_type == unit.java_type
-    }) {
-        return Err(format!(
-            "Java source unit `{}.{}` already exists",
-            unit.java_package, unit.java_type
-        ));
-    }
-    units.insert(id, unit);
-    Ok(())
-}
-
-pub(crate) fn replace(
-    units: &mut BTreeMap<UnitId, SourceUnit>,
-    unit: SourceUnit,
-) -> Result<(), String> {
-    let id = unit.id.clone();
-    if !units.contains_key(&id) {
-        return Err(format!("source unit id `{id}` does not exist"));
-    }
-    let mut proof = units.clone();
-    proof.remove(&id);
-    insert(&mut proof, unit)?;
-    *units = proof;
-    Ok(())
 }

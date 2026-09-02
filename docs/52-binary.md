@@ -13,12 +13,13 @@ Item numbers `S52.n` are stable and never reused.
 root package: 13,071 production lines that turn a parsed command into a
 canonical mutation.
 
-The pipeline is one place now. `model_command::Current::load` reads and
-links the invocation's model; a frontend edits the JDL text and builds the
-typed `ModelPatch` for the same change; `model_generate::finish_generation`
-captures over the intended model, compiles, materializes, and previews or
-executes *that* bundle. The plan's input bytes are the patch serialised, so
-no frontend writes a third encoding.
+The pipeline is one place now, and one decision. `model_command::Current::load`
+reads and links the invocation's model; a frontend edits the JDL text and
+names an `Evolution`; `model_generate::finish_generation` links the edited
+source, captures over that model, compiles it beside the evolution,
+materializes, and previews or executes *that* bundle. The plan's input bytes
+are the evolution serialised; the edit is in the plan as the model file's
+after-image.
 
 ## What you own
 
@@ -41,34 +42,17 @@ agents will need to touch under R2; keep your edits to it small and early.
 |---|---:|
 | `src/**` production / raw | 13,071 / 17,988 |
 | `src/model_*.rs` frontends | 16 files |
-| `ModelPatch::` constructions | 77, in 17 files |
-| re-parses of an edited source (`parse(&next_source)` and kin) | 24 |
+| re-parses of an edited source, each a check rather than a second decision | 9 |
 | `src/new/**` raw | 2,543 |
 | `src/cli.rs` + `src/cli/*.rs` raw | 2,350 |
 | `editor_command`, `contract_command`, `tool_command` raw | 1,400 |
 | `tests/cli/model.rs` | 13,765 lines |
 
 ```
-grep -rn 'ModelPatch::' src --include=*.rs | grep -v '^\s*//' | wc -l
 grep -rn 'parse(&next\|parse(&requested' src --include=*.rs | wc -l
 ```
 
 ## Steps
-
-**S52.1 -- One decision per mutation.** Every frontend now decides its change
-twice: it edits the text and it builds the patch, and the re-parse of the
-edited source exists to pull the linked declaration out for the patch. The
-text edit is the surviving one (`docs/60-abstraction.md` S60.1): a frontend
-becomes a function from its arguments to an `Edit`, the model is whatever
-the edited source links to, and the one-shot evolution policies the patch
-carries today (`ColumnRenamePolicy`, `TypeChangeStrategy`,
-`StorageRetirementPolicy`, `FieldAddPolicy`, the index and drop
-confirmations) become an `Evolution` passed to `compile` beside the model.
-Agent 4 supplies `Edit` and `Evolution` (S54.2); you make the frontends use
-them. Two things the pipeline must keep, because each was a defect: capture
-is taken over the *intended* model (`capture_planned`), and the frontends'
-own exact-field-shape checks run before the edit, not after. The exit is the
-first grep above at zero.
 
 **S52.3 -- `new`'s three seeds.** `src/new/write.rs` writes `App.java`, its
 test and a `package-info.java` by hand before the model takes over. The
@@ -100,7 +84,7 @@ one; a split changes no line count and is done last so it does not hide the
 first.
 
 **S52.7 -- The prose.** `README.md`'s `Commands` section is yours; rewrite
-it to what is there after S52.1 and S52.4.
+it to what is there after S52.4.
 
 ## Traps
 
@@ -119,10 +103,6 @@ it to what is there after S52.1 and S52.4.
 - **Two frontends must not each decide how a request binds.** A query is
   `@ModelAttribute`, a command is `@RequestBody`, decided once in the
   compiler; nothing in `src/` re-derives it.
-
-## Items you close elsewhere
-
-`docs/00-contracts.md` §1.7's *one decision per mutation* row, with S52.1.
 
 ## Green
 

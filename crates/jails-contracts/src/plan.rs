@@ -29,17 +29,53 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// What the reader asked for, as the plan records it.
+///
+/// The source edit is already in the plan: `ReplaceModelFile` carries the
+/// model file's before- and after-image. What the source cannot say is the
+/// [`jails_model::Evolution`] -- the one-shot policies about how the accepted
+/// schema reaches the next one -- so that is what the input records, and two
+/// mutations that edit the source identically but mean different things have
+/// different digests.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct CanonicalModelPatch {
+pub struct PlanInput {
     pub schema: String,
     pub bytes: Vec<u8>,
 }
 
-impl CanonicalModelPatch {
+impl PlanInput {
+    const SCHEMA: &str = "jails.plan-input.v1";
+
+    /// No request: the model is recompiled as it stands (`sync`, `repair`).
     pub fn reconcile() -> Self {
+        Self::of(br#"{"kind":"reconcile"}"#.to_vec())
+    }
+
+    /// The model's first compile, on a project that had none.
+    pub fn init_model() -> Self {
+        Self::of(br#"{"kind":"init-model"}"#.to_vec())
+    }
+
+    /// A mutation: the edited source is in the plan, and this is what it
+    /// could not say.
+    pub fn evolution(evolution: &jails_model::Evolution) -> Result<Self, String> {
+        #[derive(Serialize)]
+        struct Input<'a> {
+            kind: &'static str,
+            evolution: &'a jails_model::Evolution,
+        }
+        serde_json::to_vec(&Input {
+            kind: "mutation",
+            evolution,
+        })
+        .map(Self::of)
+        .map_err(|error| format!("could not encode the plan input: {error}"))
+    }
+
+    fn of(bytes: Vec<u8>) -> Self {
         Self {
-            schema: "jails.model-patch.v1".to_string(),
-            bytes: br#"{"kind":"reconcile"}"#.to_vec(),
+            schema: Self::SCHEMA.to_string(),
+            bytes,
         }
     }
 }
@@ -121,7 +157,7 @@ pub struct Plan {
     pub id: String,
     pub compiler: String,
     pub base: SnapshotPreconditions,
-    pub input: CanonicalModelPatch,
+    pub input: PlanInput,
     pub summary: SemanticPlan,
     pub operations: Vec<PlannedOperation>,
     pub follow_up_effects: Vec<EffectIntent>,

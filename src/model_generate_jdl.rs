@@ -24,7 +24,7 @@ use crate::cli::GenerateArgs;
 use crate::model_generate::{ParsedField, PreparedMutation, finish_generation, parse_field};
 use crate::model_resource::java_to_label;
 use crate::{Invocation, model_generate};
-use jails_model::{EntityId, ModelPatch, OperationId};
+use jails_model::{EntityId, Evolution, OperationId};
 use jails_support::{Failure, Result};
 use std::collections::BTreeSet;
 
@@ -178,24 +178,18 @@ fn run_operation(args: GenerateArgs, invocation: Invocation) -> Result<()> {
             invocation,
             next_source: current.source.clone(),
             current,
-            patch: ModelPatch::Batch(Vec::new()),
+            evolution: Evolution::none(),
             authored_migration: None,
             reader_paths: Vec::new(),
         });
     }
     let next_source = splice(&current.source)?;
-    let next_model = parse(&next_source)?;
-    let operation = next_model
-        .operations
-        .get(&operation_id)
-        .cloned()
-        .ok_or_else(|| Failure::Told(format!("new operation `{operation_id}` did not link")))?;
     finish_generation(PreparedMutation {
         name: args.name,
         invocation,
         current,
         next_source,
-        patch: ModelPatch::AddOperation(operation),
+        evolution: Evolution::none(),
         authored_migration: None,
         reader_paths: Vec::new(),
     })
@@ -299,29 +293,27 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
                 true => facet::widen_enum(&current.source, existing, &requested.enum_constants)?,
                 false => None,
             };
-            if let Some((next_source, patches)) = widened {
-                let patch = ModelPatch::Batch(patches);
+            if let Some(next_source) = widened {
                 return finish_generation(PreparedMutation {
                     name: args.name.clone(),
                     invocation,
                     current,
                     next_source,
-                    patch,
+                    evolution: Evolution::none(),
                     authored_migration: None,
                     reader_paths: Vec::new(),
                 });
             }
             if unchanged
-                && let Some((next_source, patches)) =
+                && let Some(next_source) =
                     facet::add_facets(&current.source, existing, &requested.facets)?
             {
-                let patch = ModelPatch::Batch(patches);
                 finish_generation(PreparedMutation {
                     name: args.name.clone(),
                     invocation: invocation.clone(),
                     current: current.clone(),
                     next_source,
-                    patch,
+                    evolution: Evolution::none(),
                     authored_migration: None,
                     reader_paths: Vec::new(),
                 })?;
@@ -364,38 +356,12 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
             invocation,
             next_source: current.source.clone(),
             current,
-            patch: ModelPatch::Batch(Vec::new()),
+            evolution: Evolution::none(),
             authored_migration: None,
             reader_paths: Vec::new(),
         });
     }
     let next_source = append_declaration(current.source.clone(), &declaration)?;
-    let next_model = parse(&next_source)?;
-    let entity = next_model
-        .entity(&entity_id)
-        .cloned()
-        .ok_or_else(|| Failure::Told(format!("new entity `{entity_id}` did not link")))?;
-    // **The entity's projections ride with it.** `AddEntity` carries
-    // `entity.facets`, which records *that* an entity is served over HTTP and
-    // not *where*; the arguments live on the `Projection`. Sending the entity
-    // alone would make the patch a lossy description of the source that
-    // produced it, so the first compile would disagree with every later
-    // `sync`.
-    let projections: Vec<_> = next_model
-        .projections
-        .values()
-        .filter(|projection| projection.entity == entity_id)
-        .cloned()
-        .collect();
-    let patch = if projections.is_empty() {
-        ModelPatch::AddEntity(entity)
-    } else {
-        ModelPatch::Batch(
-            std::iter::once(ModelPatch::AddEntity(entity))
-                .chain(projections.into_iter().map(ModelPatch::AddProjection))
-                .collect(),
-        )
-    };
     let indexes = std::mem::take(&mut args.indexes);
     let name = args.name.clone();
     finish_generation(PreparedMutation {
@@ -403,18 +369,18 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
         invocation: invocation.clone(),
         current,
         next_source,
-        patch,
+        evolution: Evolution::none(),
         authored_migration: None,
         reader_paths: Vec::new(),
     })?;
-    // **`--index` is a second patch, not a flag on the first.** An index is a
+    // **`--index` is a second mutation, not a flag on the first.** An index is a
     // stable entity child with its own identity and its own forward
     // migration, which is `resource index add`'s whole contract -- so the
     // frontend that owns it is the one that applies it, rather than the entity
     // renderer growing a copy.
     //
     // After the entity, necessarily: the columns are resolved against model
-    // field identity, and the fields do not exist until the patch above lands.
+    // field identity, and the fields do not exist until the entity above lands.
     for columns in indexes {
         crate::model_index::add(name.clone(), columns, None, invocation.clone())?;
     }

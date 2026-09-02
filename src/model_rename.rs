@@ -3,7 +3,7 @@
 use crate::Invocation;
 use crate::cli::{ExternalRenamePolicy, RenameStrategy};
 use crate::model_generate::{PreparedMutation, finish_generation};
-use jails_model::{ModelPatch, StableId};
+use jails_model::{Evolution, EvolutionStep, StableId};
 use jails_support::{Failure, Result};
 use std::path::{Path, PathBuf};
 
@@ -109,47 +109,37 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             .as_ref()
             .map(|(projection, route)| (projection.as_str(), route.as_str())),
     )?;
-    let next_model = crate::model_command::parse(&next_source)?;
-    let next_label = next_model
-        .entities
-        .get(&entity_id)
-        .map(|entity| entity.label.clone())
-        .ok_or_else(|| {
-            Failure::Told(format!(
-                "lossless model edit removed entity `{entity_id}`.\n       fix: restore the entity declaration and retry"
-            ))
-        })?;
-    let next_table = next_model
-        .entities
-        .get(&entity_id)
-        .map(|entity| entity.names.sql_table.clone())
-        .unwrap_or_else(|| sql_table.clone());
-    let patch = ModelPatch::RenameEntityProjection {
-        entity: entity_id.clone(),
-        label: Some(next_label),
-        java: Some(request.to.clone()),
-        table: cutover.then(|| next_table.clone()),
-        route: accepted_route.as_ref().map(|(_, route)| route.clone()),
+    // The cutover's `alter table ... rename to` is *derived*: the evolution
+    // states the move and the compiler emits the statement beside every
+    // other schema change, so it lands in the reviewed plan rather than
+    // being smuggled in beside it. The table it moves to is what the edited
+    // source links to, read once here.
+    let evolution = match cutover {
+        false => Evolution::none(),
+        true => {
+            let next_model = crate::model_command::parse(&next_source)?;
+            let table = next_model
+                .entities
+                .get(&entity_id)
+                .map(|entity| entity.names.sql_table.clone())
+                .ok_or_else(|| {
+                    Failure::Told(format!(
+                        "lossless model edit removed entity `{entity_id}`.\n       fix: restore the entity declaration and retry"
+                    ))
+                })?;
+            Evolution::one(EvolutionStep::RenameTable {
+                entity: entity_id.clone(),
+                table,
+            })
+        }
     };
-    let mut proof = current.model.clone();
-    proof.apply(patch.clone()).map_err(Failure::Told)?;
-    if next_model != proof {
-        return Err(Failure::Told(
-            "lossless model edit did not produce the intended semantic rename.\n       fix: restore a canonical entity table and retry"
-                .to_string(),
-        ));
-    }
 
     finish_generation(PreparedMutation {
         name: entity.label.clone(),
         invocation,
         current,
         next_source,
-        patch,
-        // The cutover's `alter table ... rename to` is *derived*: the patch
-        // states the policy and the compiler emits the statement beside every
-        // other schema change, so it lands in the reviewed plan rather than
-        // being smuggled in beside it.
+        evolution,
         authored_migration: None,
         reader_paths: Vec::new(),
     })

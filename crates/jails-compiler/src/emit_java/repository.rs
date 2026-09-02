@@ -571,21 +571,25 @@ mod tests {
         let mut snapshot = WorkspaceSnapshot::detached(model);
         snapshot.project.spring_boot = Some("4.1.0".to_string());
         snapshot.project.build_system = BuildSystem::Maven;
-        crate::Compiler::compile(&snapshot, None)
-            .unwrap()
-            .generated
-            .files
-            .values()
-            .map(|file| {
+        crate::Compiler::compile(
+            &snapshot,
+            &snapshot.model.model,
+            &jails_model::Evolution::none(),
+        )
+        .unwrap()
+        .generated
+        .files
+        .values()
+        .map(|file| {
+            (
+                file.provenance.artifact_id.clone(),
                 (
-                    file.provenance.artifact_id.clone(),
-                    (
-                        file.provenance.ejectable,
-                        String::from_utf8(file.bytes.clone()).unwrap(),
-                    ),
-                )
-            })
-            .collect()
+                    file.provenance.ejectable,
+                    String::from_utf8(file.bytes.clone()).unwrap(),
+                ),
+            )
+        })
+        .collect()
     }
 
     const BOTH: &str = "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  java 26\n  platform spring\n  build maven\n  storage postgres\n}\n\ncap fake\n\nentity Task @id(ent_task) {\n  use repo\n  id: uuid @id(fld_task_id) @pk\n  title: string @id(fld_task_title)\n}\n";

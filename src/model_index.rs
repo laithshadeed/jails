@@ -4,7 +4,7 @@ use crate::Invocation;
 use crate::ResourceIndexCommand;
 use crate::model_generate::{PreparedMutation, finish_generation};
 use crate::model_resource::java_to_label;
-use jails_model::{Facet, IndexId, ModelPatch, StableId};
+use jails_model::{Evolution, EvolutionStep, Facet, IndexId, StableId};
 use jails_support::codec::{hex, sha256};
 use jails_support::{Failure, Result};
 use std::collections::BTreeSet;
@@ -67,13 +67,19 @@ pub(crate) fn add(
             entity.label
         )));
     }
+    entity.refuse_retired().map_err(Failure::Told)?;
     let canonical = canonical_columns(entity, &columns)?;
-    let entity_id = entity.id.clone();
     let model_label = entity.label.clone();
     let entity_java_name = entity.names.java_type.clone();
     let signature = canonical.join(",");
     let suffix = &hex(&sha256(signature.as_bytes()))[..12];
     let index_id = IndexId::parse(format!("idx_{model_label}_{suffix}")).map_err(Failure::Told)?;
+    if entity.indexes.contains_key(&index_id) {
+        return Err(Failure::Told(format!(
+            "index id `{index_id}` already exists on `{}`\n       fix: name a column list the entity does not index yet, or remove the index first",
+            entity.id
+        )));
+    }
     // v1's `field_list` reads `index [ user_id, created_at desc ]` and allows
     // only `@id` and `@map`.
     let member = format!(
@@ -83,22 +89,12 @@ pub(crate) fn add(
     );
     let next_source =
         crate::model_generate_jdl::index::insert(&current.source, &entity_java_name, &member)?;
-    let next_model = crate::model_command::parse(&next_source)?;
-    let index = next_model
-        .entities
-        .get(&entity_id)
-        .and_then(|entity| entity.indexes.get(&index_id))
-        .cloned()
-        .ok_or_else(|| Failure::Told(format!("new index `{index_id}` did not link")))?;
     finish_generation(PreparedMutation {
         name: format!("{}.{}", entity_name, signature),
         invocation,
         current,
         next_source,
-        patch: ModelPatch::AddIndex {
-            entity: entity_id,
-            index,
-        },
+        evolution: Evolution::none(),
         authored_migration: None,
         reader_paths: Vec::new(),
     })
@@ -210,11 +206,10 @@ pub(crate) fn remove(
         invocation,
         current,
         next_source,
-        patch: ModelPatch::RemoveIndex {
-            entity: entity_id,
+        evolution: Evolution::one(EvolutionStep::RemoveIndex {
             index: index_id,
             confirmed_name,
-        },
+        }),
         authored_migration: None,
         reader_paths: Vec::new(),
     })

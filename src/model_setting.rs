@@ -2,7 +2,7 @@
 
 use crate::Invocation;
 use crate::model_generate::{PreparedMutation, finish_generation};
-use jails_model::{ModelPatch, SettingId, SettingTarget, StableId};
+use jails_model::{Evolution, SettingId, SettingTarget, StableId};
 use jails_support::codec::{hex, sha256};
 use jails_support::{Failure, Result};
 
@@ -24,7 +24,7 @@ pub(crate) fn set(key: String, value: String, tests: bool, invocation: Invocatio
             invocation,
             next_source: current.source.clone(),
             current,
-            patch: ModelPatch::Batch(Vec::new()),
+            evolution: Evolution::none(),
             authored_migration: None,
             reader_paths: Vec::new(),
         });
@@ -43,18 +43,12 @@ pub(crate) fn set(key: String, value: String, tests: bool, invocation: Invocatio
         }
     };
     append_setting(&mut next_source, &id, &key, &value, target)?;
-    let next_model = crate::model_command::parse(&next_source)?;
-    let setting = next_model
-        .settings
-        .get(&id)
-        .cloned()
-        .ok_or_else(|| Failure::Told(format!("new setting `{id}` did not link")))?;
     finish_generation(PreparedMutation {
         name: key,
         invocation,
         current,
         next_source,
-        patch: ModelPatch::SetSetting(setting),
+        evolution: Evolution::none(),
         authored_migration: None,
         reader_paths: Vec::new(),
     })
@@ -76,13 +70,12 @@ pub(crate) fn unset(key: String, tests: bool, invocation: Invocation) -> Result<
             ))
         })?;
     let next_source = crate::model_generate_jdl::remove_setting(&current.source, &setting.label)?;
-    crate::model_command::parse(&next_source)?;
     finish_generation(PreparedMutation {
         name: key,
         invocation,
         current,
         next_source,
-        patch: ModelPatch::RemoveSetting(setting.id),
+        evolution: Evolution::none(),
         authored_migration: None,
         reader_paths: Vec::new(),
     })

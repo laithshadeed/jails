@@ -127,7 +127,13 @@ const ALLOWED_LEFTOVER: &[(&str, &str, &str)] = &[
 /// appends `drop table`. `cases` is an ordinary component declaration, so
 /// removing it is model subtraction like any other and the generated test
 /// goes with it.
-const FORWARD_ONLY: &[&str] = &["migration", "field"];
+///
+/// `search` joined the list when the projection started reaching the
+/// accepted model: `g search` on a stored entity appends the migration that
+/// adds the generated `tsvector` column and its index, so taking the
+/// projection away is a schema retirement -- and the compiler refuses to drop
+/// an accepted column without a policy, naming the migration to write.
+const FORWARD_ONLY: &[&str] = &["migration", "field", "search"];
 
 fn explanation(kind: &str, rel: &str) -> Option<&'static str> {
     ALLOWED_LEFTOVER

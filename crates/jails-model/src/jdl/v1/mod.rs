@@ -48,9 +48,9 @@ pub fn parse(input: &str) -> Result<AppModel, Diagnostics> {
 mod tests {
     use super::*;
     use crate::{
-        BindingSource, ComponentKind, ComponentReference, DependencyScope, Facet, ModelPatch,
-        OperationKind, ParameterSource, Precondition, RequestFormat, SettingTarget, SortDirection,
-        StableId, UnitId, Value,
+        BindingSource, ComponentKind, ComponentReference, DependencyScope, Facet, OperationKind,
+        ParameterSource, Precondition, RequestFormat, SettingTarget, SortDirection, StableId,
+        UnitId, Value,
     };
     use std::collections::BTreeSet;
 
@@ -627,18 +627,16 @@ component cases Checkout {
             .values()
             .find(|operation| operation.label == "add_item")
             .unwrap();
-        let mut removal = model.clone();
         assert!(
-            removal
-                .apply(ModelPatch::RemoveOperation(add_item.id.clone()))
+            model
+                .refuse_operation_removal(&add_item.id)
                 .unwrap_err()
                 .contains("item_dispatcher")
         );
-        let mut removal = model.clone();
         let derived = UnitId::parse(controller.id.to_string()).unwrap();
         assert!(
-            removal
-                .apply(ModelPatch::RemoveUnit(derived))
+            model
+                .refuse_unit_removal(&derived)
                 .unwrap_err()
                 .contains("derived from a typed component")
         );
@@ -831,23 +829,16 @@ entity Item {
         assert_eq!(relation.cardinality, crate::RelationCardinality::OneToOne);
         assert_eq!(relation.sql_name, "fk_items_owner");
 
-        let mut removal = model.clone();
-        let owner_id = owner.id.clone();
         assert!(
-            removal
-                .apply(ModelPatch::RemoveEntity(owner_id))
+            model
+                .refuse_entity_removal(&owner.id, "removing")
                 .unwrap_err()
                 .contains("owner")
         );
         let local = relation.mappings[0].local.clone();
-        let mut removal = model.clone();
         assert!(
-            removal
-                .apply(ModelPatch::RemoveField {
-                    entity: relation.child.clone(),
-                    field: local,
-                    confirmed_column: "owner_tenant_id".to_string(),
-                })
+            model
+                .refuse_field_removal(&local)
                 .unwrap_err()
                 .contains("owner")
         );

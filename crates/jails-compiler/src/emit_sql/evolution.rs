@@ -4,9 +4,9 @@
 //! [`super`] answers *what schema does this model have* -- create table,
 //! create index, the type mapping -- and this
 //! answers *what is a reader allowed to change about an accepted one, and what
-//! did they say they meant*. Every function here is reachable only from a
-//! `ModelPatch` that states an evolution policy, which is the line between
-//! them: nothing in this file runs for a model that is merely being compiled.
+//! did they say they meant*. Every function here is reachable only from an
+//! [`Evolution`] step that states a policy, which is the line between them:
+//! nothing in this file runs for a model that is merely being compiled.
 
 use super::*;
 
@@ -29,43 +29,37 @@ pub(super) struct EvolutionPolicies {
     pub(super) table_renames: BTreeMap<String, String>,
 }
 
-pub(super) fn evolution_policies(patch: Option<&ModelPatch>) -> EvolutionPolicies {
-    fn collect(patch: &ModelPatch, output: &mut EvolutionPolicies) {
-        match patch {
-            ModelPatch::Batch(patches) => {
-                for patch in patches {
-                    collect(patch, output);
-                }
-            }
-            ModelPatch::AddField { field, policy, .. } => {
+pub(super) fn evolution_policies(evolution: &Evolution) -> EvolutionPolicies {
+    let mut output = EvolutionPolicies::default();
+    for step in &evolution.steps {
+        match step {
+            EvolutionStep::AddField { field, policy } => {
                 output
                     .additions
-                    .insert(field.id.as_str().to_string(), policy.clone());
+                    .insert(field.as_str().to_string(), policy.clone());
             }
-            ModelPatch::ReplaceField { field, policy, .. } => {
+            EvolutionStep::ReplaceField { field, policy } => {
                 output
                     .replacements
                     .insert(field.as_str().to_string(), policy.clone());
             }
-            ModelPatch::RemoveField {
+            EvolutionStep::RemoveField {
                 field,
                 confirmed_column,
-                ..
             } => {
                 output
                     .removals
                     .insert(field.as_str().to_string(), confirmed_column.clone());
             }
-            ModelPatch::RemoveIndex {
+            EvolutionStep::RemoveIndex {
                 index,
                 confirmed_name,
-                ..
             } => {
                 output
                     .index_removals
                     .insert(index.as_str().to_string(), confirmed_name.clone());
             }
-            ModelPatch::RemoveRelation {
+            EvolutionStep::RemoveRelation {
                 relation,
                 confirmed_name,
             } => {
@@ -73,21 +67,17 @@ pub(super) fn evolution_policies(patch: Option<&ModelPatch>) -> EvolutionPolicie
                     .relation_removals
                     .insert(relation.as_str().to_string(), confirmed_name.clone());
             }
-            ModelPatch::RetireEntity { entity, policy } => {
+            EvolutionStep::RetireEntity { entity, policy } => {
                 output
                     .retirements
                     .insert(entity.as_str().to_string(), policy.clone());
             }
-            ModelPatch::RenameEntityProjection {
-                entity,
-                table: Some(table),
-                ..
-            } => {
+            EvolutionStep::RenameTable { entity, table } => {
                 output
                     .table_renames
                     .insert(entity.as_str().to_string(), table.clone());
             }
-            ModelPatch::ReviveEntity {
+            EvolutionStep::ReviveEntity {
                 entity,
                 confirmed_table,
             } => {
@@ -95,12 +85,7 @@ pub(super) fn evolution_policies(patch: Option<&ModelPatch>) -> EvolutionPolicie
                     .revivals
                     .insert(entity.as_str().to_string(), confirmed_table.clone());
             }
-            _ => {}
         }
-    }
-    let mut output = EvolutionPolicies::default();
-    if let Some(patch) = patch {
-        collect(patch, &mut output);
     }
     output
 }

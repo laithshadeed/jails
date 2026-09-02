@@ -31,17 +31,9 @@ Measured 2026-09-02 over the crates that survive the pass
 | `jails-compiler` | 10 | |
 | `jails-workspace` | 4 | |
 
-Six specific shapes, each measured:
+Five specific shapes, each measured:
 
-1. **One mutation is decided twice.** Every frontend edits the JDL text
-   (`next_source`) and builds a `ModelPatch` (34 variants) for the same
-   change; `PreparedMutation` carries both and the plan records the patch
-   serialised. The compiler then applies the patch to the model it parsed
-   from the *old* source while the plan replaces the source file with the
-   *new* text -- two routes to the same next model, and a re-parse of the
-   edited source at 24 sites to pull the linked declaration out for the
-   patch.
-2. **Closed vocabularies exist in two or three crates each.** `Layer` is
+1. **Closed vocabularies exist in two or three crates each.** `Layer` is
    defined in `jails-model`, `jails-spec` and `jails-project`. `Capability`,
    `Dialect`, `HttpMethod`, `WireFormat`, `ArtifactKind` are `clap::ValueEnum`s
    in `jails-spec`; the model spells the same sets as `CAPS`, `storage`,
@@ -50,20 +42,20 @@ Six specific shapes, each measured:
    pair has a translation and a test that they
    agree, and `the_compilers_renameable_layers_are_the_engines_layers` exists
    only because there are two.
-3. **Generators are code, capabilities are data.** A capability is a `Pack`:
+2. **Generators are code, capabilities are data.** A capability is a `Pack`:
    files, dependencies, properties, compose services, build features and a
    placement rule, as one `static`. A generator kind is a `lower_and_emit`
    function -- nine of them, plus six `lower`s -- each walking the model and
    assembling Java with `format!` (834 sites). The two shapes emit into the
    same `RenderedTree`.
-4. **The compiler re-derives its external facts.** `emit::Observed` is a
+3. **The compiler re-derives its external facts.** `emit::Observed` is a
    hand-picked subset of the snapshot, rebuilt in `Compiler::compile`; every
    emitter that needs one more fact widens it.
-5. **The tool crates keep a second project model.** `jails-project::Project`
+4. **The tool crates keep a second project model.** `jails-project::Project`
    and `ProjectContext` answer "what is at this path" for `drive` and
    `report`, reading the disk again, while the snapshot's `ProjectFacts`
    answers the same question for the compiler.
-6. **Entry points come in families.** `capture`, `capture_planned` and
+5. **Entry points come in families.** `capture`, `capture_planned` and
    `capture_import` remain of a family of four; `materialize` and
    `finish_generation` are one function each now, taking the model update
    and the reader paths as arguments. The binary's `_at` family
@@ -99,38 +91,15 @@ mutate(root, edit, evolution) = execute(plan(snapshot, compile(snapshot, link(ed
 ```
 
 with `--pretend` stopping after `plan`, `--plan-out` writing it, and
-`--plan-in` starting at `execute`. That composition is `finish_generation`
-today; the change is what it takes.
-
-### S60.1 — `Edit` replaces `ModelPatch` and the text splices
-
-An `Edit` is a syntactic operation on the CST, from a closed set small enough
-to list: append a declaration, remove a declaration, set or clear an
-attribute or property, add or remove a member, rename an identifier, replace
-one member. Every frontend becomes a function from its arguments to an
-`Edit`, and `edit` is the one place JDL text is rewritten -- byte-preserving
-outside the touched span, which `jdl/v1/edit.rs` already does.
-
-The model is then whatever the edited source parses and links to. The plan
-records the source before-image and after-image (`ReplaceModelFile` already
-does), which is the only "patch" the executor needs. `ModelPatch`,
-`AppModel::apply`, `model_apply.rs` and the `Batch` plumbing go;
-`CanonicalModelPatch` records the `Edit` and the `Evolution` instead of the
-patch. `Batch` is a `Vec<Edit>`.
-
-What does not fit in the source is **`Evolution`**: a one-shot instruction
-about how to get from the accepted model to the next one, which is not
-desired state and must not be written into the file. The list is short and
-closed -- rename-column policy (`preserve` / `single-cutover`), type-change
-strategy (`safe`), storage retirement (`preserve` / `drop`) and its
-confirmation, index removal's confirmation -- and it is one enum passed to
-`compile` beside the model, where `emit_sql::derive` reads it. Seven
-`ModelPatch` variants exist only to carry these; they become `Evolution`'s
-variants and nothing else changes.
-
-**Exit:** `ModelPatch` is gone; `Compiler::compile` takes a `&AppModel` and
-an `Evolution`; `PreparedMutation` carries the edited source and the
-evolution and nothing else about the change.
+`--plan-in` starting at `execute`. That composition is `finish_generation`,
+and it takes exactly that: the edited source and an `Evolution`. `edit` is
+the closed set of byte-preserving functions in `jdl/v1/edit.rs` (append or
+remove a declaration, set a property or attribute, add, replace or remove a
+member, rename an identifier) -- a set of functions rather than an enum,
+because nothing consumes the edit as a value: the plan records the source
+before- and after-image, and the evolution is the only input the compiler
+needs beside the model. `Evolution` is one closed enum in `jails-model`,
+passed to `compile` and read by `emit_sql::derive`.
 
 ### S60.2 — one owner per closed vocabulary
 
@@ -304,7 +273,6 @@ BASE/OURS/THEIRS rule; `PlanBundle`, `PlannedOperation` (six kinds is right),
 
 | item | plan | step |
 |---|---|---|
-| S60.1 `Edit` and `Evolution` | 52, 54 | S54.2 supplies `Edit` and `Evolution`; S52.1 makes each frontend a function to one |
 | S60.2 one vocabulary | 51, 53, 54 | S51.2 moves survivors; S53.4 and S54.5 move the field parser; the `Layer` triple is S53.1's first deletion |
 | S60.3 `Recipe` | 55 | S55.2 (the shell) and S55.5 (packs as data) are its first two rungs |
 | S60.4 the snapshot | 53 | S53.2, S53.3 |

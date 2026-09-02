@@ -26,7 +26,7 @@
 //! machine losing power does none of that, and a convergence proof built only
 //! on the unwinding case has proved the easier half.
 
-use jails_contracts::{CanonicalModelPatch, ModelFileUpdate, PlanBundle, ProjectPath};
+use jails_contracts::{ModelFileUpdate, PlanBundle, PlanInput, ProjectPath};
 use jails_workspace::fault::{Armed, POINTS};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -107,10 +107,15 @@ fn bundle_for(root: &Path, current: &str, next: &str) -> PlanBundle {
     let snapshot =
         jails_workspace::capture(root, Path::new(MODEL_PATH), current.as_bytes(), model, &[])
             .expect("the fixture project captures");
-    let draft = jails_compiler::Compiler::compile(&snapshot, None).expect("the model compiles");
+    let draft = jails_compiler::Compiler::compile(
+        &snapshot,
+        &snapshot.model.model,
+        &jails_model::Evolution::none(),
+    )
+    .expect("the model compiles");
     jails_workspace::materialize(
         &snapshot,
-        CanonicalModelPatch::reconcile(),
+        PlanInput::reconcile(),
         draft,
         Some(ModelFileUpdate {
             retire: Vec::new(),
