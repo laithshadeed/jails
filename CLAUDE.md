@@ -905,6 +905,11 @@ through `common::skip()` and `JAILS_TOOLCHAIN=1` turns each into a failure.
 `tests/cli/` is one binary with subject submodules (`new`, `generate`,
 `capabilities`, `app`, `tooling`, `reports`, `model`, `sql`, `examples`,
 `developer_tools`), each reaching the shared fixtures through `use super::*`.
+`model` is itself a directory, split the same way: `tests/cli/model/mod.rs`
+holds the JDL fixtures and project builders every submodule shares, and one
+file per subject sits beside it (`source`, `plan`, `generate`, `operations`,
+`merge`, `eject`, `destroy`, `resource`, `capability`, `build`, `database`,
+`reports`), so a test is addressed as `model::<subject>::<name>`.
 `tests/architecture/` is the structural ladder as ratchets: each row is a
 number measured over production Rust (comments, string literals and
 `#[cfg(test)]` modules blanked first), failing when it rises above its ceiling

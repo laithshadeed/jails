@@ -52,8 +52,8 @@ mutation pipeline landed; method at the end of this section.
 | `jails-testkit` | 0 | 36 |
 | **total** | **63,265** | **94,785** |
 
-Beside the crates: `tests/` is 46,455 raw lines (`tests/cli/model.rs` alone is
-about 13,800); `templates/` is 142 files, every one named by a Rust source.
+Beside the crates: `tests/` is 46,455 raw lines (`tests/cli/model/**` alone is
+about 13,250); `templates/` is 142 files, every one named by a Rust source.
 
 ## What the measurement found
 

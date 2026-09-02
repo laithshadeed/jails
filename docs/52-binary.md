@@ -46,7 +46,7 @@ agents will need to touch under R2; keep your edits to it small and early.
 | `src/new/**` raw | 2623 |
 | `src/cli.rs` + `src/cli/*.rs` raw | 2,350 |
 | `editor_command`, `contract_command`, `tool_command` raw | 1,400 |
-| `tests/cli/model.rs` | 13,765 lines |
+| `tests/cli/model/**` | 147 tests over 12 files, 13,253 lines |
 
 ```
 grep -rn 'parse(&next\|parse(&requested' src --include=*.rs | wc -l
@@ -61,14 +61,6 @@ A command with a section and a journey stays (R7). These five are **listed
 for the user**; do not delete a command on your own reading of whether it is
 used. When the answer comes back, either write the section or remove the
 command with its inventory row and journey.
-
-**S52.6 -- `tests/cli/model.rs`.** 13,800 lines is not a test file anyone
-reads. Two moves, in order. First, name the duplicates: tests that prove one
-property through one path twice -- a "refuses X" test per frontend where the
-refusal now comes from the one pipeline is the likely shape. Second, split
-what remains by subject into `tests/cli/model/*.rs` so a reader can find
-one; a split changes no line count and is done last so it does not hide the
-first.
 
 **S52.7 -- The prose.** `README.md`'s `Commands` section is yours; rewrite
 it to what is there after S52.5.
