@@ -148,13 +148,11 @@ impl Parser<'_> {
         } else {
             None
         };
-        let attributes = self.attributes()?;
-        reject_unknown_attributes(&attributes, &["id"], self)?;
         let label = instance.as_ref().map_or_else(
             || stable_fragment(&kind),
             |name| format!("{}_{}", stable_fragment(&kind), stable_fragment(name)),
         );
-        let id = one_arg(&attributes, "id")?.unwrap_or_else(|| format!("cap_{label}"));
+        let (_, id) = self.declared(&["id"], || format!("cap_{label}"))?;
         self.end_line()?;
         self.capabilities.insert(
             label.clone(),
@@ -175,10 +173,9 @@ impl Parser<'_> {
         let group = self.take_word("dependency group")?;
         self.expect(":", "JDL0311", "a dependency coordinate needs `:`")?;
         let artifact = self.take_word("dependency artifact")?;
-        let attributes = self.attributes()?;
-        reject_unknown_attributes(&attributes, &["id", "version", "scope"], self)?;
         let label = format!("{}_{}", stable_fragment(&group), stable_fragment(&artifact));
-        let id = one_arg(&attributes, "id")?.unwrap_or_else(|| format!("dep_{label}"));
+        let (attributes, id) =
+            self.declared(&["id", "version", "scope"], || format!("dep_{label}"))?;
         let version = one_arg(&attributes, "version")?;
         let scope = match one_arg(&attributes, "scope")?
             .as_deref()
@@ -249,10 +246,8 @@ impl Parser<'_> {
         let start = self.span().start;
         self.expect("enum", "JDL0400", "expected an enum declaration")?;
         let name = self.take_word("enum name")?;
-        let attributes = self.attributes()?;
-        reject_unknown_attributes(&attributes, &["id"], self)?;
         let label = stable_fragment(&name);
-        let id = one_arg(&attributes, "id")?.unwrap_or_else(|| format!("enum_{label}"));
+        let (_, id) = self.declared(&["id"], || format!("enum_{label}"))?;
         let mut values = Vec::new();
         if self.consume("{") {
             if self.consume("}") {
@@ -310,10 +305,9 @@ impl Parser<'_> {
         let start = self.span().start;
         self.expect("entity", "JDL0500", "expected an entity declaration")?;
         let name = self.take_word("entity name")?;
-        let attributes = self.attributes()?;
-        reject_unknown_attributes(&attributes, &["id", "retired", "package"], self)?;
         let label = stable_fragment(&name);
-        let id = one_arg(&attributes, "id")?.unwrap_or_else(|| format!("ent_{label}"));
+        let (attributes, id) =
+            self.declared(&["id", "retired", "package"], || format!("ent_{label}"))?;
         // **Relative to the base, exactly as a capability's is.** The whole
         // slice goes here instead of the layer packages, and an empty
         // `@package()` means the base itself -- which is how "everything
@@ -567,10 +561,8 @@ impl Parser<'_> {
         } else {
             self.take_word("implementation boundary")?
         };
-        let attributes = self.attributes()?;
-        reject_unknown_attributes(&attributes, &["id"], self)?;
         let label = stable_fragment(&target);
-        let id = one_arg(&attributes, "id")?.unwrap_or_else(|| format!("eject_{label}"));
+        let (_, id) = self.declared(&["id"], || format!("eject_{label}"))?;
         self.end_line()?;
         self.ejections
             .insert(label.clone(), source::Ejection { id, target });

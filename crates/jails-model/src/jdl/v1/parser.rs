@@ -306,6 +306,24 @@ impl<'a> Parser<'a> {
         Ok(columns)
     }
 
+    /// A declaration's attribute list, checked against the closed set it
+    /// accepts, with its `@id` resolved.
+    ///
+    /// Every declaration head does these three things and they are decided
+    /// together: what it may carry, and what its identity is when the source
+    /// leaves `@id` unsaid. The default is a closure so a label computed
+    /// from the head is not built for a declaration that pinned its id.
+    fn declared(
+        &mut self,
+        allowed: &[&str],
+        default_id: impl FnOnce() -> String,
+    ) -> Result<(Vec<Attribute>, String), Diagnostics> {
+        let attributes = self.attributes()?;
+        reject_unknown_attributes(&attributes, allowed, self)?;
+        let id = one_arg(&attributes, "id")?.unwrap_or_else(default_id);
+        Ok((attributes, id))
+    }
+
     fn attributes(&mut self) -> Result<Vec<Attribute>, Diagnostics> {
         let mut attributes = Vec::new();
         while self.consume("@") {

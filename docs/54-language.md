@@ -36,28 +36,10 @@ crate, agent 3 writes the move and you review it.
 
 ## Steps
 
-**S54.3 -- `jdl/v1`: what the parser says three times.** `parser/declaration.rs`
-(540), `parser/operation.rs` (669) and `parser/projection.rs` each carry
-attribute parsing, `@id` handling and an unknown-attribute refusal. The
-board's largest-module row sits on `parser.rs` at 688 production lines. One
-attribute reader shared by the three, taking the closed set it accepts, is the
-shape; measure the duplication first by counting the `reject_unknown`-style
-sites and the `@id(` handling. `edit.rs` (463) is the syntax editor agent 2's
-pipeline will call more uniformly; keep its byte-preserving contract.
-
-**S54.4 -- The linker's two vocabularies.** 148 `model-*` codes in the linker
-and 96 `JDL*` codes in the parser, each a literal at its site. Not a line
-reduction, and not this pass, unless S54.3 shows the same refusal spelled at
-several sites; then one constructor per code and the table stays where
-`every_diagnostic_code_belongs_to_the_crate_that_owns_its_phase` can see it.
-
 **S54.5 -- The field-syntax parser.** `src/model_field_parse.rs` produces a
 model field and `BuiltinType::from_alias` is the one alias table; if the
 parser moves into this crate (`docs/60-abstraction.md` S60.2), it moves as
 is.
-
-**S54.6 -- `docs/10-language.md`.** Re-measure the registry table after
-S54.3.
 
 ## Traps
 

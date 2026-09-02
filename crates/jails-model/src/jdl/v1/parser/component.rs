@@ -10,7 +10,7 @@
 //! table of those rules rather than one table and a parser that half agrees
 //! with it.
 
-use super::{Parser, one_arg, reject_unknown_attributes, stable_fragment};
+use super::{Parser, stable_fragment};
 use crate::source;
 use crate::{ComponentKind, Diagnostics};
 
@@ -33,10 +33,9 @@ impl Parser<'_> {
         } else {
             Vec::new()
         };
-        let attributes = self.attributes()?;
-        reject_unknown_attributes(&attributes, &["id"], self)?;
-        let id = one_arg(&attributes, "id")?
-            .unwrap_or_else(|| format!("cmp_{}_{}", raw_kind.replace('-', "_"), label));
+        let (_, id) = self.declared(&["id"], || {
+            format!("cmp_{}_{}", raw_kind.replace('-', "_"), label)
+        })?;
         let mut component = source::Component {
             id,
             name: name.clone(),
@@ -135,10 +134,9 @@ impl Parser<'_> {
         } else {
             Vec::new()
         };
-        let attributes = self.attributes()?;
-        reject_unknown_attributes(&attributes, &["id"], self)?;
-        let id = one_arg(&attributes, "id")?
-            .unwrap_or_else(|| format!("var_{}_{}", component_id, stable_fragment(&name)));
+        let (_, id) = self.declared(&["id"], || {
+            format!("var_{}_{}", component_id, stable_fragment(&name))
+        })?;
         self.end_line()?;
         Ok(source::ComponentVariant {
             id,

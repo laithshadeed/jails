@@ -12,8 +12,7 @@
 //! names several.
 
 use super::{
-    Parser, flag_attribute, length, one_arg, one_raw_arg, reject_unknown_attributes,
-    stable_fragment,
+    Parser, flag_attribute, length, one_raw_arg, reject_unknown_attributes, stable_fragment,
 };
 use crate::source;
 use crate::{Diagnostics, EndpointMethod, RequestFormat};
@@ -59,14 +58,12 @@ impl Parser<'_> {
         let label = stable_fragment(&name);
         self.expect("(", "JDL0904", "an operation needs a parameter list")?;
         let parameters = self.parse_parameters(owner.is_none())?;
-        let attributes = self.attributes()?;
         let allowed = if kind == Kind::Event {
             &["id"][..]
         } else {
             &["id", "internal"][..]
         };
-        reject_unknown_attributes(&attributes, allowed, self)?;
-        let id = one_arg(&attributes, "id")?.unwrap_or_else(|| format!("op_{label}"));
+        let (attributes, id) = self.declared(allowed, || format!("op_{label}"))?;
         let internal = flag_attribute(&attributes, "internal")?;
 
         let mut command = source::CommandSemantics {

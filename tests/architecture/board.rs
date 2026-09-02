@@ -432,7 +432,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // secret it has accreted rather than by size, and a cut that
                 // leaves two halves both needing the whole picture is not a
                 // seam.
-                ceiling: 669,
+                ceiling: 666,
                 target: 700,
                 why: "The row above can be satisfied by *moving* a monolith rather than \
                       decomposing one, so this asks the question the split is actually for: \
