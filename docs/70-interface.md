@@ -1398,6 +1398,27 @@ by design.
   `model check` refuses with `[JDL0114] line 15, column 52`. The editor
   protocol does not carry the language's own diagnostics.
 
+### 20.6 Four more measurements
+
+- **What S60.7 touches:** the string `.jails/generated` appears at 124
+  sites in 29 production files (`grep -rn 'jails/generated' crates src
+  --include=*.rs`, tests excluded), one of them `MANAGED_ROOT` in the
+  compiler's `lib.rs`; the rest are the places that re-derive it.
+- **Nothing in the binary teaches the language.** `jails model --help`
+  mentions JDL once, `model check --help` and `explain <kind>` never; the
+  grammar, the attribute list and the `use` projections live in
+  `docs/01-jdl-v1.md` and in the parser's refusals (`[JDL0114] … use only
+  id, map, pk, notBlank, …`), which is where a reader meets them today.
+- **git sees a rename.** After `rename resource Task Todo --strategy
+  preserve-table`, `git status` shows `R Task.java -> Todo.java` for seven
+  files, and the model diff is three readable lines: `entity Todo
+  @id(ent_task)`, `use scaffold(path: "/tasks")`, `table "tasks"`. The
+  preserved route is visible in the source, which is the right place.
+- **`model fmt` refuses a model that does not link.** The specification's
+  §4 example, with its `eject` line removed, answers *nothing was
+  written* to `fmt`; a formatter that needs the linker cannot format the
+  file a reader is in the middle of fixing.
+
 ## 21. Items: a Java project first
 
 **I71.43 -- generated Java lives in `src/`, and nothing generated reads
@@ -1457,6 +1478,18 @@ column: 52` through the protocol.
 
 **I71.49 -- `#` is refused with the answer.** *comments start with `//`*
 on `JDL0002` when the character is `#`. **Exit:** the refusal names `//`.
+
+**I71.50 -- the binary explains its own language.** `jails explain jdl`
+(or `model grammar`) prints the declaration families, the attribute list
+per declaration, the `use` projections, the builtin types and the `cap`
+kinds, walked out of the same registries `docs/10-language.md` counts, so
+it cannot drift from the parser. **Exit:** `jails explain jdl | grep -c
+'@'` equals the attribute count the parser's refusal lists.
+
+**I71.51 -- `fmt` is syntactic.** It formats any file the parser accepts
+and reports linker errors afterwards rather than refusing first, so a
+reader can format while fixing. **Exit:** the §20.6 file is formatted and
+the refusal follows.
 
 ## 22. What the walk did not measure
 
