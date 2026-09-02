@@ -41,58 +41,8 @@ pub(crate) use model::ModelCommand;
 mod project_args;
 pub(crate) use project_args::{NewArgs, NewCliArgs};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
-pub(crate) enum TestScopeArg {
-    Unit,
-    Integration,
-    All,
-}
-
-impl From<TestScopeArg> for jails_drive::testing::TestScope {
-    fn from(value: TestScopeArg) -> Self {
-        match value {
-            TestScopeArg::Unit => Self::Unit,
-            TestScopeArg::Integration => Self::Integration,
-            TestScopeArg::All => Self::All,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
-pub(crate) enum TestCompileArg {
-    Auto,
-    Ide,
-    Build,
-    None,
-}
-
-impl From<TestCompileArg> for jails_drive::testing::TestCompilePolicy {
-    fn from(value: TestCompileArg) -> Self {
-        match value {
-            TestCompileArg::Auto => Self::Auto,
-            TestCompileArg::Ide => Self::Ide,
-            TestCompileArg::Build => Self::Build,
-            TestCompileArg::None => Self::None,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
-pub(crate) enum TestEngineArg {
-    Auto,
-    Build,
-    Warm,
-}
-
-impl From<TestEngineArg> for jails_drive::testing::TestEnginePolicy {
-    fn from(value: TestEngineArg) -> Self {
-        match value {
-            TestEngineArg::Auto => Self::Auto,
-            TestEngineArg::Build => Self::Build,
-            TestEngineArg::Warm => Self::Warm,
-        }
-    }
-}
+/// The test engine's own closed sets, derived where they are decided.
+pub(crate) use jails_drive::testing::{TestCompilePolicy, TestEnginePolicy, TestScope};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub(crate) enum TestDatabaseArg {
@@ -898,14 +848,14 @@ pub(crate) enum Command {
         #[arg(value_name = "TEST_OR_METHOD")]
         requested: Vec<String>,
         /// Select unit tests, integration tests, or both
-        #[arg(long, value_enum, default_value_t = TestScopeArg::Unit)]
-        scope: TestScopeArg,
+        #[arg(long, value_enum, default_value_t = TestScope::Unit)]
+        scope: TestScope,
         /// Choose who may compile stale sources
-        #[arg(long, value_enum, default_value_t = TestCompileArg::Auto)]
-        compile: TestCompileArg,
+        #[arg(long, value_enum, default_value_t = TestCompilePolicy::Auto)]
+        compile: TestCompilePolicy,
         /// Choose build-tool execution, strict warm execution, or safe auto partitioning
-        #[arg(long, value_enum, default_value_t = TestEngineArg::Auto)]
-        engine: TestEngineArg,
+        #[arg(long, value_enum, default_value_t = TestEnginePolicy::Auto)]
+        engine: TestEnginePolicy,
         /// Keep running when source or compiled outputs change
         #[arg(long)]
         watch: bool,

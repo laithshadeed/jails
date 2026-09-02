@@ -101,7 +101,7 @@ impl From<TestSelector> for String {
 }
 
 /// Which tests a run is about, before any selector narrows it.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
 pub enum TestScope {
     Unit,
     Integration,
@@ -119,7 +119,7 @@ impl TestScope {
 }
 
 /// Who is allowed to compile before the tests run.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
 pub enum TestCompilePolicy {
     Auto,
     Ide,
@@ -128,7 +128,7 @@ pub enum TestCompilePolicy {
 }
 
 /// Which engine the reader will accept.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
 pub enum TestEnginePolicy {
     Auto,
     Build,

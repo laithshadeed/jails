@@ -421,9 +421,9 @@ fn main() -> std::process::ExitCode {
             // run, and `jails remove fast-test` takes it back out. Idempotent,
             // so every later `--fast` writes nothing.
             let options = run::TestOptions {
-                scope: scope.into(),
-                compile: compile.into(),
-                engine: engine.into(),
+                scope,
+                compile,
+                engine,
                 watch,
                 affected,
                 failed,
@@ -440,13 +440,13 @@ fn main() -> std::process::ExitCode {
             };
             let installed = run::validate_test_options(&options).and_then(|()| {
                 match fast
-                    || engine == cli::TestEngineArg::Warm
-                    || (engine == cli::TestEngineArg::Auto
+                    || engine == cli::TestEnginePolicy::Warm
+                    || (engine == cli::TestEnginePolicy::Auto
                         && matches!(
                             compile,
-                            cli::TestCompileArg::Ide | cli::TestCompileArg::None
+                            cli::TestCompilePolicy::Ide | cli::TestCompilePolicy::None
                         ))
-                    || (affected && engine != cli::TestEngineArg::Build)
+                    || (affected && engine != cli::TestEnginePolicy::Build)
                 {
                     true => model_command::ensure_owned(invocation.clone())
                         .and_then(|()| model_capability::ensure_fast_test(invocation)),
