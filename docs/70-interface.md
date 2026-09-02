@@ -903,15 +903,18 @@ JVM. On the scaffolded project:
 | `jails testd NoteTest` | *could not resolve `NoteTest` to a fully qualified name* | 11 |
 | `jails test --engine warm --compile none com.example.democlean.domain.NoteTest` | *strict warm execution is ineligible: … has no attributable test source* | 24 |
 | `jails test NoteTest` (auto, Maven) | 1 test, green | 3,830 |
-| `jails test --engine warm --compile none com.example.democlean.domain.NoteHandTest` (the same test copied by hand into `src/test/java`) | [[WARM]] | |
+| `jails test --engine warm --compile none com.example.democlean.domain.NoteHandTest` (the same test copied by hand into `src/test/java`, project under a short path) | 1 test, green; daemon start on the first run | 3,905 then 132, 106, 117 |
+| `jails testd NoteHandTest` (bare name, hand-written test) | 1 test, green | 96 |
 
 The reason is one line: `run/isolation.rs` builds the warm engine's test
 universe from `src/test/java` alone, and every test a scaffold writes lives
 under `.jails/generated/test/java`. On a project made of scaffolds the
-resident JVM can run none of its tests, and `testd` -- printed as *a
-compatibility alias* by `--status` -- takes a qualified name where `test`
-takes a bare one. Each `test` run also printed `fast-test: nothing to do`,
-the mutation of I70.16 reporting itself.
+resident JVM can run none of its tests, while a hand-written test under
+`src/test/java` runs in about 100 ms by its bare name, exactly as README
+promises. The refusal is what misleads: *pass its fully qualified test
+class* is not the fix, the source root is. `testd` prints *a compatibility
+alias* on every call, and each `test` run also printed `fast-test: nothing
+to do`, the mutation of I70.16 reporting itself.
 
 ### 12.2 Staleness does not watch the managed tree
 
@@ -1017,11 +1020,11 @@ question go away. **Exit:** `jails testd NoteTest` on a fresh scaffold
 runs warm in under 200 ms; `test --fast` after a `resource field add`
 reports the stale class and falls back.
 
-**I71.25 -- one selector for every engine.** `testd`, `test --engine warm`
-and `test` resolve `NoteTest`, `Note#method` and `path:line` the same way,
-through `testing::split_selector` and one resolution; a bare name that the
-build engine accepts is never refused by the warm one. **Exit:** the first
-two rows of §12.1 succeed with the bare name.
+**I71.25 -- the warm refusal names the real reason.** *No attributable
+test source* on a generated test says where the class lives and that the
+warm engine does not look there yet, instead of asking for a qualified
+name that changes nothing. **Exit:** the first two rows of §12.1 name
+`.jails/generated/test/java` in the refusal until I71.24 removes it.
 
 **I71.26 -- collections exist or are not advertised.** Either the model
 accepts `list<T>` and `map<K,V>` on non-stored records, as the
