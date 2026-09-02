@@ -3,12 +3,20 @@
 //! These adapters do not try to understand Maven or Gradle as languages. They
 //! insert one explicitly owned source-root block, preserve every other byte,
 //! and refuse a damaged/edited owned block instead of guessing.
+//!
+//! [`pom`] is the one reader of Maven's XML in the workspace -- what every
+//! adapter here asks where a block goes, and what capture asks what the build
+//! declares.
 
 mod build_feature;
+pub mod pom;
 mod source_root;
 mod spring_test;
 
 pub(crate) use build_feature::{reconcile_gradle_build_features, reconcile_maven_build_features};
+// The one walk of a Maven POM, so the adapters here and the capture beside
+// them agree about where an element begins and ends.
+pub(crate) use pom::direct_child_close;
 pub(crate) use source_root::{ensure_gradle_source_root, ensure_maven_source_roots};
 pub(crate) use spring_test::{
     command_dispatcher, ensure_command_registration, ensure_spring_test_import,
@@ -580,78 +588,6 @@ fn owned_block<'a>(text: &'a str, open: &str, close: &str) -> Result<Option<&'a 
     };
     let end = start + relative_end + close.len();
     Ok(Some(&text[start..end]))
-}
-
-#[derive(Debug)]
-struct Tag {
-    name: String,
-    start: usize,
-    closing: bool,
-    self_closing: bool,
-}
-
-fn scan_tags(xml: &str) -> Vec<Tag> {
-    let bytes = xml.as_bytes();
-    let mut tags = Vec::new();
-    let mut offset = 0;
-    while offset < bytes.len() {
-        if bytes[offset] != b'<' {
-            offset += 1;
-            continue;
-        }
-        let rest = &xml[offset..];
-        if rest.starts_with("<!--") {
-            offset += rest.find("-->").map_or(rest.len(), |end| end + 3);
-            continue;
-        }
-        if rest.starts_with("<![CDATA[") {
-            offset += rest.find("]]>").map_or(rest.len(), |end| end + 3);
-            continue;
-        }
-        if rest.starts_with("<?") || rest.starts_with("<!") {
-            offset += rest.find('>').map_or(rest.len(), |end| end + 1);
-            continue;
-        }
-        let Some(end) = rest.find('>') else {
-            break;
-        };
-        let inner = &rest[1..end];
-        let closing = inner.starts_with('/');
-        let self_closing = inner.trim_end().ends_with('/');
-        let name = inner
-            .trim_start_matches('/')
-            .trim_start()
-            .chars()
-            .take_while(|character| !character.is_whitespace() && *character != '/')
-            .collect::<String>();
-        if !name.is_empty() {
-            tags.push(Tag {
-                name,
-                start: offset,
-                closing,
-                self_closing,
-            });
-        }
-        offset += end + 1;
-    }
-    tags
-}
-
-fn direct_child_close(xml: &str, target: &[&str]) -> Option<usize> {
-    let mut stack = Vec::<String>::new();
-    for tag in scan_tags(xml) {
-        if tag.closing {
-            if stack.iter().map(String::as_str).eq(target.iter().copied())
-                && stack.last().is_some_and(|name| name == &tag.name)
-            {
-                return Some(tag.start);
-            }
-            stack.pop();
-        } else if !tag.self_closing {
-            stack.push(tag.name);
-        }
-    }
-    None
 }
 
 fn insert_indented_block(text: &str, at: usize, block: &str, extra: usize) -> String {

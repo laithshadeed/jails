@@ -831,6 +831,14 @@ const DEFAULT_BRANCH_IS_EXECUTED: &[(&str, &str)] = &[
         "crates/jails-project/src/project.rs",
         "the_boot_version_is_read_from_the_modern_plugins_block",
     ),
+    // The one reader of `pom.xml`: `spring_boot_major_of` answers 3 for a pom
+    // with no readable Boot parent, and every package name that moved in Boot
+    // 4 is chosen from it. The named test compiles a scaffold on the Boot 4
+    // fixture with real Maven, so the default branch is the one that resolves.
+    (
+        "crates/jails-workspace/src/documents/pom.rs",
+        "generate_scaffold_produces_a_project_that_compiles_and_passes_tests",
+    ),
     (
         "src/new/gradle_project.rs",
         "new_gradle_at_a_current_boot_uses_the_plugins_block_and_a_readable_dependency_list",

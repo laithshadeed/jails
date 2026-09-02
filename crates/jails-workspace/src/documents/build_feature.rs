@@ -1,8 +1,6 @@
 //! Lossless rendering of semantic build features into reader-owned builds.
 
-use super::{
-    direct_child_close, indent_block, insert_indented_block, owned_block, replace_owned_block,
-};
+use super::{owned_block, pom, replace_owned_block};
 use jails_contracts::BuildFeature;
 use std::collections::BTreeSet;
 
@@ -66,7 +64,7 @@ fn reconcile_maven_coverage(text: &str, enabled: bool) -> Result<String, String>
     if !enabled {
         return Ok(text.to_string());
     }
-    if text.contains("<artifactId>jacoco-maven-plugin</artifactId>") {
+    if pom::has_plugin(text, "jacoco-maven-plugin") {
         return Err(format!(
             "Maven already configures `jacoco-maven-plugin` outside `<!-- {COVERAGE_MARKER} -->`\n       fix: remove the reader-owned duplicate or keep coverage outside the canonical model"
         ));
@@ -94,7 +92,7 @@ fn reconcile_maven_formatting(text: &str, enabled: bool) -> Result<String, Strin
     if !enabled {
         return Ok(text.to_string());
     }
-    if text.contains("<artifactId>spotless-maven-plugin</artifactId>") {
+    if pom::has_plugin(text, "spotless-maven-plugin") {
         return Err(format!(
             "Maven already configures `spotless-maven-plugin` outside `<!-- {FORMATTING_MARKER} -->`\n       fix: remove the reader-owned duplicate or keep formatting outside the canonical model"
         ));
@@ -113,61 +111,41 @@ fn maven_coverage_plugin() -> &'static str {
     "<plugin>\n    <groupId>org.jacoco</groupId>\n    <artifactId>jacoco-maven-plugin</artifactId>\n    <version>0.8.15</version>\n    <executions>\n        <execution>\n            <id>coverage-agent</id>\n            <goals>\n                <goal>prepare-agent</goal>\n            </goals>\n        </execution>\n        <execution>\n            <id>coverage-report-and-check</id>\n            <phase>verify</phase>\n            <goals>\n                <goal>report</goal>\n                <goal>check</goal>\n            </goals>\n            <configuration>\n                <rules>\n                    <rule>\n                        <element>BUNDLE</element>\n                        <limits>\n                            <limit>\n                                <counter>LINE</counter>\n                                <value>COVEREDRATIO</value>\n                                <minimum>0.80</minimum>\n                            </limit>\n                        </limits>\n                    </rule>\n                </rules>\n            </configuration>\n        </execution>\n    </executions>\n</plugin>\n"
 }
 
+/// Every shape an owned feature block has ever been written in, so a block an
+/// older jails wrote is still recognised as jails' own rather than as a
+/// reader's edit.
 fn maven_feature_blocks(marker: &str, plugin: &str) -> Vec<String> {
-    vec![
-        marked_maven_feature(marker, plugin),
-        marked_maven_feature(
-            marker,
-            &format!("<plugins>\n{}</plugins>\n", indent_block(plugin, "    ")),
-        ),
-        marked_maven_feature(
-            marker,
-            &format!(
-                "<build>\n    <plugins>\n{}    </plugins>\n</build>\n",
-                indent_block(plugin, "        ")
-            ),
-        ),
-    ]
+    let mut shapes = vec![marked_maven_feature(marker, plugin)];
+    shapes.extend(
+        pom::plugin_nest(plugin)
+            .into_iter()
+            .skip(1)
+            .map(|shape| marked_maven_feature(marker, &shape)),
+    );
+    shapes.extend(
+        pom::plugin_nest(&marked_maven_feature(marker, plugin))
+            .into_iter()
+            .skip(1),
+    );
+    shapes
 }
 
 fn marked_maven_feature(marker: &str, body: &str) -> String {
     format!("<!-- {marker} -->\n{body}<!-- /{marker} -->\n")
 }
 
+/// The marker goes *inside* whatever containers this has to create.
+///
+/// What jails owns is one `<plugin>`; wrapping `<build>` or `<plugins>` in the
+/// marker as well claims a container the reader shares -- and the next command
+/// to add a plugin legitimately writes inside it, which reads back as "the
+/// owned block was edited" and refuses every later plan, which is what `add
+/// coverage` then `add fake` would do on a pom with no `<build>`.
 fn insert_maven_feature_plugin(text: &str, marker: &str, plugin: &str) -> Result<String, String> {
-    if let Some(at) = direct_child_close(text, &["project", "build", "plugins"]) {
-        return Ok(insert_indented_block(
-            text,
-            at,
-            &marked_maven_feature(marker, plugin),
-            0,
-        ));
-    }
-    // **The container the plugin needs is created outside the markers.** What
-    // jails owns is one `<plugin>`; wrapping `<build>` or `<plugins>` in the
-    // marker as well claims a container the reader shares -- and the next
-    // command to add a plugin legitimately writes inside it, which reads back
-    // as "the owned block was edited" and refuses every later plan -- which
-    // is what `add coverage` then `add fake` would do on a pom with no
-    // `<build>`.
-    if let Some(at) = direct_child_close(text, &["project", "build"]) {
-        let block = format!(
-            "<plugins>\n{}</plugins>\n",
-            indent_block(&marked_maven_feature(marker, plugin), "    ")
-        );
-        return Ok(insert_indented_block(text, at, &block, 0));
-    }
-    let Some(at) = direct_child_close(text, &["project"]) else {
-        return Err(
-            "pom.xml has no closing project element\n       fix: repair the Maven POM, then re-plan"
-                .to_string(),
-        );
-    };
-    let block = format!(
-        "<build>\n    <plugins>\n{}    </plugins>\n</build>\n",
-        indent_block(&marked_maven_feature(marker, plugin), "        ")
-    );
-    Ok(insert_indented_block(text, at, &block, 0))
+    pom::insert_plugin(
+        text,
+        &pom::plugin_nest(&marked_maven_feature(marker, plugin)),
+    )
 }
 
 fn reconcile_gradle_coverage(text: &str, enabled: bool, kotlin: bool) -> Result<String, String> {
@@ -257,7 +235,7 @@ fn reconcile_maven_integration_tests(
     if !enabled {
         return Ok(text.to_string());
     }
-    if text.contains("<artifactId>maven-failsafe-plugin</artifactId>") {
+    if pom::has_plugin(text, "maven-failsafe-plugin") {
         return Err(format!(
             "Maven already configures `maven-failsafe-plugin` outside `<!-- {INTEGRATION_TESTS_MARKER} -->`\n       fix: remove the reader-owned duplicate or keep integration-test execution outside the canonical model"
         ));
@@ -292,44 +270,17 @@ fn marked_maven(body: &str) -> String {
     format!("<!-- {INTEGRATION_TESTS_MARKER} -->\n{body}<!-- /{INTEGRATION_TESTS_MARKER} -->\n")
 }
 
-fn maven_integration_tests_blocks(managed_versions: bool) -> Vec<String> {
-    let plugin = maven_integration_tests_plugin(managed_versions);
-    vec![
-        marked_maven(&plugin),
-        marked_maven(&format!(
-            "<plugins>\n{}</plugins>\n",
-            indent_block(&plugin, "    ")
-        )),
-        marked_maven(&format!(
-            "<build>\n    <plugins>\n{}    </plugins>\n</build>\n",
-            indent_block(&plugin, "        ")
-        )),
-    ]
+fn maven_integration_tests_blocks(managed_versions: bool) -> [String; 3] {
+    pom::plugin_nest(&maven_integration_tests_plugin(managed_versions))
+        .map(|shape| marked_maven(&shape))
 }
 
+/// **The marker wraps the containers here**, unlike its coverage and
+/// formatting siblings: removing the last integration-test unit takes the
+/// `<build><plugins>` this created back out with it, so a pom jails found
+/// without one is left exactly as it was found.
 fn insert_maven_plugin(text: &str, managed_versions: bool) -> Result<String, String> {
-    let plugin = maven_integration_tests_plugin(managed_versions);
-    if let Some(at) = direct_child_close(text, &["project", "build", "plugins"]) {
-        return Ok(insert_indented_block(text, at, &marked_maven(&plugin), 0));
-    }
-    if let Some(at) = direct_child_close(text, &["project", "build"]) {
-        let block = marked_maven(&format!(
-            "<plugins>\n{}</plugins>\n",
-            indent_block(&plugin, "    ")
-        ));
-        return Ok(insert_indented_block(text, at, &block, 0));
-    }
-    let Some(at) = direct_child_close(text, &["project"]) else {
-        return Err(
-            "pom.xml has no closing project element\n       fix: repair the Maven POM, then re-plan"
-                .to_string(),
-        );
-    };
-    let block = marked_maven(&format!(
-        "<build>\n    <plugins>\n{}    </plugins>\n</build>\n",
-        indent_block(&plugin, "        ")
-    ));
-    Ok(insert_indented_block(text, at, &block, 0))
+    pom::insert_plugin(text, &maven_integration_tests_blocks(managed_versions))
 }
 
 fn reconcile_gradle_integration_tests(

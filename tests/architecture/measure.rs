@@ -835,18 +835,15 @@ pub(crate) fn largest_builtin_table(src: &[Source]) -> usize {
 /// is not a violation of having one owner.
 pub(crate) const BUILTIN_RS: &str = "jails-model/src/builtin.rs";
 
-/// Where the count stands: `jails-project/src/pom.rs`,
-/// `jails-protocol/src/vocabulary/coordinate.rs`,
-/// `jails-workspace/src/{capture,documents}.rs` and
-/// `documents/build_feature.rs`.
+/// Where the count stands: `jails-workspace/src/documents/pom.rs`, which is
+/// the surviving backend, and `jails-project/src/pom.rs`, the reader being
+/// replaced.
 ///
-/// `jails-workspace/src/capture/observe.rs`'s `junit_version` is deliberately
-/// *below* the bar: it matches on one element to read one artifact's version,
-/// which is a lookup rather than a scanner. Two distinct elements is what
-/// separates "asks the pom a question" from "has an opinion about its
-/// structure", and it is the second that duplicates. The exemption belongs to
-/// the question, not to the file that happens to ask it.
-pub(crate) const MAVEN_XML_PARSERS: usize = 4;
+/// `documents.rs`, `documents/build_feature.rs` and `capture/observe.rs` used
+/// to answer Maven questions of their own and now ask `documents/pom.rs`, so
+/// the element walk exists once. What is left is the strangler itself, and it
+/// goes when the last caller of `jails-project/src/pom.rs` does.
+pub(crate) const MAVEN_XML_PARSERS: usize = 2;
 
 /// `# jails:` marker literals outside the crate that owns the format.
 ///

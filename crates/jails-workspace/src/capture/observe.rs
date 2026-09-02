@@ -12,6 +12,7 @@
 //! read "not stated here" as *unknown* rather than as *absent*. That is why
 //! it refuses to grow into a parser.
 
+use crate::documents::pom;
 use jails_contracts::BuildSystem;
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -54,17 +55,7 @@ pub(super) fn spring_boot_version(root: &Path, build_system: BuildSystem) -> Opt
     };
     let source = std::fs::read_to_string(path).ok()?;
     match build_system {
-        BuildSystem::Maven => {
-            let parent = between(&source, "<parent>", "</parent>")?;
-            if !parent.contains("<groupId>org.springframework.boot</groupId>")
-                || !parent.contains("<artifactId>spring-boot-starter-parent</artifactId>")
-            {
-                return None;
-            }
-            between(parent, "<version>", "</version>")
-                .map(str::trim)
-                .map(str::to_string)
-        }
+        BuildSystem::Maven => pom::parent_spring_boot_version(&source).map(str::to_string),
         BuildSystem::Gradle => gradle_spring_boot_version(&source),
         BuildSystem::Unknown => None,
     }
@@ -109,23 +100,7 @@ pub(super) fn declared_dependencies(root: &Path, build_system: BuildSystem) -> B
         _ => source,
     };
     match build_system {
-        BuildSystem::Maven => {
-            let mut found = BTreeSet::new();
-            let mut rest = source.as_str();
-            while let Some(at) = rest.find("<dependency>") {
-                let Some(block) = between(&rest[at..], "<dependency>", "</dependency>") else {
-                    break;
-                };
-                if let (Some(group), Some(artifact)) = (
-                    between(block, "<groupId>", "</groupId>"),
-                    between(block, "<artifactId>", "</artifactId>"),
-                ) {
-                    found.insert(format!("{}:{}", group.trim(), artifact.trim()));
-                }
-                rest = &rest[at + "<dependency>".len()..];
-            }
-            found
-        }
+        BuildSystem::Maven => pom::dependency_coordinates(&source),
         // A Gradle script states each one as a quoted coordinate on its own
         // line, with or without a version.
         BuildSystem::Gradle => source
@@ -161,21 +136,16 @@ fn build_file(root: &Path, build_system: BuildSystem) -> Option<std::path::PathB
 
 /// The identity the build declares for itself, if it declares one.
 ///
-/// Maven states it as `<artifactId>` under the project element -- the parent's
-/// is skipped by taking the *last* one outside `<parent>`, since a Boot
-/// project's first `<artifactId>` belongs to `spring-boot-starter-parent`.
+/// Maven states it under the project element and [`pom::artifact_id`] skips
+/// the parent's, since a Boot project's first one belongs to
+/// `spring-boot-starter-parent`.
 /// Gradle states it as `rootProject.name` in `settings.gradle`, and a project
 /// with no settings file falls back to nothing rather than to the directory,
 /// which is the value this exists to stop using.
 pub(super) fn build_artifact_id(root: &Path, build_system: BuildSystem) -> Option<String> {
     match build_system {
         BuildSystem::Maven => {
-            let source = std::fs::read_to_string(root.join("pom.xml")).ok()?;
-            let outside = match between(&source, "<parent>", "</parent>") {
-                Some(parent) => source.replacen(parent, "", 1),
-                None => source,
-            };
-            between(&outside, "<artifactId>", "</artifactId>").map(|name| name.trim().to_string())
+            pom::artifact_id(&std::fs::read_to_string(root.join("pom.xml")).ok()?)
         }
         BuildSystem::Gradle => {
             for name in ["settings.gradle", "settings.gradle.kts"] {
@@ -282,13 +252,7 @@ pub(super) fn junit_version(root: &Path, build_system: BuildSystem) -> Option<St
         return None;
     }
     let declared = match build_system {
-        BuildSystem::Maven => {
-            let at = source.find("<artifactId>junit-jupiter</artifactId>")?;
-            let block_start = source[..at].rfind("<dependency>")?;
-            between(&source[block_start..], "<version>", "</version>")?
-                .trim()
-                .to_string()
-        }
+        BuildSystem::Maven => pom::junit_jupiter_version(&source)?.to_string(),
         // A Gradle project states it as a coordinate on one line.
         BuildSystem::Gradle => source
             .lines()
@@ -355,11 +319,6 @@ fn legacy_gradle_spring_boot_version(source: &str) -> Option<String> {
         .take_while(|character| character.is_ascii_digit() || *character == '.')
         .collect();
     (!version.is_empty()).then_some(version)
-}
-
-fn between<'a>(source: &'a str, start: &str, end: &str) -> Option<&'a str> {
-    let source = source.split_once(start)?.1;
-    source.split_once(end).map(|(value, _)| value)
 }
 
 fn quoted(source: &str) -> Option<String> {
