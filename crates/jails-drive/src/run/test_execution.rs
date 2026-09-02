@@ -195,7 +195,7 @@ impl WatchEvents {
                 .to_be_bytes(),
         );
         Self {
-            session: jails_support::codec::hex(&jails_support::codec::domain_hash(
+            session: jails_support::hex(&jails_support::domain_hash(
                 "JAILS-TEST-WATCH-SESSION-1",
                 &identity,
             )),

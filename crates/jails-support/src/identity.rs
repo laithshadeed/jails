@@ -21,8 +21,16 @@
 //! type whose name is one sequence in the model and another on disk is a
 //! class of bug not worth accepting for a feature nobody has asked for.
 
-use crate::Result;
-use crate::codec::{self, Codec, DIGEST_BYTES, Decoder, Encoder};
+use crate::{DIGEST_BYTES, Result, hex, unhex};
+
+/// 4,096 bytes per project path, 1 MiB per ordinary name.
+///
+/// These are the caps a value has to clear to be *recorded*, and they live
+/// with the constructor that enforces them: a path is a filesystem thing with
+/// a filesystem's limits, and a logical name that needs a megabyte is a bug in
+/// whatever produced it.
+const MAX_PATH_BYTES: usize = 4 * 1024;
+const MAX_STRING_BYTES: usize = 1024 * 1024;
 
 mod sql;
 pub use sql::SqlName;
@@ -50,7 +58,7 @@ macro_rules! digest_newtype {
             /// Exactly 64 lowercase hex characters. Uppercase refuses, because
             /// parsing then rendering has to be byte-identical.
             pub fn parse_hex(text: &str) -> Result<Self> {
-                codec::unhex(text).map(Self)
+                unhex(text).map(Self)
             }
 
             pub fn as_bytes(&self) -> &[u8; DIGEST_BYTES] {
@@ -58,18 +66,7 @@ macro_rules! digest_newtype {
             }
 
             pub fn to_hex(&self) -> String {
-                codec::hex(&self.0)
-            }
-        }
-
-        impl Codec for $name {
-            fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-                encoder.digest(&self.0);
-                Ok(())
-            }
-
-            fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-                decoder.digest().map(Self)
+                hex(&self.0)
             }
         }
 
@@ -102,16 +99,6 @@ impl Name {
         &self.0
     }
 }
-impl Codec for Name {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.string(&self.0)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Self::parse(&decoder.string()?)
-    }
-}
-
 impl std::fmt::Display for Name {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
@@ -168,16 +155,6 @@ impl Package {
         }
     }
 }
-impl Codec for Package {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.string(&self.0)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Self::parse(&decoder.string()?)
-    }
-}
-
 impl std::fmt::Display for Package {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
@@ -239,16 +216,6 @@ fn is_java_primitive(text: &str) -> bool {
         "boolean" | "byte" | "char" | "double" | "float" | "int" | "long" | "short" | "void"
     )
 }
-impl Codec for JavaType {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.string(&self.qualified())
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Self::parse(&decoder.string()?)
-    }
-}
-
 impl std::fmt::Display for JavaType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.qualified())
@@ -384,11 +351,11 @@ impl ProjectPath {
         if text.is_empty() {
             return Err(crate::Failure::Told("path is empty".to_string()));
         }
-        if text.len() > codec::MAX_PATH_BYTES {
+        if text.len() > MAX_PATH_BYTES {
             return Err(format!(
                 "path is {} bytes, over the {}-byte limit",
                 text.len(),
-                codec::MAX_PATH_BYTES
+                MAX_PATH_BYTES
             )
             .into());
         }
@@ -460,16 +427,6 @@ impl ProjectPath {
         &self.0
     }
 }
-impl Codec for ProjectPath {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.path(&self.0)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Self::parse(&decoder.path()?)
-    }
-}
-
 impl std::fmt::Display for ProjectPath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
@@ -502,16 +459,6 @@ macro_rules! logical_id {
             }
         }
 
-        impl Codec for $name {
-            fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-                encoder.string(&self.0)
-            }
-
-            fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-                Self::parse(&decoder.string()?)
-            }
-        }
-
         impl std::fmt::Display for $name {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 f.write_str(&self.0)
@@ -534,8 +481,8 @@ fn validate_logical(text: &str, what: &str) -> Result<()> {
     if text.is_empty() {
         return Err(format!("{what} is empty").into());
     }
-    if text.len() > codec::MAX_STRING_BYTES {
-        return Err(format!("{what} is over the {}-byte limit", codec::MAX_STRING_BYTES).into());
+    if text.len() > MAX_STRING_BYTES {
+        return Err(format!("{what} is over the {}-byte limit", MAX_STRING_BYTES).into());
     }
     if text.starts_with('/') || text.starts_with('\\') {
         return Err(
@@ -726,8 +673,8 @@ mod tests {
     }
 
     #[test]
-    fn a_path_over_the_codec_limit_refuses_before_it_can_be_recorded() {
-        let long = format!("src/{}", "a".repeat(codec::MAX_PATH_BYTES));
+    fn a_path_over_the_recorded_limit_refuses_before_it_can_be_recorded() {
+        let long = format!("src/{}", "a".repeat(MAX_PATH_BYTES));
         assert!(ProjectPath::parse(&long).unwrap_err().contains("over the"));
     }
 
@@ -751,50 +698,13 @@ mod tests {
         }
     }
 
-    /// Every wire decoder calls the same constructor, so a value refused at
-    /// the CLI cannot arrive through a decoded record instead.
+    /// A digest renders and parses back byte for byte, which is what lets a
+    /// recorded identity be compared against a freshly computed one.
     #[test]
-    fn decoding_runs_the_same_validation_as_parsing() {
-        let mut encoder = Encoder::new();
-        encoder.path("../escape").unwrap();
-        let bytes = encoder.finish().unwrap();
-
-        let mut decoder = Decoder::new(&bytes).unwrap();
-        let error = ProjectPath::decode(&mut decoder).unwrap_err();
-        assert!(error.contains("may not be relative"), "{error}");
-
-        let mut encoder = Encoder::new();
-        encoder.string("class").unwrap();
-        let bytes = encoder.finish().unwrap();
-        let mut decoder = Decoder::new(&bytes).unwrap();
-        assert!(Name::decode(&mut decoder).unwrap_err().contains("reserved"));
-    }
-
-    #[test]
-    fn every_value_round_trips_through_the_codec() {
-        let path = ProjectPath::parse("src/main/java/A.java").unwrap();
-        let name = Name::parse("Note").unwrap();
-        let package = Package::parse("com.example").unwrap();
-        let base = Package::base();
-        let ty = JavaType::parse("com.example.Note").unwrap();
-        let object = ObjectId::from_bytes(jails_support::codec::sha256(b"x"));
-
-        let mut encoder = Encoder::new();
-        path.encode(&mut encoder).unwrap();
-        name.encode(&mut encoder).unwrap();
-        package.encode(&mut encoder).unwrap();
-        base.encode(&mut encoder).unwrap();
-        ty.encode(&mut encoder).unwrap();
-        object.encode(&mut encoder).unwrap();
-        let bytes = encoder.finish().unwrap();
-
-        let mut decoder = Decoder::new(&bytes).unwrap();
-        assert_eq!(ProjectPath::decode(&mut decoder).unwrap(), path);
-        assert_eq!(Name::decode(&mut decoder).unwrap(), name);
-        assert_eq!(Package::decode(&mut decoder).unwrap(), package);
-        assert_eq!(Package::decode(&mut decoder).unwrap(), base);
-        assert_eq!(JavaType::decode(&mut decoder).unwrap(), ty);
-        assert_eq!(ObjectId::decode(&mut decoder).unwrap(), object);
-        decoder.finish().unwrap();
+    fn a_digest_round_trips_through_its_hex_spelling() {
+        let object = ObjectId::from_bytes(crate::sha256(b"x"));
+        assert_eq!(ObjectId::parse_hex(&object.to_hex()).unwrap(), object);
+        assert_eq!(object.to_hex(), object.to_string());
+        assert!(ObjectId::parse_hex(&object.to_hex().to_uppercase()).is_err());
     }
 }

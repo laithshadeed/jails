@@ -33,7 +33,7 @@ use jails_contracts::{
     PlanBundle, PlanDraft, PlanInput, PlannedOperation, ProjectPath, TreeEntry, TreeManifest,
     WorkspaceSnapshot,
 };
-use jails_support::codec::{hex, sha256};
+use jails_support::{hex, sha256};
 use serde::Serialize;
 use std::collections::BTreeMap;
 

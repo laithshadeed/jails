@@ -3,8 +3,8 @@
 use crate::Invocation;
 use crate::model_generate::{PreparedMutation, finish_generation};
 use jails_model::{EjectionId, Evolution, StableId};
-use jails_support::codec::{hex, sha256};
 use jails_support::{Failure, Result};
+use jails_support::{hex, sha256};
 
 pub(crate) fn run(semantic_id: String, invocation: Invocation) -> Result<()> {
     // Observed rather than assumed, and observed exactly the way `capture`

@@ -22,13 +22,8 @@
 //! as a `[dev-dependency]`: it is test infrastructure, and a `#[cfg(test)]`
 //! item is invisible to a dependent crate's tests.
 
-// `#[derive(Codec)]` writes `jails_support::codec::...` into every impl it
-// generates, and that path does not resolve inside this crate. Naming ourselves
-// makes the macro's output compile here exactly as it does in a dependent.
-extern crate self as jails_support;
-
 pub mod apply;
-pub mod codec;
+mod digest;
 pub mod git;
 pub mod hermetic;
 pub mod identifier;
@@ -38,6 +33,12 @@ pub mod lock;
 pub mod process;
 pub mod scratch;
 pub mod unified;
+
+/// Content addressing, at the root because it is the one thing every layer
+/// above reaches for by name: the executor, capture, merge, materialization,
+/// the affected-test epoch, the daemon's classpath id and five model
+/// frontends all take a digest of something.
+pub use digest::{DIGEST_BYTES, domain_hash, hex, sha256, unhex};
 
 /// Every fallible jails operation returns a message a human can act on, or
 /// says that it has already said everything.

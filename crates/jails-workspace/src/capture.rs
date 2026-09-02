@@ -29,7 +29,7 @@ use jails_contracts::{
     WorkspaceSnapshot,
 };
 use jails_model::AppModel;
-use jails_support::codec::{hex, sha256};
+use jails_support::{hex, sha256};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;

@@ -1,7 +1,7 @@
 //! Persistent input epochs for affected-test selection.
 
 use jails_support::Result;
-use jails_support::codec::{DIGEST_BYTES, hex, unhex};
+use jails_support::{DIGEST_BYTES, hex, unhex};
 use std::path::Path;
 
 const STATE_FILE: &str = "affected-v2.meta";

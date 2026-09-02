@@ -676,38 +676,6 @@ pub(crate) fn no_bare_apply_verb_imports() {
     );
 }
 
-/// An `encode`/`decode` half that is not a `Codec` method.
-///
-/// The signatures are what identify one: `encode(&self, encoder: &mut Encoder)`
-/// and `decode(decoder: &mut Decoder<'_>)`. A method with either shape sitting
-/// in an inherent `impl` is a value on the wire that `Encoder::seq`,
-/// `Encoder::set` and `Encoder::map` cannot be used on, so its collection
-/// handling has to be written out again by hand.
-pub(crate) fn inherent_codec_halves(src: &[Source]) -> usize {
-    let mut count = 0;
-    for file in src {
-        let mut in_codec_impl = false;
-        for line in file.production.lines() {
-            // `trim_start`, because `digest_newtype!` and `logical_id!`
-            // expand to `impl Codec for $name` indented inside a
-            // `macro_rules!` body -- and a scanner that read column zero
-            // would report six perfectly good trait impls as violations.
-            let head = line.trim_start();
-            if head.starts_with("impl ") {
-                in_codec_impl = head.starts_with("impl Codec for ");
-            }
-            // A declaration, not a definition: the trait's own two lines.
-            let is_half = !head.ends_with(';')
-                && (head.contains("fn encode(&self, encoder: &mut Encoder)")
-                    || head.contains("fn decode(decoder: &mut Decoder<'_>)"));
-            if is_half && !in_codec_impl {
-                count += 1;
-            }
-        }
-    }
-    count
-}
-
 /// Production files that parse Maven's XML with a scanner of their own.
 ///
 /// **Parsers, not emitters.** A file that mentions `<dependency>` while only
@@ -922,81 +890,10 @@ pub(crate) fn compiler_reaches_outside_the_snapshot(src: &[Source]) -> usize {
     reaches + root_path_parameters(&pure)
 }
 
-/// Types whose wire format is written out by hand rather than derived.
-///
-/// One `impl Codec for X` is three statements of the same format -- the field
-/// list in the struct, again in `encode`, again in `decode` -- so a field
-/// added to the type and forgotten in the codec is a silent change of format
-/// rather than a compile error. `#[derive(Codec)]` makes the declaration the
-/// only owner of the encoding, and every persisted union tag and field number
-/// is generated and golden-tested.
-///
-/// `trim_start` for the same reason [`inherent_codec_halves`] needs it:
-/// `digest_newtype!` and `logical_id!` expand to `impl Codec for $name`
-/// indented inside a `macro_rules!` body. Those are counted, and should be --
-/// a macro is a hand-written codec shared by six types, not a derived one --
-/// but they count once each, where they are written.
-pub(crate) fn hand_written_codecs(src: &[Source]) -> usize {
-    src.iter()
-        .filter(|file| !file.path.ends_with(WIRE_RS))
-        .map(|file| {
-            file.production
-                .lines()
-                .filter(|line| {
-                    let head = line.trim_start();
-                    head.starts_with("impl ") && head.contains(" Codec for ")
-                })
-                .count()
-        })
-        .sum()
-}
-
-/// The primitives the derive is built out of, excluded from the row above.
-///
-/// `bool`, `u32`, `u64`, `String`, `Option<T>`, `Vec<T>`, `BTreeSet<T>`,
-/// `BTreeMap<K, V>` and `Box<T>` are where the recursion stops: a derive can
-/// only delegate to [`Codec`], so something has to state what a `bool` is on
-/// the wire. Counting them would put a floor in the row that no work could
-/// ever remove, which is the same reason `codemod.rs` is excluded from the
-/// `# jails:` row -- the one legitimate owner is not a violation.
-pub(crate) const WIRE_RS: &str = "jails-support/src/codec/wire.rs";
-
-/// Where the count stands. See the row in [`crate::board`] for why the
-/// target is withdrawn rather than zero.
-///
-/// The mechanical seam is exhausted for a reason. Most of what remains
-/// validates: `decode` calls a validating constructor, or `encode` enforces an
-/// invariant before writing a byte -- `ByteSpan` refusing a span that starts
-/// after it ends, `PropertySetting` refusing a comment carrying its own `#`,
-/// `EffectState` refusing a zero attempt. The constructor is the only place a
-/// value is validated, so a derive that skipped it would let a value rejected
-/// at the CLI arrive through a decoded document instead. The rest are as
-/// deliberate: codecs that encode a label string rather than a discriminant,
-/// so reordering an enum cannot change a recorded value; the primitive impls
-/// the derive is built on; length-capped blobs framed through
-/// `encoder.object`; raw digest arrays; and a depth counter for a recursive
-/// type. An enum with a hand-written `tag()`/`from_tag()` pair beside a
-/// derived codec is a second encoding of that type, and a codec that frames
-/// its own collection is byte-identical to `Vec<T>`, `BTreeSet<T>` or
-/// `BTreeMap<K, V>` doing it, ordering guarantee included, so neither shape
-/// stays hand-written.
-///
-/// The next move on this row is either a `#[codec(validate)]` that calls the
-/// constructor after decoding, or accepting the number, which is what "target
-/// withdrawn" already says.
-///
-/// 17 -> 7: `docs/60-abstraction.md` S60.6 made the test-execution wire one
-/// vocabulary, so the ten hand-written codecs it carried -- the selector, the
-/// six closed enums behind `closed_enum!`, the execution plan, the report and
-/// the daemon's two frame enums -- are gone rather than derived. The values
-/// that cross the daemon socket are `serde`'s now; the values that never leave
-/// the process carry no encoding at all.
-pub(crate) const HAND_WRITTEN_CODECS: usize = 7;
-
-/// The other three files a gate here names. Paths for the same reason: a
-/// second `doctor.rs` or `codemod.rs` anywhere in the workspace would silently
-/// join or leave the set its gate measures, and the gate would report a number
-/// about a different file without saying so.
+/// The other files a gate here names. Paths for the same reason: a second
+/// `doctor.rs` or `codemod.rs` anywhere in the workspace would silently join or
+/// leave the set its gate measures, and the gate would report a number about a
+/// different file without saying so.
 pub(crate) const CODEMOD_RS: &str = "jails-codemod/src/marked.rs";
 
 /// The one module allowed to know that `git merge-file` takes a diff
@@ -1009,11 +906,12 @@ pub(crate) const SCRATCH_RS: &str = "jails-support/src/scratch.rs";
 /// gains a `fix:` line when it has a real next step -- the exact valid
 /// spelling to retry, the upgrade path, "this is a bug in jails, not something
 /// a project can cause" -- and a duplicate refusal is deleted with the
-/// duplicate code that builds it. A derived codec's unknown-tag refusal
-/// carries its next step on the type (`#[codec(unknown_fix = "...")]`) rather
-/// than in the one place the message is built, so the wording cannot drift
-/// per type.
-pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 110;
+/// duplicate code that builds it.
+///
+/// 110 -> 88: `docs/51-kernel.md` S51.4 deleted the codec, and most of what it
+/// took with it were exactly the refusals with no next step to name -- a
+/// corrupt tag, a length over its cap, a set whose keys did not arrive sorted.
+pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 88;
 
 /// A refusal that builds a message and does not say what to do next.
 ///

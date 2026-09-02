@@ -3,7 +3,7 @@
 use super::super::RunCompile;
 use crate::model::Project;
 use jails_support::Result;
-use jails_support::codec::{domain_hash, hex};
+use jails_support::{domain_hash, hex};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};

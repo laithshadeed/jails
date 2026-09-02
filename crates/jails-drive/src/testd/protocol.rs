@@ -25,8 +25,8 @@
 //! plausible wrong answer.
 
 use crate::testing::{TestOutcome, TestSelector};
+use jails_support::DIGEST_BYTES;
 use jails_support::Result;
-use jails_support::codec::DIGEST_BYTES;
 use jails_support::identity::ObjectId;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -355,7 +355,7 @@ pub(crate) fn declared_length(header: &[u8]) -> Result<usize> {
 /// 32 raw bytes as 64 lowercase hex characters, which is what both peers
 /// already spell digests as on the command line and in the metadata file.
 mod digest_hex {
-    use jails_support::codec::{DIGEST_BYTES, hex, unhex};
+    use jails_support::{DIGEST_BYTES, hex, unhex};
     use serde::{Deserialize, Deserializer, Serializer};
 
     pub(super) fn serialize<S: Serializer>(

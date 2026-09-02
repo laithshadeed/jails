@@ -3918,7 +3918,7 @@ fn compiler_upgrade_uses_the_exact_accepted_projection_as_merge_base() {
     lock["compiler"] = serde_json::Value::String("0.0.0-previous-emitter".to_string());
     lock["projection_digest"] = serde_json::Value::String(format!(
         "sha256:{}",
-        jails_support::codec::hex(&jails_support::codec::sha256(&projection_bytes))
+        jails_support::hex(&jails_support::sha256(&projection_bytes))
     ));
     lock["projection"] = serde_json::to_value(projection).unwrap();
     fs::write(&lock_path, serde_json::to_vec_pretty(&lock).unwrap()).unwrap();

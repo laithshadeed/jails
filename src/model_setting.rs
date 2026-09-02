@@ -3,8 +3,8 @@
 use crate::Invocation;
 use crate::model_generate::{PreparedMutation, finish_generation};
 use jails_model::{Evolution, SettingId, SettingTarget, StableId};
-use jails_support::codec::{hex, sha256};
 use jails_support::{Failure, Result};
+use jails_support::{hex, sha256};
 
 pub(crate) fn set(key: String, value: String, tests: bool, invocation: Invocation) -> Result<()> {
     let target = target(tests);

@@ -277,34 +277,6 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
         ),
         (
             Ratchet {
-                name: "types whose wire format is hand-written (target withdrawn)",
-                rung: "one owner per persisted format",
-                // `#[derive(Codec)]` is normative about the two things a hand
-                // codec keeps getting a choice over: a struct encodes its
-                // fields in declaration order, and an enum's tag is explicit
-                // (`#[codec(tag = N)]`), never a Rust discriminant, so
-                // reordering variants cannot renumber the wire.
-                //
-                // **The target is withdrawn, not reached.** What is left is
-                // not more of the same: a codec that enforces key ordering
-                // while it decodes, one that counts a recursion depth, one
-                // that re-parses a value through its constructor so a decoded
-                // value cannot carry what the CLI would reject. Those are
-                // decisions about *this* format, and a derive that grew
-                // attributes for each would be a worse restatement of the same
-                // code. The row is for the number not *rising*: a new
-                // persisted type derives its format, or says in the commit why
-                // it is one of the bespoke ones.
-                ceiling: HAND_WRITTEN_CODECS,
-                target: HAND_WRITTEN_CODECS,
-                why: "A hand-written codec states the field list three times -- in the type, \
-                      in `encode`, in `decode` -- so a field added to the type and forgotten \
-                      in the codec is a silent change of format rather than a compile error.",
-            },
-            hand_written_codecs(src),
-        ),
-        (
-            Ratchet {
                 name: "refusals with no `fix:` line (target withdrawn)",
                 rung: "a refusal says what to do next",
                 // The `fix:` convention is a substring convention over free
@@ -328,24 +300,6 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                       would work instead.",
             },
             refusals_without_a_fix(src),
-        ),
-        (
-            Ratchet {
-                name: "codec halves outside `impl Codec`",
-                rung: "one constructor per type, and the codec calls it",
-                // An inherent `encode`/`decode` pair with the codec's
-                // signatures and no trait behind it is a type on the wire no
-                // generic helper can reach, and an inherent `encode` paired
-                // with a free `decode_*` function is the same split with
-                // nothing naming it.
-                ceiling: 0,
-                target: 0,
-                why: "A pair of methods with the codec's signatures and no trait behind them is \
-                      a type on the wire that no generic helper can reach, so each such type \
-                      gets its own copy of every collection loop and its own chance to forget \
-                      the sortedness check.",
-            },
-            inherent_codec_halves(src),
         ),
         (
             Ratchet {

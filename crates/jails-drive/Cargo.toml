@@ -5,7 +5,6 @@ edition.workspace = true
 
 [dependencies]
 clap.workspace = true
-jails-codec-derive.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 jails-codemod.workspace = true

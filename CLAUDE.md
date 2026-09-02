@@ -166,8 +166,7 @@ to** -- this is the prose, and prose goes stale.
 | `jails-compiler` | pure semantic lowering; no filesystem, environment or subprocess access |
 | `jails-workspace` | capture, exact materialization, verification and the single executor |
 | `jails-codemod` | the marked block, the `@Import` splice, `blanked`; **no dependencies at all**, so both `jails-compiler` and `jails-project` can reach it |
-| `jails-codec-derive` | `#[derive(Codec)]` for `jails-drive`'s test-execution wire; goes with its last user (`docs/51-kernel.md` S51.4) |
-| `jails-support` | write, run, encode and name: `apply` (the only module that writes), `process`, `hermetic`, `scratch`, `git`, `unified`, `lock`, the validating newtypes, `Result` and `Failure` |
+| `jails-support` | write, run, hash and name: `apply` (the only module that writes), `process`, `hermetic`, `scratch`, `git`, `unified`, `lock`, `digest` (SHA-256, domain separation and hex, re-exported at the root), the validating newtypes, `Result` and `Failure` |
 | `jails-spec` | the closed CLI vocabularies (`spec::kind`, `policy`, `coordinate`, `constant`, `suffix`), `find_project_root`, the eleven layers, `release` (the three version pins a generated project carries), and `build` -- which build tool a directory uses and nothing more |
 | `jails-java` | the small Java reader, the class-file constant-pool reader, template rendering |
 | `jails-testkit` | `hold_cwd()`, taken as a `[dev-dependency]`; not `#[cfg(test)]`, because a dependent crate's tests cannot see one |
@@ -183,8 +182,6 @@ Five things to know before touching the workspace:
   ships. Only that block knows which crate a module lives in, which makes
   moving one a one-line change. Keep it trimmed to what the crate references;
   a facade re-export keeps a module alive that nothing else calls.
-- **`jails-support` names itself** with `extern crate self as jails_support`:
-  `#[derive(Codec)]` writes absolute paths into every impl it generates.
 - **`CARGO_MANIFEST_DIR` expands at the call site**, so `template!` cannot bake
   in its own root. `jails_java::template_at!` takes the root as an argument and
   each crate declares a one-line `template_here!` naming its own; `templates/`

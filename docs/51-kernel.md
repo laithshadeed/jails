@@ -17,22 +17,10 @@ and the wire-format goldens. What survives of its vocabulary lives in
 
 ## What you own
 
-`crates/jails-codec-derive/**`, `crates/jails-support/src/codec.rs` and
-`codec/`, `crates/jails-spec/**`, `src/dispatch.rs`, `tests/protocol-golden/**`,
+`crates/jails-spec/**`, `src/dispatch.rs`, `tests/protocol-golden/**`,
 `docs/30-cutover.md`.
 
 ## Steps
-
-**S51.4 -- The codec.** `#[derive(Codec)]` and `jails_support::codec` have
-one user left: `jails-drive::testing`'s v1 test-plan wire (`TestSelector`,
-`TestExecutionPlanV1`, `TestReportV1`) and the daemon protocol in
-`testing/testd.rs`. `docs/60-abstraction.md` S60.6 makes that one vocabulary
-with `testd::v2`, which frames `serde` values; when it lands, delete the
-codec, the derive crate, the board's *types whose wire format is
-hand-written* and *codec halves outside `impl Codec`* rows, and the `extern
-crate self` line in `jails-support`. `hex` and `sha256` are the two things
-outside the wire that reach into `codec`; they move to `jails-support`'s
-root.
 
 **S51.7 -- The prose.** `docs/30-cutover.md` holds the workspace workstream's
 open items; when nothing is left in it, delete the file and its row in

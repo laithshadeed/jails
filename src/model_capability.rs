@@ -4,8 +4,8 @@ use crate::Capability as CliCapability;
 use crate::Invocation;
 use crate::model_generate::{PreparedMutation, finish_generation};
 use jails_model::{CapabilityId, DependencyId, DependencyScope, Evolution, StableId};
-use jails_support::codec::{hex, sha256};
 use jails_support::{Failure, Result};
+use jails_support::{hex, sha256};
 
 /// The `app { storage ... }` value a capability label means, for the two
 /// kinds JDL v1 states as an axis rather than a capability.

@@ -453,13 +453,13 @@ fn artifact_inputs(project: &Project) -> String {
         );
         bytes.push(0);
         if let Ok(content) = fs::read(file) {
-            bytes.extend_from_slice(&jails_support::codec::domain_hash(
+            bytes.extend_from_slice(&jails_support::domain_hash(
                 "JAILS-PACKAGED-INPUT-1",
                 &content,
             ));
         }
     }
-    jails_support::codec::hex(&jails_support::codec::domain_hash(
+    jails_support::hex(&jails_support::domain_hash(
         "JAILS-PACKAGED-INPUTS-1",
         &bytes,
     ))
@@ -489,7 +489,7 @@ fn project_root_id(project: &Project) -> String {
         .root()
         .canonicalize()
         .unwrap_or_else(|_| project.root().to_path_buf());
-    jails_support::codec::hex(&jails_support::codec::domain_hash(
+    jails_support::hex(&jails_support::domain_hash(
         "JAILS-PACKAGED-ROOT-1",
         root.to_string_lossy().as_bytes(),
     ))
@@ -502,9 +502,10 @@ fn file_digest(path: &std::path::Path) -> Result<String> {
             path.display()
         )
     })?;
-    Ok(jails_support::codec::hex(
-        &jails_support::codec::domain_hash("JAILS-PACKAGED-ARTIFACT-1", &bytes),
-    ))
+    Ok(jails_support::hex(&jails_support::domain_hash(
+        "JAILS-PACKAGED-ARTIFACT-1",
+        &bytes,
+    )))
 }
 
 fn services(project: &Project, policy: RunServices, debug: bool) -> Result<()> {

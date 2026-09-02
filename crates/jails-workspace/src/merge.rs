@@ -2,9 +2,9 @@
 //! projection, current is the captured workspace, desired is the next render.
 
 use jails_contracts::ProjectPath;
-use jails_support::codec::{hex, sha256};
 use jails_support::hermetic::{self, Invocation, Outcome};
 use jails_support::scratch::ScratchDir;
+use jails_support::{hex, sha256};
 use std::time::Duration;
 
 pub(crate) enum Merged {

@@ -4,7 +4,7 @@ use crate::cli::{EditorCommand, EditorDiagnosticScopeArg, EditorSymbolKindArg, O
 use crate::{Cli, inspect, model, pom};
 use clap::CommandFactory;
 use jails_support::Result;
-use jails_support::codec::domain_hash;
+use jails_support::domain_hash;
 use jails_support::identity::ObjectId;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;

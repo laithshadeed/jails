@@ -159,7 +159,7 @@ fn collect_file(path: &Path, snapshot: &mut Snapshot) {
                 path.to_path_buf(),
                 FileStamp {
                     size: bytes.len() as u64,
-                    digest: jails_support::codec::sha256(&bytes),
+                    digest: jails_support::sha256(&bytes),
                 },
             );
         }

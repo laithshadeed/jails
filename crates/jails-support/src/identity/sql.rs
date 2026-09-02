@@ -6,11 +6,9 @@
 //! broader SQL expression would make that confirmation mean less than it
 //! looks like it means.
 //!
-//! One constructor, refusing rather than quoting or normalising, and every
-//! decoder goes through it.
+//! One constructor, refusing rather than quoting or normalising.
 
 use crate::Result;
-use crate::codec::{Codec, Decoder, Encoder};
 
 /// A validated unquoted SQL identifier used at destructive lifecycle
 /// boundaries. Generated table names are lowercase snake case, so accepting a
@@ -40,15 +38,5 @@ impl SqlName {
 
     pub fn as_str(&self) -> &str {
         &self.0
-    }
-}
-
-impl Codec for SqlName {
-    fn encode(&self, encoder: &mut Encoder) -> Result<()> {
-        encoder.string(&self.0)
-    }
-
-    fn decode(decoder: &mut Decoder<'_>) -> Result<Self> {
-        Self::parse(&decoder.string()?)
     }
 }

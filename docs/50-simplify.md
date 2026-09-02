@@ -49,7 +49,6 @@ mutation pipeline landed; method at the end of this section.
 | `jails-spec` | 634 | 1,220 |
 | `jails-contracts` | 588 | 1,012 |
 | `jails-codemod` | 361 | 795 |
-| `jails-codec-derive` | 243 | 323 |
 | `jails-testkit` | 0 | 36 |
 | **total** | **63,265** | **94,785** |
 
@@ -77,9 +76,10 @@ plan carries the command that re-checks it.
    snapshot (the second Maven parser is gone: one element walk in
    `jails-workspace/src/documents/pom.rs`). Plan `53`.
 
-4. **`#[derive(Codec)]` has one user left.** The test-execution wire became
-   one vocabulary over a `serde` daemon protocol, so the codec and its derive
-   crate are the deletion that remains. Plan `51`.
+4. **There is no second wire format.** The test-execution stacks became one
+   vocabulary over a `serde` daemon protocol, and the codec and its derive
+   crate went with them; `jails_support::digest` is what is left, and it
+   hashes rather than encodes.
 
 Reproduce the table with this, from the repository root. It is the
 approximation the baseline was taken with; `tests/architecture/measure.rs` is
@@ -122,7 +122,7 @@ adds a new shape is not progress.
 
 | plan | agent | owns | what it deletes |
 |---|---|---|---|
-| `docs/51-kernel.md` | **1 -- kernel** | `crates/jails-codec-derive/**`, `crates/jails-support/src/codec*`, `crates/jails-spec/**`, `src/dispatch.rs`, `tests/protocol-golden/**`, `docs/30-cutover.md` | the codec, once the test-execution wire is one protocol |
+| `docs/51-kernel.md` | **1 -- kernel** | `crates/jails-spec/**`, `src/dispatch.rs`, `tests/protocol-golden/**`, `docs/30-cutover.md` | the leaves `jails-spec` still holds |
 | `docs/52-binary.md` | **2 -- binary** | `src/**` except `src/dispatch.rs`, `tests/cli/**` except `generate.rs`, `capabilities.rs`, `tooling.rs`, `examples.rs`, `reports.rs`, `docs/feature-inventory.tsv`, `README.md`'s command sections | the second decision of each mutation, `new`'s three seeds, the unread flags |
 | `docs/53-tool-crates.md` | **3 -- tool crates** | `crates/jails-{project,java,drive,report,workspace,support,codemod,contracts}/**` (minus plan 1's files), `tests/cli/{tooling,capabilities,reports,examples}.rs`, `tests/corpus/**`, `tests/baseline.rs`, `tests/architecture_allowances.rs` | the second project model, the two test-execution vocabularies |
 | `docs/54-language.md` | **4 -- language** | `crates/jails-model/**`, `docs/10-language.md` | the parser's repeated attribute handling |

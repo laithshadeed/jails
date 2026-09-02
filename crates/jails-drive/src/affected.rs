@@ -30,7 +30,7 @@ mod epoch;
 
 use crate::process::{CommandSpec, Diagnostics, OutputMode};
 use jails_support::Result;
-use jails_support::codec::{domain_hash, sha256};
+use jails_support::{domain_hash, sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 

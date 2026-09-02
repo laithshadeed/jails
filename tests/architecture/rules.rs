@@ -200,7 +200,6 @@ fn every_path_a_gate_names_is_a_file_the_scanner_found() {
     let files = sources();
     for (constant, path) in [
         ("BUILTIN_RS", BUILTIN_RS),
-        ("WIRE_RS", WIRE_RS),
         ("CODEMOD_RS", CODEMOD_RS),
         ("GIT_RS", GIT_RS),
         ("DOCTOR_RS", DOCTOR_RS),
@@ -337,7 +336,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-support", "hermetic", 0),
     ("jails-support", "unified", 0),
     ("jails-support", "scratch", 0),
-    ("jails-support", "codec", 0),
+    ("jails-support", "digest", 0),
     ("jails-support", "git", 0),
     ("jails-support", "identifier", 0),
     ("jails-support", "identity", 0),
