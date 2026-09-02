@@ -231,3 +231,152 @@ fn java_buffers_load_project_navigation_and_compiler_support() {
     );
     assert!(compiler.contains("errorformat"), "{compiler}");
 }
+
+/// The words `syntax/jdl.vim` colours, by highlight group.
+///
+/// `syn keyword` lines carry a group and then its words; the kebab spellings
+/// (`if-match`, `set-null`, `zone-id`) are `syn match` items because keeping
+/// `-` out of 'iskeyword' is what lets signed INT literals keep their word
+/// boundaries, so they are read off their own matches.
+fn syntax_vocabulary() -> Vec<(String, String)> {
+    let source = editor_file("jails.nvim/syntax/jdl.vim");
+    let mut found = Vec::new();
+    for line in source.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("syn keyword ") {
+            let mut words = rest.split_whitespace();
+            let Some(group) = words.next() else { continue };
+            for word in words {
+                // `contained`, `nextgroup=...` and `skipwhite` are arguments,
+                // not vocabulary.
+                if word == "contained" || word == "skipwhite" || word.contains('=') {
+                    continue;
+                }
+                found.push((group.to_string(), word.to_string()));
+            }
+        } else if let Some(rest) = line.strip_prefix("syn match ") {
+            let mut parts = rest.splitn(2, char::is_whitespace);
+            let Some(group) = parts.next() else { continue };
+            let Some(pattern) = parts.next() else {
+                continue;
+            };
+            // Only the literal kebab words, e.g. `syn match jdlType "\<zone-id\>"`.
+            if let Some(word) = pattern
+                .strip_prefix("\"\\<")
+                .and_then(|p| p.split("\\>").next())
+                && word.chars().all(|c| c.is_ascii_lowercase() || c == '-')
+                && word.contains('-')
+            {
+                found.push((group.to_string(), word.to_string()));
+            }
+        }
+    }
+    assert!(
+        found.len() > 60,
+        "could not read the vocabulary out of syntax/jdl.vim: {found:?}"
+    );
+    found
+}
+
+/// Every JDL word the syntax file colours is one the parser actually matches.
+///
+/// A syntax file is a hand-written copy of a vocabulary the compiler owns, so
+/// it drifts the same way `jails.nvim`'s completion tables once did -- and it
+/// drifts invisibly, because a misspelled keyword simply renders in the
+/// default colour and looks like an ordinary identifier. The parser's own
+/// string literals are the oracle: JDL keywords are matched against them in
+/// `crates/jails-model/src/jdl/v1/parser/`, the canonical scalar names live in
+/// `builtin.rs`, and the HTTP methods in `unit.rs`.
+#[test]
+fn the_jdl_syntax_file_colours_only_words_the_parser_knows() {
+    let mut oracle = String::new();
+    let parser = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/jails-model/src/jdl/v1/parser");
+    let mut sources: Vec<_> = std::fs::read_dir(&parser)
+        .expect("the JDL parser is tracked in this repository")
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
+        .collect();
+    assert!(
+        sources.len() >= 5,
+        "the JDL parser scan found {} files, so it has lost the code",
+        sources.len()
+    );
+    sources.push(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/jails-model/src/jdl/v1/parser.rs"),
+    );
+    sources.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/jails-model/src/builtin.rs"));
+    sources.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/jails-model/src/unit.rs"));
+    for path in &sources {
+        oracle.push_str(
+            &std::fs::read_to_string(path)
+                .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display())),
+        );
+    }
+
+    // These groups are JDL's own vocabulary. jdlTodo is English, not JDL.
+    let vocabulary = [
+        "jdlDecl",
+        "jdlAppKey",
+        "jdlMember",
+        "jdlConnective",
+        "jdlType",
+        "jdlValue",
+        "jdlBindSource",
+        "jdlAttrScope",
+        "jdlBoolean",
+        "jdlHttpMethod",
+    ];
+
+    let mut unknown = Vec::new();
+    for (group, word) in syntax_vocabulary() {
+        if !vocabulary.contains(&group.as_str()) {
+            continue;
+        }
+        if !oracle.contains(&format!("\"{word}\"")) {
+            unknown.push(format!("{group} {word}"));
+        }
+    }
+    assert!(
+        unknown.is_empty(),
+        "syntax/jdl.vim colours {unknown:?} as JDL vocabulary, but the parser \
+         matches no such word. A syntax file that colours a word the language \
+         does not have is worse than one that colours nothing: the editor \
+         confirms a misspelling that `jails model check` then refuses."
+    );
+}
+
+/// `.jdl` buffers get a filetype, which is what makes Copilot work in them.
+///
+/// github/copilot.vim disables itself in any buffer whose filetype is empty --
+/// `s:filetype_defaults` maps '.', its stand-in for no filetype, to 0 -- and
+/// Neovim ships no `.jdl` detection, so without this file Copilot is silently
+/// off in every model.jdl. The filetype name is also the `languageId`
+/// copilot.vim sends to the Copilot LSP.
+#[test]
+fn jdl_buffers_are_given_a_filetype_so_copilot_stays_enabled() {
+    let ftdetect = editor_file("jails.nvim/ftdetect/jdl.lua");
+    assert!(
+        ftdetect.contains("vim.filetype.add"),
+        "ftdetect/jdl.lua no longer registers the filetype, which silently \
+         turns Copilot off in every model.jdl: {ftdetect}"
+    );
+    assert!(
+        ftdetect.contains("jdl%s+%d+"),
+        "ftdetect/jdl.lua no longer sniffs the `jdl <version>` header. `.jdl` \
+         is also JHipster's extension, and claiming theirs is how this plugin \
+         breaks an unrelated one: {ftdetect}"
+    );
+
+    // The syntax file must not be reachable without the filetype that selects
+    // it, and the ftplugin must not grow a second copy of the buffer setup.
+    let ftplugin = editor_file("jails.nvim/ftplugin/jdl.lua");
+    assert!(
+        ftplugin.contains("configure_jdl_buffer"),
+        "ftplugin/jdl.lua should delegate to jails.configure_jdl_buffer(), \
+         which is where buffer configuration is decided: {ftplugin}"
+    );
+    assert!(
+        editor_file("jails.nvim/syntax/jdl.vim").contains("b:current_syntax"),
+        "syntax/jdl.vim must guard and set b:current_syntax"
+    );
+}

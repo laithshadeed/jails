@@ -742,6 +742,48 @@ function M.configure_java_buffer()
   end
 end
 
+--- Editing settings for a `.jails/model.jdl` buffer.
+---
+--- The options are the canonical formatter's own style (JDL v1 S19.1): two
+--- spaces, LF, a 100-column target. Matching it here means an edit made by
+--- hand and an edit made by `jails model fmt` agree, so `fmt --check` does not
+--- fail on whitespace the editor introduced.
+---
+--- Deliberately no `compiler('jails')`: `jails model check` reports semantic
+--- diagnostics as model paths (`$.entities.payout.fields.amount.type`) with no
+--- file or line, so an errorformat could only guess at a location. `:Jails
+--- model check` prints the real report instead.
+function M.configure_jdl_buffer()
+  vim.bo.commentstring = '// %s'
+  -- `://` is the raw option value; the backslashes in `:h 'comments'` are
+  -- `:set` command-line escaping, which setting through `vim.bo` skips.
+  vim.bo.comments = '://'
+  vim.bo.expandtab = true
+  vim.bo.shiftwidth = 2
+  vim.bo.softtabstop = 2
+  vim.bo.textwidth = 100
+  vim.bo.fileformat = 'unix'
+
+  if not config.keymaps then return end
+  local map = function(lhs, rhs, desc)
+    vim.keymap.set('n', lhs, rhs, { buffer = true, silent = true, desc = desc })
+  end
+  map('<leader>Jk', function() M.run_terminal({ 'model', 'check' }) end, 'Jails: check the model')
+  map('<leader>Jf', function()
+    vim.cmd('write')
+    -- `model fmt` rewrites the file on disk, and M.run is asynchronous, so the
+    -- reload has to wait for it: a bare `checktime` here reads the unformatted
+    -- bytes back and the buffer silently keeps them.
+    M.run({ 'model', 'fmt' }, {
+      callback = function(_, err)
+        if not err then vim.cmd('checktime') end
+      end,
+    })
+  end, 'Jails: format the model')
+  map('<leader>Jp', function() M.run_terminal({ 'model', 'plan' }) end, 'Jails: plan the model')
+  map('<leader>Je', function() M.run_terminal({ 'model', 'explain' }) end, 'Jails: explain derived names')
+end
+
 function M.destroy(args)
   if #args < 2 then
     vim.notify('jails.nvim: usage :Jails destroy <kind> <Name>', vim.log.levels.ERROR)

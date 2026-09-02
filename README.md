@@ -1352,6 +1352,26 @@ require('jails').setup({ terminal_height = 12 })
 The plugin shells out to the real `jails` on PATH and deliberately
 reimplements none of its project-generation logic.
 
+It also brings the `.jdl` filetype with it: `.jails/model.jdl` gets syntax
+highlighting for the JDL v1 grammar, and the buffer picks up the canonical
+formatter's own settings (two-space indent, `//` comments, a 100-column
+target), so an edit made by hand and one made by `jails model fmt` agree.
+Buffer-local keys are `<leader>Jk` check, `<leader>Jf` fmt, `<leader>Jp` plan
+and `<leader>Je` explain.
+
+The colours are the smaller half of why the filetype exists. Copilot -- and
+anything else keyed on filetype -- disables itself in a buffer that has none,
+and Neovim ships no `.jdl` rule, so before this the model was the one file in
+a jails project with no completion in it. `.jdl` is also JHipster's extension
+for an unrelated language: the path jails owns is claimed outright, and any
+other `.jdl` only when it opens with the `jdl <version>` header JDL v1 requires,
+so a JHipster file falls through to whatever else claims it.
+
+`tests/editor.rs` checks the highlighted vocabulary against the parser's own
+string literals. A syntax file is a hand-written copy of a vocabulary the
+compiler owns, and it drifts invisibly -- a misspelled keyword just renders in
+the default colour and reads as an ordinary identifier.
+
 - `jails src <Type> [--json]` — where a Java type's source is, fully qualified.
   Searches the project's own sources first, then whatever `JAILS_SOURCE_PATH`
   names (or `deps/` when it does not). Instant, and works on a project that does
