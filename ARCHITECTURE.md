@@ -89,14 +89,13 @@ crate a module belongs to.
 | `jails-codemod` | the marked block and the `@Import` splice; no dependencies, so every crate can reach it |
 | `jails-support` | write, run, encode and name: the apply layer (the only module that writes), process execution, locks, scratch directories, the validating newtypes |
 | `jails-spec` | the closed CLI vocabularies and where a project is |
-| `jails-java` | the small Java reader, the class-file constant-pool reader, template rendering |
 | `jails-testkit` | test infrastructure a dependent crate's tests need |
 
 ### The tool crates
 
 | crate | contract |
 |---|---|
-| `jails-project` | one resolved `Project`, and every reader-owned file jails reads or edits: `jails.toml`, `compose.yaml`, `pom.xml`, `build.gradle`, the SQL query workspace |
+| `jails-project` | one resolved `Project`, every reader-owned file jails reads or edits (`jails.toml`, `compose.yaml`, `pom.xml`, `build.gradle`), and reading Java: the small Java reader, the class-file constant-pool reader, template rendering |
 | `jails-drive` | commands that start something: `run`, `test`, `testd`, `migrate`, `kafka`, `console`, `bench`, `lint` |
 | `jails-report` | commands that answer a question: `doctor`, `why`, `explain`, `src`, `commands`; read-only by construction, since the crate sits below `jails-drive` |
 | `jails` (root) | the binary: the clap definition in `src/cli.rs`, the dispatch in `src/main.rs`, and the `src/model_*.rs` frontends that edit the model and run the pipeline |

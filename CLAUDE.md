@@ -180,9 +180,8 @@ to** -- this is the prose, and prose goes stale.
 | `jails-codemod` | the marked block, the `@Import` splice, `blanked`; **no dependencies at all**, so both `jails-compiler` and `jails-project` can reach it |
 | `jails-support` | write, run, hash and name: `apply` (the only module that writes), `process`, `hermetic`, `scratch`, `git`, `unified`, `lock`, `digest` (SHA-256, domain separation and hex, re-exported at the root), the validating newtypes, `Result` and `Failure` |
 | `jails-spec` | where a project is and what builds it: `find_project_root`, `build`, plus `policy`, `coordinate`, `constant`, `suffix` and `release` (the three version pins a generated project carries). No vocabulary of its own and no clap |
-| `jails-java` | the small Java reader, the class-file constant-pool reader, template rendering |
 | `jails-testkit` | `hold_cwd()`, taken as a `[dev-dependency]`; not `#[cfg(test)]`, because a dependent crate's tests cannot see one |
-| `jails-project` | one resolved `Project`, and every reader-owned file jails reads or edits: `config` (`jails.toml`), `compose`, `gradle`, `inspect`; `pom` is re-exported from `jails-workspace`, which owns the one Maven reader |
+| `jails-project` | one resolved `Project`, every reader-owned file jails reads or edits: `config` (`jails.toml`), `compose`, `gradle`, `inspect`; and reading Java: `java` (the small reader), `classfile` (the constant-pool reader), `template` (rendering into it). `pom` is re-exported from `jails-workspace`, which owns the one Maven reader |
 | `jails-drive` | commands that **start something**: `run`, `test`, `testd`, `affected`, `migrate`, `kafka`, `console`, `bench`, `lint`; the one edge back down is `run` to `report::why` |
 | `jails-report` | commands that **answer a question**: `doctor`, `why`, `explain`, `src`, `commands`; read-only because the crate sits below `jails-drive` |
 | `jails` (root) | the binary: `main`, `cli`, `dispatch`, `new`, `app`, the `model_*` frontends, and `tests/` |
@@ -195,7 +194,7 @@ Five things to know before touching the workspace:
   moving one a one-line change. Keep it trimmed to what the crate references;
   a facade re-export keeps a module alive that nothing else calls.
 - **`CARGO_MANIFEST_DIR` expands at the call site**, so `template!` cannot bake
-  in its own root. `jails_java::template_at!` takes the root as an argument and
+  in its own root. `jails_project::template_at!` takes the root as an argument and
   each crate declares a one-line `template_here!` naming its own; `templates/`
   stays at the repository root.
 - **The binary is the root package, not `crates/jails-cli`**, which keeps
@@ -346,19 +345,19 @@ would be the second copy.
   out, reading through `blanked()` so the `@SpringBootTest` in
   `TestcontainersConfig`'s own Javadoc example is not mistaken for one on a
   class.
-- **`crates/jails-java/src/java.rs`** -- a deliberately small Java reader:
+- **`crates/jails-project/src/java.rs`** -- a deliberately small Java reader:
   annotations and what they attach to, a type's supertypes, a constructor's
   parameters. **Not a parser, and must not grow into one.** `blanked()`
   replaces comments and literals with spaces of the same length so a scan
   cannot be fooled by `// @Service` while byte offsets still index the original
   -- which is why `annotations()` slices out of `source`, not the blanked copy.
   `java::types_annotated_with` is the one walk of `src/test/java`.
-- **`crates/jails-java/src/classfile.rs`** -- the smallest reader that answers
+- **`crates/jails-project/src/classfile.rs`** -- the smallest reader that answers
   "which types does this class name": constant pool only, `CONSTANT_Class`
   plus a descriptor scan of every `CONSTANT_Utf8`. `CONSTANT_Long` and
   `CONSTANT_Double` take two pool slots; a reader advancing by one lands on
   plausible tags and produces a wrong answer rather than an error.
-- **`crates/jails-java/src/template.rs` + `templates/**.java`** -- the Java
+- **`crates/jails-project/src/template.rs` + `templates/**.java`** -- the Java
   bodies, as Java files. **Templates are real `.java` files, never Rust
   `format!` strings**: Java is made of braces and `format!` owns that syntax.
   Placeholders are `{{name}}`; a missing or unused key is a panic. Substitution

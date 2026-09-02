@@ -8,7 +8,6 @@ edition.workspace = true
 clap.workspace = true
 jails-codemod.workspace = true
 jails-support.workspace = true
-jails-java.workspace = true
 jails-model.workspace = true
 jails-spec.workspace = true
 # The one reader of `pom.xml`, which lives with the document adapters that

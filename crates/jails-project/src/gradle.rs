@@ -69,7 +69,7 @@ pub const FILE: &str = "build.gradle";
 /// The same trick `java::blanked` uses and for the same reason: a scan must not
 /// be fooled by a brace inside a string or a `dependencies` inside a comment,
 /// while byte offsets still index the original text so a slice can be taken
-/// from it. Written here rather than borrowed from `jails-java` because Groovy
+/// from it. Written here rather than borrowed from `java` because Groovy
 /// and Java disagree about `'...'` -- a Java char literal is one character, a
 /// Groovy string is any number of them, and reusing the Java scanner would
 /// desynchronise on the first `'org.springframework.boot'`.

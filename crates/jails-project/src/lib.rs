@@ -16,23 +16,35 @@
 //! here rather than with the commands because `add`'s HTTP capability derives
 //! its client from the same route list, and a command layer above the
 //! generators could not be reached from there.
+//!
+//! Reading Java, and rendering templates into it, is here too. [`java`] is
+//! deliberately small -- annotations and what they are attached to, a type's
+//! supertypes, a constructor's parameters -- and must not grow into a parser.
+//! [`classfile`] is the same rule applied to bytecode: the smallest reader
+//! that can answer "which types does this class name", constant pool only.
+//! [`template`] is substitution, not a template engine: anything structural
+//! stays in the generator layer and arrives already rendered. They were a
+//! crate of their own until nothing below this one needed them.
 
 /// The marked-block splice, from its own dependency-free crate so that every
 /// tree can reach one implementation: a format with several owners is several
 /// answers to what `remove db` deletes. Module code says `crate::codemod`.
 pub use jails_codemod as codemod;
 pub mod capability;
+pub mod classfile;
 pub mod compose;
 pub mod config;
 pub mod feature;
 pub mod gradle;
 pub mod inspect;
+pub mod java;
 pub mod maven;
 pub mod model;
 pub mod modernize;
 pub mod project;
 pub mod properties;
 pub mod synonyms;
+pub mod template;
 
 // The lower crates, re-exported so every module in this one keeps saying
 // `crate::…` wherever it ships. Only this block knows which crate a module
@@ -41,7 +53,6 @@ pub mod synonyms;
 /// Module code says `crate::pom`.
 pub use jails_workspace::pom;
 
-pub use jails_java::{java, template};
 /// The eleven layers, from the crate that owns every closed vocabulary.
 /// Module code says `crate::layout`.
 pub use jails_model::layout;

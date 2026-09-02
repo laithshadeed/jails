@@ -378,7 +378,7 @@ fn source_breaks(sources: &Sources, upgrade: &mut Upgrade) {
     let mut jackson = Vec::new();
     let mut jakarta = Vec::new();
     for (path, text) in &sources.java {
-        let blanked = jails_java::java::blanked(text);
+        let blanked = crate::java::blanked(text);
         if blanked.contains("com.fasterxml.jackson") {
             // Split by whether the rename is the whole migration. Refusing
             // every file is too blunt: it leaves a project jails has just

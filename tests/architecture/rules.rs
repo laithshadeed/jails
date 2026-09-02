@@ -72,7 +72,7 @@ fn owns_terminal_output(path: &Path) -> bool {
         || relative.starts_with("src/new/")
         || relative == "crates/jails-support/src/lib.rs"
         || relative == "crates/jails-support/src/process.rs"
-        || relative == "crates/jails-java/src/template.rs"
+        || relative == "crates/jails-project/src/template.rs"
         || relative == "crates/jails-project/src/compose.rs"
         || relative == "crates/jails-project/src/inspect.rs"
         || relative == "crates/jails-project/src/project.rs"
@@ -344,10 +344,6 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-support", "identity", 0),
     ("jails-support", "json", 0),
     ("jails-support", "lock", 0),
-    // jails-java: reading Java and rendering templates into it.
-    ("jails-java", "java", 1),
-    ("jails-java", "classfile", 1),
-    ("jails-java", "template", 1),
     // jails-spec: what a jails project is -- where it is, how it is laid out,
     // what a field means, and the closed CLI vocabularies.
     ("jails-spec", "build", 2),
@@ -431,6 +427,13 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-project", "project", 5),
     ("jails-project", "properties", 5),
     ("jails-project", "inspect", 5),
+    // The Java reader, the class-file reader and the template renderer.
+    // Folded in from their own crate (S53.8) once nothing below this crate
+    // needed them; `jails-drive`, `jails-report` and the binary reach them
+    // through this crate's facade.
+    ("jails-project", "java", 5),
+    ("jails-project", "classfile", 5),
+    ("jails-project", "template", 5),
     // jails-report: commands that answer a question. Read-only by contract,
     // and below `jails-drive` so the contract is structural.
     ("jails-report", "doctor", 7),

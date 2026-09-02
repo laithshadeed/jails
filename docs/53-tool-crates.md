@@ -17,7 +17,7 @@ two vocabularies for one test run.
 
 ## What you own
 
-`crates/jails-project/**`, `crates/jails-java/**`, `crates/jails-drive/**`,
+`crates/jails-project/**`, `crates/jails-drive/**`,
 `crates/jails-report/**`, `crates/jails-workspace/**`,
 `crates/jails-support/**` except `codec*`, `crates/jails-codemod/**`,
 `crates/jails-contracts/**`. Tests: `tests/cli/{tooling,capabilities,reports,examples}.rs`,
@@ -27,11 +27,9 @@ The `CLAUDE.md` entries for these crates.
 ## What you do not touch
 
 `jails-spec` is agent 1's; its closed vocabularies have moved into
-`jails-model` and what is left -- where a project is, and what builds it --
-is yours to *shrink* under S53.8. `jails-model` and `jails-compiler` are not
-yours;
-where a deletion here needs a fact from the compiler you ask agent 5 for the
-function and wait.
+`jails-model` and what is left is where a project is, and what builds it.
+`jails-model` and `jails-compiler` are not yours; where a deletion here needs
+a fact from the compiler you ask agent 5 for the function and wait.
 
 ## Baseline
 
@@ -42,20 +40,12 @@ function and wait.
 | `jails-project` | 3,932 | 7,285 |
 | `jails-report` | 3,403 | 5,376 |
 | `jails-support` | 2,569 | 5,388 |
-| `jails-java` | 752 | 1,505 |
 
 Re-measure with the method in `docs/50-simplify.md` before quoting.
 
 ## Steps
 
-**S53.8 -- Fold the leaves.** `jails-spec` holds where a project is and what
-builds it, and nothing else; `jails-java` is the Java reader and the template
-renderer, used by `jails-project` and the binary. When S53.5-S53.7 are done,
-measure what each leaf still exports and fold `jails-java` into
-`jails-project` if nothing below `jails-project` needs it. `jails-codemod`
-stays separate whatever happens: it is dependency-free so both ladders can
-reach it. Fewer crates is not the goal (`docs/00-contracts.md` §6.1); a crate
-whose reason is gone is.
+Every step is closed. The Traps below outlive them.
 
 ## Traps
 

@@ -9,8 +9,8 @@
 //! inverse of `add`. [`dispatch`] splices one line above `return commands;`,
 //! which is how `g command` registers itself in a project's CLI dispatcher
 //! rather than leaving a paste instruction in a Javadoc. [`annotate`] is the
-//! `@Import` splice and [`tidy`] the import normaliser; `jails-java`
-//! re-exports them.
+//! `@Import` splice and [`tidy`] the import normaliser; the crates that edit
+//! Java reach them directly.
 //!
 //! [`text`] is the scanner all of them lean on: the source with its comments
 //! and literals blanked to spaces of the same length, so a scan cannot be

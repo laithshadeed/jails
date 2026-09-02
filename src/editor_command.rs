@@ -225,11 +225,11 @@ fn source_symbols(project: &model::Project, tests: bool) -> Vec<Symbol> {
     } else {
         "src/main/java"
     });
-    jails_java::java::source_files(&source_root)
+    jails_project::java::source_files(&source_root)
         .into_iter()
         .filter_map(|path| {
             let source = std::fs::read_to_string(&path).ok()?;
-            let info = jails_java::java::type_info(&source)?;
+            let info = jails_project::java::type_info(&source)?;
             let qualified = if info.package.is_empty() {
                 info.name.clone()
             } else {

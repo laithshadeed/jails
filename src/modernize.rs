@@ -47,7 +47,7 @@ pub(crate) fn run(invocation: Invocation) -> Result<()> {
             sources.sql.push(found);
         }
     }
-    for absolute in jails_java::java::source_files(&root.join("src")) {
+    for absolute in jails_project::java::source_files(&root.join("src")) {
         let Ok(relative) = absolute.strip_prefix(root) else {
             continue;
         };

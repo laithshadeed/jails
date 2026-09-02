@@ -37,7 +37,7 @@ pub(crate) fn run(old: &str, new: &str, force: bool, invocation: Invocation) -> 
     let mut rewrites: BTreeMap<PathBuf, (String, PathBuf)> = BTreeMap::new();
     let mut occurrences = 0_usize;
     let mut in_literals = 0_usize;
-    for absolute in jails_java::java::source_files(&root.join("src")) {
+    for absolute in jails_project::java::source_files(&root.join("src")) {
         let Ok(text) = std::fs::read_to_string(&absolute) else {
             continue;
         };

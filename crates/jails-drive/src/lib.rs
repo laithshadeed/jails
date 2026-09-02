@@ -30,8 +30,8 @@ pub mod testing;
 // `crate::…` wherever it ships. Each symbol is taken from the crate that owns
 // it.
 pub(crate) use jails_codemod::dispatch::is_dispatcher;
-pub(crate) use jails_java::{classfile, java};
-pub(crate) use jails_project::{compose, maven, model, pom};
+
+pub(crate) use jails_project::{classfile, compose, java, maven, model, pom};
 pub(crate) use jails_report::why;
 pub(crate) use jails_spec::build;
 pub(crate) use jails_spec::spec::paths::find_project_root;

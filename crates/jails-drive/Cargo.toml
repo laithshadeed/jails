@@ -8,7 +8,6 @@ clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 jails-codemod.workspace = true
-jails-java.workspace = true
 jails-project.workspace = true
 jails-report.workspace = true
 jails-spec.workspace = true

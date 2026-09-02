@@ -183,7 +183,7 @@ pub(crate) fn stranded_reader_references(
             let Ok(source) = std::fs::read_to_string(&path) else {
                 continue;
             };
-            let blanked = jails_java::java::blanked(&source);
+            let blanked = jails_project::java::blanked(&source);
             let relative = path
                 .strip_prefix(root)
                 .unwrap_or(&path)

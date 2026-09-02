@@ -3,7 +3,7 @@
 # `simplify-sol.md`'s G0 wants a single answer to "is this green", and an
 # unpinned compiler makes that answer depend on the day. It already did:
 # `cargo clippy --workspace --all-targets -- -D warnings` was red on 1.94 over
-# `nonminimal_bool` in `jails-java`, code nobody had edited, because
+# `nonminimal_bool` in the Java reader, code nobody had edited, because
 # `is_none_or` stabilised and a new lint started firing. A gate that can go red
 # from someone else's release is not a gate you can read.
 #

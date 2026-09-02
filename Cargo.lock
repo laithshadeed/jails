@@ -213,7 +213,6 @@ dependencies = [
  "jails-compiler",
  "jails-contracts",
  "jails-drive",
- "jails-java",
  "jails-model",
  "jails-project",
  "jails-report",
@@ -254,7 +253,6 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "jails-codemod",
- "jails-java",
  "jails-project",
  "jails-report",
  "jails-spec",
@@ -262,14 +260,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
-]
-
-[[package]]
-name = "jails-java"
-version = "0.1.0"
-dependencies = [
- "jails-codemod",
- "jails-support",
 ]
 
 [[package]]
@@ -287,7 +277,6 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "jails-codemod",
- "jails-java",
  "jails-model",
  "jails-spec",
  "jails-support",
@@ -305,7 +294,6 @@ name = "jails-report"
 version = "0.1.0"
 dependencies = [
  "clap",
- "jails-java",
  "jails-model",
  "jails-project",
  "jails-spec",

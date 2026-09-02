@@ -23,7 +23,6 @@ jails-codemod = { path = "crates/jails-codemod" }
 jails-compiler = { path = "crates/jails-compiler" }
 jails-contracts = { path = "crates/jails-contracts" }
 jails-drive = { path = "crates/jails-drive" }
-jails-java = { path = "crates/jails-java" }
 jails-model = { path = "crates/jails-model" }
 jails-project = { path = "crates/jails-project" }
 jails-report = { path = "crates/jails-report" }
@@ -56,7 +55,6 @@ jails-report.workspace = true
 jails-codemod.workspace = true
 jails-project.workspace = true
 jails-spec.workspace = true
-jails-java.workspace = true
 jails-model = { workspace = true, features = ["cli"] }
 jails-contracts.workspace = true
 jails-compiler.workspace = true

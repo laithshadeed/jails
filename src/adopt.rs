@@ -98,7 +98,7 @@ fn subpackages(project: &Project) -> Vec<String> {
     let base = format!("src/main/java/{}", project.base().replace('.', "/"));
     let root = project.root().join(&base);
     let mut names = BTreeSet::new();
-    for absolute in jails_java::java::source_files(&root) {
+    for absolute in jails_project::java::source_files(&root) {
         let Ok(relative) = absolute.strip_prefix(&root) else {
             continue;
         };
