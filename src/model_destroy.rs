@@ -4,7 +4,7 @@ use crate::ArtifactKind;
 use crate::Invocation;
 use crate::cli::StoragePolicy;
 use crate::model_generate::{PreparedMutation, finish_generation};
-use crate::model_resource::java_to_label;
+use jails_model::field_syntax::java_to_label;
 use jails_model::{
     Evolution, EvolutionStep, Facet, OperationKind, StableId, StorageRetirementPolicy, UnitKind,
 };

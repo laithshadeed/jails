@@ -3,6 +3,7 @@
 use crate::Invocation;
 use crate::cli::{GenerateArgs, ResourceFieldCommand};
 use crate::model_generate::{PreparedMutation, finish_generation, parse_field};
+use jails_model::field_syntax::java_to_label;
 use jails_model::{Evolution, EvolutionStep, Facet, FieldAddPolicy, FieldId};
 use jails_support::{Failure, Result};
 
@@ -92,23 +93,6 @@ pub(crate) fn run(command: ResourceFieldCommand, invocation: Invocation) -> Resu
             invocation,
         ),
     }
-}
-
-pub(crate) fn java_to_label(value: &str) -> String {
-    let mut output = String::new();
-    for (index, character) in value.chars().enumerate() {
-        if character.is_ascii_uppercase() {
-            if index > 0 {
-                output.push('_');
-            }
-            output.push(character.to_ascii_lowercase());
-        } else if character == '-' {
-            output.push('_');
-        } else {
-            output.push(character);
-        }
-    }
-    output
 }
 
 pub(crate) struct AddFieldRequest {

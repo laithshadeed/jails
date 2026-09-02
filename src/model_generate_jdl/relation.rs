@@ -19,7 +19,7 @@ use crate::Invocation;
 use crate::cli::GenerateArgs;
 use crate::model_command::parse;
 use crate::model_generate::{PreparedMutation, finish_generation};
-use crate::model_resource::java_to_label;
+use jails_model::field_syntax::java_to_label;
 use jails_model::{Entity, Evolution, Facet};
 use jails_support::{Failure, Result};
 

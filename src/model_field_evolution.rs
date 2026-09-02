@@ -6,8 +6,8 @@ mod jdl_edit;
 use crate::Invocation;
 use crate::cli::{ColumnRenamePolicy as CliColumnPolicy, TypeChangeStrategy as CliTypeStrategy};
 use crate::model_generate::{PreparedMutation, finish_generation, normalize_type};
-use crate::model_resource::java_to_label;
 use jails_contracts::ProjectPath;
+use jails_model::field_syntax::java_to_label;
 use jails_model::{
     ColumnRenamePolicy, Evolution, EvolutionStep, FieldEvolutionPolicy, FieldId, StableId,
     TypeChangeStrategy,

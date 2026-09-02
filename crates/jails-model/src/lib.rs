@@ -19,6 +19,7 @@ mod ejection;
 mod enum_constant;
 mod evolution;
 mod facet;
+pub mod field_syntax;
 mod guard;
 mod id;
 mod index;

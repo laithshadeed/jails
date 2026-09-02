@@ -2,7 +2,7 @@
 
 use crate::ArtifactKind;
 use crate::cli::GenerateArgs;
-use crate::model_resource::java_to_label;
+use jails_model::field_syntax::java_to_label;
 use jails_model::{ComponentKind, UnitKind};
 use jails_support::{Failure, Result};
 use std::path::Path;
@@ -106,7 +106,7 @@ pub(super) fn v1_declaration(
         members.push(format!(
             "  variant {variant} @id(var_{}_{})",
             id,
-            crate::model_resource::java_to_label(variant)
+            jails_model::field_syntax::java_to_label(variant)
         ));
     }
     if args.kind == ArtifactKind::Cases {

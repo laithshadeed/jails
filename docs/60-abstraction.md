@@ -110,7 +110,7 @@ lists. Either way there is one list and a `label()` per member.
 `jails-spec` then holds two things the model does not: where a project is
 (`find_project_root`, `build`) and the compact field syntax's parser -- and
 the parser's output is a model `Field`, so it moves next to
-`BuiltinType::from_alias` (S53.4, S54.5). What remains of `jails-spec` is
+`BuiltinType::from_alias`. What remains of `jails-spec` is
 small enough to question.
 
 **Exit:** one definition of each set; the tests that check two copies agree
@@ -248,7 +248,6 @@ BASE/OURS/THEIRS rule; `PlanBundle`, `PlannedOperation` (six kinds is right),
 
 | item | plan | step |
 |---|---|---|
-| S60.2 one vocabulary | 51, 53, 54 | S51.2 moves survivors; S53.4 and S54.5 move the field parser; the `Layer` triple is S53.1's first deletion |
 | S60.3 `Recipe` | 55 | S55.2 (the shell) and S55.5 (packs as data) are its first two rungs |
 | S60.4 the snapshot | 53 | S53.2; the one Maven reader is `jails-workspace/src/documents/pom.rs`, which `jails-project` re-exports -- S60.4 flips that edge, so the reader sits in the crate that produces `ProjectFacts` |
 | S60.7 managed output in `src/` | none yet | after S60.2 (one owner for the §9.7 table) and S60.4 (capture is the one reader); needs `jails model relocate` |

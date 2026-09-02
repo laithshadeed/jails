@@ -55,7 +55,7 @@ pub(crate) fn add(
         let label = capability.label();
         let identity_label = name.as_ref().map_or_else(
             || label.to_string(),
-            |name| format!("{label}_{}", crate::model_resource::java_to_label(name)),
+            |name| format!("{label}_{}", jails_model::field_syntax::java_to_label(name)),
         );
         let id = CapabilityId::parse(format!("cap_{identity_label}")).map_err(Failure::Told)?;
         if let Some(existing) = current

@@ -700,15 +700,17 @@ tenancy without the word "tenant" existing in core.
 
 ## Field syntax: case is the rule
 
-`src/model_field_parse.rs` reads `name:type[!?]`. **Lowercase = jails'
-table, capitalised = a type the project owns**, passed through verbatim with
-no import. `normalize_type` canonicalises the CLI's aliases (`String`,
-`text`, `bool`) on the way in, and `jdl 1` refuses a bare alias by name
-through `BuiltinType::from_alias`; `Currency` is deliberately not a builtin,
-because an enum of the currencies a project deals in is an ordinary thing to
-generate. There is one parser of this syntax; a second is the repository's
-most reliable drift generator, which is why `docs/60-abstraction.md` S60.2
-moves it beside the alias table.
+`crates/jails-model/src/field_syntax.rs` reads `name:type[!?]`. **Lowercase
+= jails' table, capitalised = a type the project owns**, passed through
+verbatim with no import. `normalize_type` canonicalises the CLI's aliases
+(`String`, `text`, `bool`) on the way in, and `jdl 1` refuses a bare alias by
+name through `BuiltinType::from_alias`; `Currency` is deliberately not a
+builtin, because an enum of the currencies a project deals in is an ordinary
+thing to generate. **It lives beside the alias table it answers to**, in the
+crate that owns every closed vocabulary, because a second parser of this
+syntax is the repository's most reliable drift generator. Its refusals are
+`String`s and the binary wraps them at the call site, which is how a `?`
+through `jails_support::Failure` keeps the message byte for byte.
 
 The suffix sets optionality: `!` non-blank, `?` nullable, bare non-null.
 `?` emits an `Optional<T>` component, and the compact constructor normalises

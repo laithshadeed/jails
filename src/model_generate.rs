@@ -1,8 +1,6 @@
 //! The one mutation pipeline, and the familiar generation syntax in front of it.
 
-#[path = "model_field_parse.rs"]
-mod field_parse;
-pub(crate) use field_parse::{normalize_type, parse_field};
+pub(crate) use jails_model::field_syntax::{ParsedField, normalize_type, parse_field};
 
 mod profile;
 
@@ -19,9 +17,9 @@ pub(crate) use profile::{
 
 use crate::ArtifactKind;
 use crate::cli::GenerateArgs;
-use crate::model_resource::java_to_label;
 use crate::{Invocation, Output};
 use jails_contracts::{ModelFileUpdate, PlanInput, ProjectPath};
+use jails_model::field_syntax::java_to_label;
 use jails_model::{AppModel, Evolution};
 use jails_support::{Failure, Result};
 use std::path::Path;
@@ -474,26 +472,6 @@ pub(crate) fn operation_field_label(model: &AppModel, entity: &str, token: &str)
         )));
     }
     Ok(parsed.label)
-}
-
-pub(crate) struct ParsedField {
-    pub(crate) label: String,
-    pub(crate) java_name: String,
-    pub(crate) type_name: String,
-    pub(crate) required: bool,
-    pub(crate) non_blank: bool,
-    pub(crate) primary_key: bool,
-    pub(crate) unique: bool,
-    pub(crate) indexed: bool,
-    pub(crate) min_length: Option<u32>,
-    pub(crate) max_length: Option<u32>,
-    pub(crate) positive: bool,
-    pub(crate) nonnegative: bool,
-    pub(crate) scoped: bool,
-    pub(crate) version: bool,
-    pub(crate) default: Option<String>,
-    pub(crate) updated: bool,
-    pub(crate) mapped_column: Option<String>,
 }
 
 pub(crate) fn kind_name(kind: ArtifactKind) -> String {

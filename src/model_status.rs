@@ -138,7 +138,7 @@ pub(crate) fn run(selector: &str, live: Option<Live>, invocation: Invocation) ->
 /// table name is derived rather than remembered, which is the same
 /// derivability that lets `destroy` find what `generate` wrote.
 fn retired(snapshot: &jails_contracts::WorkspaceSnapshot, selector: &str) -> Report {
-    let table = jails_model::plural_snake_case(&crate::model_resource::java_to_label(selector));
+    let table = jails_model::plural_snake_case(&jails_model::field_syntax::java_to_label(selector));
     let mut migrations = Vec::new();
     let mut created = false;
     let mut dropped = false;

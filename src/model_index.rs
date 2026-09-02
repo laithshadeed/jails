@@ -3,7 +3,7 @@
 use crate::Invocation;
 use crate::ResourceIndexCommand;
 use crate::model_generate::{PreparedMutation, finish_generation};
-use crate::model_resource::java_to_label;
+use jails_model::field_syntax::java_to_label;
 use jails_model::{Evolution, EvolutionStep, Facet, IndexId, StableId};
 use jails_support::{Failure, Result};
 use jails_support::{hex, sha256};

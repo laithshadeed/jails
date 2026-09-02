@@ -109,7 +109,7 @@ pub(crate) fn rename_entity(
     .map_err(jdl_edit_failure)?;
     if let Some(table) = pinned_table {
         let cst = jails_model::parse_jdl_cst(&renamed).map_err(jdl_edit_failure)?;
-        let owner = crate::model_resource::java_to_label(next_java_name);
+        let owner = jails_model::field_syntax::java_to_label(next_java_name);
         if !cst
             .members
             .iter()

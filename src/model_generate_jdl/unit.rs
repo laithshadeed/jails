@@ -65,7 +65,7 @@ fn run_v1(
                 .to_string(),
         ));
     }
-    let label = crate::model_resource::java_to_label(&stem);
+    let label = jails_model::field_syntax::java_to_label(&stem);
     let component_id = ComponentId::parse(format!("cmp_{}_{}", kind.0.replace('-', "_"), label))
         .map_err(Failure::Told)?;
     let unit_id = kind

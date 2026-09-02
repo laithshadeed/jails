@@ -1,6 +1,6 @@
 //! Lossless edits to compact field declarations in the JDL authoring source.
 
-use crate::model_resource::java_to_label;
+use jails_model::field_syntax::java_to_label;
 use jails_support::{Failure, Result};
 
 pub(crate) fn rename_field(

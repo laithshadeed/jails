@@ -1,16 +1,23 @@
-//! Compact field syntax shared by canonical CLI frontends.
+//! The compact field syntax: `name:type[!?]` and its `@` markers.
+//!
+//! **One parser, and it lives beside the alias table it answers to.**
+//! `normalize_type` canonicalizes the CLI's Java spellings onto the builtin
+//! names that [`crate::BuiltinType::from_alias`] refuses a bare alias by, and
+//! the case rule -- lowercase is jails' table, capitalised is a type the
+//! project owns -- is decided here and nowhere else. A second parser of this
+//! syntax is the repository's most reliable drift generator, which is why the
+//! binary calls this one rather than keeping its own.
+//!
+//! A refusal is a `String`, the way every refusal in this crate is; the
+//! binary wraps it in its own failure type at the call site.
 
-use super::ParsedField;
-use crate::model_resource::java_to_label;
-use jails_support::{Failure, Result};
-
-pub(crate) fn parse_field(token: &str) -> Result<ParsedField> {
+pub fn parse_field(token: &str) -> Result<ParsedField, String> {
     let mut pieces = token.split('@');
     let shape = pieces.next().unwrap_or_default();
     let (name, mut type_name) = shape.split_once(':').ok_or_else(|| {
-        Failure::Told(format!(
+        format!(
             "`{token}` is not a field declaration.\n       fix: use `name:type`, optionally followed by `!`, `?`, `@pk`, `@unique`, or `@index`"
-        ))
+        )
     })?;
     let name = name.trim();
     type_name = type_name.trim();
@@ -26,9 +33,9 @@ pub(crate) fn parse_field(token: &str) -> Result<ParsedField> {
         (true, false)
     };
     if name.is_empty() || type_name.is_empty() {
-        return Err(Failure::Told(format!(
+        return Err(format!(
             "`{token}` has an empty field name or type\n       fix: provide both sides of `name:type`"
-        )));
+        ));
     }
     let mut primary_key = false;
     let mut unique = false;
@@ -52,46 +59,44 @@ pub(crate) fn parse_field(token: &str) -> Result<ParsedField> {
             "updated" => set_flag(token, marker, &mut updated)?,
             marker if argument(marker, "column").is_some() || argument(marker, "map").is_some() => {
                 if mapped_column.is_some() {
-                    return Err(Failure::Told(format!(
+                    return Err(format!(
                         "`{token}` names its physical column more than once.\n       fix: keep one `@column(name)` binding"
-                    )));
+                    ));
                 }
                 let value = argument(marker, "column")
                     .or_else(|| argument(marker, "map"))
                     .expect("guarded marker argument");
                 let value = decode_string_argument(value).map_err(|fix| {
-                    Failure::Told(format!(
-                        "`@{marker}` has an invalid physical column.\n       fix: {fix}"
-                    ))
+                    format!("`@{marker}` has an invalid physical column.\n       fix: {fix}")
                 })?;
                 mapped_column = Some(value);
             }
             marker if argument(marker, "default").is_some() => {
                 if default.is_some() {
-                    return Err(Failure::Told(format!(
+                    return Err(format!(
                         "`{token}` repeats `@default`.\n       fix: keep one typed default expression"
-                    )));
+                    ));
                 }
                 let value = argument(marker, "default").expect("guarded marker argument");
                 if value.trim().is_empty() {
-                    return Err(Failure::Told(
+                    return Err(
                         "`@default()` has no value.\n       fix: provide a scalar, enum constant, uuid7(), identity(), now(), or today()"
                             .to_string(),
-                    ));
+                    );
                 }
                 default = Some(value.trim().to_string());
             }
             other => {
-                return Err(Failure::Told(format!(
+                return Err(format!(
                     "`@{other}` is not represented by the canonical field model.\n       fix: use a documented field marker such as `@pk`, `@scope`, `@positive`, or `@column(name)`"
-                )));
+                ));
             }
         }
     }
     if positive && nonnegative {
-        return Err(Failure::Told(format!(
+        return Err(format!(
             "`{token}` is both positive and nonnegative.\n       fix: keep exactly one numeric constraint"
-        )));
+        ));
     }
     Ok(ParsedField {
         label: java_to_label(name),
@@ -114,11 +119,11 @@ pub(crate) fn parse_field(token: &str) -> Result<ParsedField> {
     })
 }
 
-fn set_flag(token: &str, marker: &str, value: &mut bool) -> Result<()> {
+fn set_flag(token: &str, marker: &str, value: &mut bool) -> Result<(), String> {
     if std::mem::replace(value, true) {
-        return Err(Failure::Told(format!(
+        return Err(format!(
             "`{token}` repeats `@{marker}`.\n       fix: write each field marker once"
-        )));
+        ));
     }
     Ok(())
 }
@@ -130,7 +135,7 @@ fn argument<'a>(marker: &'a str, name: &str) -> Option<&'a str> {
         .and_then(|rest| rest.strip_suffix(')'))
 }
 
-fn decode_string_argument(value: &str) -> std::result::Result<String, &'static str> {
+fn decode_string_argument(value: &str) -> Result<String, &'static str> {
     const EMPTY_COLUMN_FIX: &str = "provide a non-empty column name";
     let value = value.trim();
     if value.is_empty() {
@@ -146,44 +151,42 @@ fn decode_string_argument(value: &str) -> std::result::Result<String, &'static s
 fn parse_length_shape<'a>(
     token: &str,
     type_name: &'a str,
-) -> Result<(&'a str, Option<u32>, Option<u32>)> {
+) -> Result<(&'a str, Option<u32>, Option<u32>), String> {
     let Some(open) = type_name.find('(') else {
         return Ok((type_name, None, None));
     };
     if !type_name.ends_with(')') {
-        return Err(Failure::Told(format!(
+        return Err(format!(
             "`{token}` has an unclosed length range.\n       fix: write a range such as `string!(1..200)`"
-        )));
+        ));
     }
     let bounds = &type_name[open + 1..type_name.len() - 1];
     let (min, max) = bounds.split_once("..").ok_or_else(|| {
-        Failure::Told(format!(
+        format!(
             "`{bounds}` is not a length range.\n       fix: use `min..max`, `min..`, or `..max`"
-        ))
+        )
     })?;
     let parse = |value: &str| {
         if value.trim().is_empty() {
             Ok(None)
         } else {
             value.trim().parse::<u32>().map(Some).map_err(|_| {
-                Failure::Told(format!(
-                    "`{value}` is not a length bound.\n       fix: use a non-negative integer"
-                ))
+                format!("`{value}` is not a length bound.\n       fix: use a non-negative integer")
             })
         }
     };
     let min = parse(min)?;
     let max = parse(max)?;
     if min.is_none() && max.is_none() {
-        return Err(Failure::Told(
+        return Err(
             "a length range needs at least one bound.\n       fix: use `min..max`, `min..`, or `..max`"
                 .to_string(),
-        ));
+        );
     }
     Ok((&type_name[..open], min, max))
 }
 
-pub(crate) fn normalize_type(value: &str) -> String {
+pub fn normalize_type(value: &str) -> String {
     match value {
         "text" | "String" => "string",
         "integer" | "Integer" => "int",
@@ -211,6 +214,44 @@ pub(crate) fn normalize_type(value: &str) -> String {
         other => other,
     }
     .to_string()
+}
+
+/// One field, as the compact syntax spelled it.
+pub struct ParsedField {
+    pub label: String,
+    pub java_name: String,
+    pub type_name: String,
+    pub required: bool,
+    pub non_blank: bool,
+    pub primary_key: bool,
+    pub unique: bool,
+    pub indexed: bool,
+    pub min_length: Option<u32>,
+    pub max_length: Option<u32>,
+    pub positive: bool,
+    pub nonnegative: bool,
+    pub scoped: bool,
+    pub version: bool,
+    pub default: Option<String>,
+    pub updated: bool,
+    pub mapped_column: Option<String>,
+}
+
+pub fn java_to_label(value: &str) -> String {
+    let mut output = String::new();
+    for (index, character) in value.chars().enumerate() {
+        if character.is_ascii_uppercase() {
+            if index > 0 {
+                output.push('_');
+            }
+            output.push(character.to_ascii_lowercase());
+        } else if character == '-' {
+            output.push('_');
+        } else {
+            output.push(character);
+        }
+    }
+    output
 }
 
 #[cfg(test)]

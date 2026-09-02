@@ -26,9 +26,9 @@ The `CLAUDE.md` entries for these crates.
 
 ## What you do not touch
 
-`jails-spec` is agent 1's; when its closed vocabularies move into
-`jails-model` (`docs/60-abstraction.md` S60.2) what is left is yours to
-*shrink* under S53.4. `jails-model` and `jails-compiler` are not yours;
+`jails-spec` is agent 1's; its closed vocabularies have moved into
+`jails-model` (`docs/60-abstraction.md` S60.2) and what is left is yours to
+*shrink* under S53.8. `jails-model` and `jails-compiler` are not yours;
 where a deletion here needs a fact from the compiler you ask agent 5 for the
 function and wait.
 
@@ -47,14 +47,9 @@ Re-measure with the method in `docs/50-simplify.md` before quoting.
 
 ## Steps
 
-**S53.4 -- One field-syntax parser.** `src/model_field_parse.rs` is the one
-parser of `name:type[!?]` and `BuiltinType::from_alias` the one alias table.
-Keep it that way: a second parser is the repository's most reliable drift
-generator.
-
-**S53.8 -- Fold the leaves.** `jails-spec` holds the closed CLI vocabularies
-and where a project is; `jails-java` is the Java reader and the template
-renderer, used by `jails-project` and the binary. When S53.4-S53.7 are done,
+**S53.8 -- Fold the leaves.** `jails-spec` holds where a project is and what
+builds it, and nothing else; `jails-java` is the Java reader and the template
+renderer, used by `jails-project` and the binary. When S53.5-S53.7 are done,
 measure what each leaf still exports and fold `jails-java` into
 `jails-project` if nothing below `jails-project` needs it. `jails-codemod`
 stays separate whatever happens: it is dependency-free so both ladders can

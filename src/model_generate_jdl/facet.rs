@@ -5,7 +5,7 @@ use crate::Invocation;
 use crate::cli::GenerateArgs;
 use crate::model_command::parse;
 use crate::model_generate::{PreparedMutation, finish_generation};
-use crate::model_resource::java_to_label;
+use jails_model::field_syntax::java_to_label;
 use jails_model::{EntityId, Evolution, Facet};
 use jails_support::{Failure, Result};
 
@@ -109,7 +109,7 @@ fn refuse_unindexable(kind: Kind, entity: &jails_model::Entity, fields: &[String
         let name = token
             .split_once(':')
             .map_or(token.as_str(), |(name, _)| name);
-        let label = crate::model_resource::java_to_label(name);
+        let label = jails_model::field_syntax::java_to_label(name);
         let Some(field) = entity.fields.iter().find(|field| field.label == label) else {
             return Err(Failure::Told(format!(
                 "`{}` has no component `{name}`.\n       fix: name one of {}",
@@ -420,7 +420,7 @@ fn remove_projection(source: &str, entity_java_name: &str, projection: &str) -> 
     let mut edited = source.to_string();
     loop {
         let cst = jails_model::parse_jdl_cst(&edited).map_err(super::jdl_edit_failure)?;
-        let owner = crate::model_resource::java_to_label(entity_java_name);
+        let owner = jails_model::field_syntax::java_to_label(entity_java_name);
         let Some(member) = cst
             .members
             .iter()

@@ -24,8 +24,8 @@ not this pass unless listed below.
 `src/model_generate_jdl*` and the other frontends are agent 2's this time,
 because their restructuring is about the binary's pipeline rather than the
 language; you supply the `jails-model` functions it needs. The
-compiler is agent 5's. Where S53.4 lands the field-syntax parser in your
-crate, agent 3 writes the move and you review it.
+compiler is agent 5's. The field-syntax parser has landed in your crate as
+`field_syntax`, beside the alias table it answers to.
 
 ## Baseline
 
@@ -35,11 +35,6 @@ crate, agent 3 writes the move and you review it.
 | `linker/**` | 3,458 |
 
 ## Steps
-
-**S54.5 -- The field-syntax parser.** `src/model_field_parse.rs` produces a
-model field and `BuiltinType::from_alias` is the one alias table; if the
-parser moves into this crate (`docs/60-abstraction.md` S60.2), it moves as
-is.
 
 ## Traps
 

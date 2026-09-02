@@ -63,7 +63,7 @@ Three properties of that table are the ones to defend:
 - **The aliases in `BuiltinSemantics` are the CLI's, and `jdl 1` refuses them
   by name.** `text`, `String`, `bool` and the other Java spellings are
   canonicalised on the way in by the compact CLI syntax
-  (`src/model_field_parse.rs::normalize_type`), while `jdl 1` matches
+  (`jails_model::field_syntax::normalize_type`), while `jdl 1` matches
   `BuiltinType::from_token` on the canonical token alone and
   `TypeRef::parse` refuses a bare alias naming the canonical token. Only the
   bare one: `com.example.Path` is a project type whose final segment collides.

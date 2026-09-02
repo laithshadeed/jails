@@ -22,8 +22,8 @@ pub(crate) use render::{java_type_name, relation_member_name, render_v1_field_li
 use crate::ArtifactKind;
 use crate::cli::GenerateArgs;
 use crate::model_generate::{ParsedField, PreparedMutation, finish_generation, parse_field};
-use crate::model_resource::java_to_label;
 use crate::{Invocation, model_generate};
+use jails_model::field_syntax::java_to_label;
 use jails_model::{EntityId, Evolution, OperationId};
 use jails_support::{Failure, Result};
 use std::collections::BTreeSet;
