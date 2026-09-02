@@ -1,6 +1,6 @@
 package {{pkg}};
 
-{{imports}}/**
+/**
  * What every {{record}}Repository must do, whichever one it is.
  *
  * <p>Called by the in-memory adapter's unit test and by the JDBC adapter's

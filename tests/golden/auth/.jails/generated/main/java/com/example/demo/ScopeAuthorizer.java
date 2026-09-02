@@ -1,5 +1,7 @@
 package com.example.demo;
 
+import static org.springframework.http.HttpStatus.NOT_FOUND;
+
 import java.util.Arrays;
 import java.util.Objects;
 import org.springframework.core.env.Environment;
@@ -7,8 +9,6 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ResponseStatusException;
-
-import static org.springframework.http.HttpStatus.NOT_FOUND;
 
 /**
  * Enforces an explicit request scope without knowing any application domain.

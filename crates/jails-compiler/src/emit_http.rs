@@ -5,7 +5,7 @@ mod proof;
 use crate::CompileError;
 use crate::emit_companion_test::JAVA_TEST_ROOT;
 use crate::emit_java::{
-    JAVA_ROOT, domain_import, entity, java_type, primary_key, render, with_suffix,
+    JAVA_ROOT, JavaUnit, domain_import, entity, java_type, primary_key, with_suffix,
 };
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile, RenderedTree};
 use jails_model::{AppModel, Operation, OperationKind, Package, StableId};
@@ -393,7 +393,7 @@ fn lower(
         "@RestController\npublic final class {type_name} {{\n\n    private final {port_type} operation;{scope_member}\n\n    public {type_name}({port_type} operation{scope_parameter}) {{\n        this.operation = operation;{scope_assignment}\n    }}\n\n    @RequestMapping(path = \"{path}\", method = RequestMethod.{method})\n    public {return_type} execute({parameters}) {{\n{context_setup}{expected_setup}        return {invocation};\n    }}\n{expected_parser}}}"
     );
     let artifact_id = format!("art_{}_http", operation.id.as_str());
-    let rendered = render(&package, &imports, &body, &artifact_id);
+    let rendered = JavaUnit::new(&package, &imports, &body).render(&artifact_id);
     let package_path = package.replace('.', "/");
     let path = ProjectPath::parse(format!("{JAVA_ROOT}/{package_path}/{type_name}.java"))
         .map_err(CompileError::new)?;
@@ -471,7 +471,9 @@ fn lower(
         RenderedFile {
             kind: FileKind::JavaTest,
             mode: FileMode::Regular,
-            bytes: render(&package, &test_imports, &test_body, &test_artifact).into_bytes(),
+            bytes: JavaUnit::new(&package, &test_imports, &test_body)
+                .render(&test_artifact)
+                .into_bytes(),
             provenance: Provenance {
                 artifact_id: test_artifact,
                 ejection_id: None,

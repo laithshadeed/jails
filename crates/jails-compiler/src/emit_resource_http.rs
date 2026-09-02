@@ -19,7 +19,7 @@
 
 use crate::CompileError;
 use crate::emit_java::{
-    JAVA_ROOT, Unit, domain_import, import_declared_type, java_type, primary_key, render,
+    JAVA_ROOT, JavaUnit, Unit, domain_import, import_declared_type, java_type, primary_key,
     with_suffix,
 };
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
@@ -563,7 +563,7 @@ fn unit(
     root: &str,
     compiler_pass: &str,
 ) -> Result<Unit, CompileError> {
-    let rendered = render(&package, &imports, &body, &artifact_id);
+    let rendered = JavaUnit::new(&package, &imports, &body).render(&artifact_id);
     let package_path = package.replace('.', "/");
     let path = ProjectPath::parse(format!("{root}/{package_path}/{type_name}.java"))
         .map_err(CompileError::new)?;

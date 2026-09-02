@@ -6,6 +6,7 @@
 //! cannot be transferred away from the compiler.
 
 use crate::emit_companion_test::JAVA_TEST_ROOT;
+use crate::emit_java::JavaUnit;
 use crate::{CompileError, emit_java};
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
 use jails_model::{AppModel, Entity, Field, Package, StableId};
@@ -395,7 +396,7 @@ fn unit(
     compiler_pass: &str,
     entity: &Entity,
 ) -> Result<emit_java::Unit, CompileError> {
-    let rendered = emit_java::render(&package, &imports, &body, &artifact_id);
+    let rendered = JavaUnit::new(&package, &imports, &body).render(&artifact_id);
     let root = match kind {
         FileKind::JavaMain => emit_java::JAVA_ROOT,
         FileKind::JavaTest => JAVA_TEST_ROOT,

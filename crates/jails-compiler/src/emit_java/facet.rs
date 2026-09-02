@@ -160,7 +160,7 @@ pub(super) fn lower_facet(
     };
     imports.remove(&format!("{package}.{type_name}"));
     let artifact_id = format!("art_{}_{}", entity.id.as_str(), facet_name(facet));
-    let rendered = render(&package, &imports, &body, &artifact_id);
+    let rendered = JavaUnit::new(&package, &imports, &body).render(&artifact_id);
     let package_path = package.replace('.', "/");
     let path = ProjectPath::parse(format!("{JAVA_ROOT}/{package_path}/{type_name}.java"))
         .map_err(CompileError::new)?;

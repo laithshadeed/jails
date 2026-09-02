@@ -17,6 +17,7 @@ pub(in crate::emit_capability) const API_FILES: &[JavaFile] = &[
         suffix: "exception",
         template: crate::template!("spring/api_exception_java.java"),
         before_boot: None,
+        imports: &[],
         source_set: SourceSet::Main,
         class_name: api_exception_class,
         template_class: api_exception_class,
@@ -25,6 +26,7 @@ pub(in crate::emit_capability) const API_FILES: &[JavaFile] = &[
         suffix: "exception_handler",
         template: crate::template!("spring/api_exception_handler_java.java"),
         before_boot: None,
+        imports: &[],
         source_set: SourceSet::Main,
         class_name: api_exception_handler_class,
         template_class: api_exception_handler_class,
@@ -35,6 +37,7 @@ pub(in crate::emit_capability) const API_FILES: &[JavaFile] = &[
         // on Framework 6's `ProblemDetail`.
         template: crate::template!("spring/api_exception_handler_test_java.java"),
         before_boot: None,
+        imports: &[],
         source_set: SourceSet::Test,
         class_name: api_exception_handler_test_class,
         template_class: api_exception_handler_test_class,

@@ -1,6 +1,6 @@
 package {{pkg}};
 
-{{event_import}}{{publisher_import}}import org.springframework.core.annotation.Order;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 /** Kafka destination in the same generic sink chain as provider delivery. */

@@ -1,6 +1,6 @@
 package {{pkg}};
 
-{{event_imports}}{{disabled_import}}{{kafka_testcontainers_import}}
+
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;

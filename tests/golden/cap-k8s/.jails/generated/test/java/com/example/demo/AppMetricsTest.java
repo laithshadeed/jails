@@ -1,9 +1,9 @@
 package com.example.demo;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * A {@link SimpleMeterRegistry} rather than a Spring context: the thing

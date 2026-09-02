@@ -1,6 +1,7 @@
 //! Standalone main and test source-unit backend.
 
 use crate::CompileError;
+use crate::emit_java::JavaUnit;
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile, RenderedTree};
 use jails_model::{AppModel, SourceUnit, StableId, UnitKind};
 use std::collections::BTreeSet;
@@ -95,7 +96,7 @@ fn lower(
         package,
         type_name,
         FileKind::JavaMain,
-        crate::emit_java::render(package, &main_imports, &main_body, &main_artifact),
+        JavaUnit::new(package, &main_imports, &main_body).render(&main_artifact),
         main_artifact,
         !matches!(source.kind, UnitKind::Interface | UnitKind::Sealed),
         id,
@@ -267,7 +268,7 @@ fn lower_strategy(
         domain,
         name,
         FileKind::JavaMain,
-        crate::emit_java::render(domain, &abi_imports, &abi_body, &abi_artifact),
+        JavaUnit::new(domain, &abi_imports, &abi_body).render(&abi_artifact),
         abi_artifact,
         false,
         id,
@@ -307,12 +308,7 @@ fn lower_strategy(
         &service,
         &evaluator,
         FileKind::JavaMain,
-        crate::emit_java::render(
-            &service,
-            &evaluator_imports,
-            &evaluator_body,
-            &evaluator_artifact,
-        ),
+        JavaUnit::new(&service, &evaluator_imports, &evaluator_body).render(&evaluator_artifact),
         evaluator_artifact,
         true,
         id,
@@ -346,12 +342,8 @@ fn lower_strategy(
             &service,
             &implementation,
             FileKind::JavaMain,
-            crate::emit_java::render(
-                &service,
-                &imports,
-                &implementation_body,
-                &implementation_artifact,
-            ),
+            JavaUnit::new(&service, &imports, &implementation_body)
+                .render(&implementation_artifact),
             implementation_artifact,
             true,
             id,
@@ -599,7 +591,7 @@ fn lower_controller(
         package,
         type_name,
         FileKind::JavaMain,
-        crate::emit_java::render(package, &imports, &controller_body, &controller_artifact),
+        JavaUnit::new(package, &imports, &controller_body).render(&controller_artifact),
         controller_artifact,
         true,
         id,
@@ -625,7 +617,7 @@ fn lower_controller(
         package,
         &format!("{stem}ControllerTest"),
         FileKind::JavaTest,
-        crate::emit_java::render(package, &test_imports, &test_body, &test_artifact),
+        JavaUnit::new(package, &test_imports, &test_body).render(&test_artifact),
         test_artifact,
         true,
         id,

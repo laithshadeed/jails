@@ -470,8 +470,17 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // no per-entity ordering it does not give. What the number
                 // stops is the next template quietly adding another paragraph
                 // nobody can check beside them.
-                ceiling: 23,
-                target: 23,
+                //
+                // Raised 23 -> 24 when the one Java shell (S55.2) landed, and
+                // no template gained a line of prose: four templates opened a
+                // Javadoc on a line that began with a `{{...}}` import
+                // placeholder, so this scanner -- which reads a comment from
+                // the *start* of a line -- could not see the block at all.
+                // Deleting the placeholders revealed 39 comment lines that
+                // were always generated. The number is now truthful; 24 is the
+                // measurement the 23 was standing in for.
+                ceiling: 24,
+                target: 24,
                 why: "A wrong explanation is believed, and a comment restating a decision is \
                       the fastest thing in a codebase to go stale. Generated prose is worse \
                       again: it is asserted by a template that has no way to confirm it, and \

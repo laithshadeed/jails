@@ -16,6 +16,7 @@
 //!   *class*, naming the component, because the constructor call would not
 //!   compile.
 
+use crate::emit_java::JavaUnit;
 use crate::{CompileError, emit_java};
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
 use jails_model::{AppModel, Entity, Field, Package, StableId, TypeRef};
@@ -38,7 +39,7 @@ pub(crate) fn lower(
     let package = crate::emit_java::entity_package(model, entity, Package::Domain);
     let type_name = format!("{}Test", entity.names.java_type);
     let artifact_id = format!("art_{}_test", entity.id.as_str());
-    let rendered = emit_java::render(&package, &imports, &body, &artifact_id);
+    let rendered = JavaUnit::new(&package, &imports, &body).render(&artifact_id);
     let package_path = package.replace('.', "/");
     let path = ProjectPath::parse(format!("{JAVA_TEST_ROOT}/{package_path}/{type_name}.java"))
         .map_err(CompileError::new)?;

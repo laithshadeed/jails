@@ -13,6 +13,7 @@
 //! was declared `not valid`.
 
 use crate::CompileError;
+use crate::emit_java::JavaUnit;
 use jails_contracts::{FileKind, FileMode, Provenance, RenderedFile, RenderedTree};
 use jails_model::{AppModel, Package, Relation, StableId as _, TypeRef};
 use std::collections::BTreeSet;
@@ -167,11 +168,9 @@ fn proof(
         child.names.sql_table,
     );
     let artifact_id = format!("art_{}_association_it", relation.id.as_str());
-    let rendered = crate::emit_capability::imported_test_container(
-        model,
-        &package,
-        crate::emit_java::render(&package, &imports, &body, &artifact_id),
-    );
+    let mut unit = JavaUnit::new(&package, &imports, &body);
+    crate::emit_capability::imported_test_container(model, &mut unit);
+    let rendered = unit.render(&artifact_id);
     let path = jails_contracts::ProjectPath::parse(format!(
         "{JAVA_TEST_ROOT}/{}/{type_name}.java",
         package.replace('.', "/")

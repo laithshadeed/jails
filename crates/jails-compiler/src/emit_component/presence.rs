@@ -12,6 +12,7 @@
 
 use super::{Emitted, Package, java, package};
 use crate::CompileError;
+use crate::emit_java::JavaUnit;
 use jails_contracts::RenderedMigration;
 use jails_model::{AppModel, Component, ComponentKind, StableId};
 use std::collections::BTreeSet;
@@ -36,18 +37,29 @@ pub(super) fn files(
     let adapters = package(model, Package::AdaptersJdbc);
     let table = table(component);
     let port = format!("{name}Presence");
-    let import = |user: &str, owner: &str, class: &str| {
-        if user == owner {
-            String::new()
-        } else {
-            format!("import {owner}.{class};\n")
-        }
-    };
     // The container config is a fact about the *model* here, not a file on
     // disk. It is a different question from whether SQL is reachable: the guard above
     // passes for a project carrying its own JDBC starter, and that project
     // has no `TestcontainersConfig` for this test to import.
-    let support = super::container_support(model, &adapters);
+    let support = super::container_support(model);
+    let mut store = JavaUnit::from_source(
+        &STORE
+            .resolve(templates)?
+            .replace("{{adapters}}", &adapters)
+            .replace("{{name}}", name)
+            .replace("{{table}}", &table)
+            .replace("{{property}}", &component.label.replace('_', "-")),
+    );
+    store.import_from(&app, &port);
+    let mut it = JavaUnit::from_source(
+        &IT.resolve(templates)?
+            .replace("{{adapters}}", &adapters)
+            .replace("{{name}}", name)
+            .replace("{{table}}", &table)
+            .replace("{{container_annotation}}", support.annotation)
+            .replace("{{annotation}}", support.disabled),
+    );
+    support.declare(&mut it);
     Ok(vec![
         java(
             component,
@@ -68,13 +80,7 @@ pub(super) fn files(
             &format!("Jdbc{port}"),
             false,
             true,
-            STORE
-                .resolve(templates)?
-                .replace("{{adapters}}", &adapters)
-                .replace("{{name}}", name)
-                .replace("{{table}}", &table)
-                .replace("{{port_import}}", &import(&adapters, &app, &port))
-                .replace("{{property}}", &component.label.replace('_', "-")),
+            store,
         )?,
         java(
             component,
@@ -83,14 +89,7 @@ pub(super) fn files(
             &format!("Jdbc{port}IT"),
             true,
             true,
-            IT.resolve(templates)?
-                .replace("{{adapters}}", &adapters)
-                .replace("{{name}}", name)
-                .replace("{{table}}", &table)
-                .replace("{{container_import}}", &support.import)
-                .replace("{{container_annotation}}", support.annotation)
-                .replace("{{disabled_import}}", support.disabled_import)
-                .replace("{{annotation}}", support.disabled),
+            it,
         )?,
     ])
 }

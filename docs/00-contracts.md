@@ -218,7 +218,6 @@ against this list.
 | `#[derive(Codec)]` on the test-execution wire | one `serde` protocol (S60.6) | the codec and its derive crate |
 | `Project`/`ProjectContext`/snapshot overlap | a snapshot-backed project view | post-capture disk reads |
 | duplicate Maven XML scanners | one document backend in `jails-workspace` | `pom.rs`'s scanner |
-| per-emitter copies of the Java shell | one `JavaUnit` | the copies |
 
 The largest deletion does not come from shorter render functions. It comes
 from making six questions disappear: which representation is authoritative;

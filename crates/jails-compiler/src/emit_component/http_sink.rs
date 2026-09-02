@@ -18,6 +18,7 @@
 
 use super::{Emitted, Package, java, package};
 use crate::CompileError;
+use crate::emit_java::JavaUnit;
 use jails_contracts::PropertyEntry;
 use jails_model::{
     AppModel, BuiltinType, Component, ComponentReference, Operation, OperationKind,
@@ -76,67 +77,56 @@ pub(super) fn files(
     let property = property(command, component);
     let value = |key: &str, default: &str| format!("${{{property}.{key}{default}}}");
 
-    let sink = SINK
-        .resolve(templates)?
-        .replace("{{pkg}}", &pkg)
-        .replace(
-            "import {{adapters}}.Json;\n",
-            &import(&pkg, &adapters, "Json"),
-        )
-        .replace(
-            "import {{messaging}}.{{event}}Event;\n",
-            &import(&pkg, &events, &event_type),
-        )
-        .replace("{{property}}", &property)
-        .replace("{{url_value}}", &value("url", ""))
-        .replace("{{bearer_token_value}}", &value("bearer-token", ":"))
-        .replace(
-            "{{connect_timeout_value}}",
-            &value("connect-timeout-ms", ":2000"),
-        )
-        .replace(
-            "{{request_timeout_value}}",
-            &value("request-timeout-ms", ":5000"),
-        )
-        .replace("{{name}}", name)
-        .replace("{{usecase}}", usecase)
-        .replace("{{event}}Event", &event_type);
+    let mut sink = JavaUnit::from_source(
+        &SINK
+            .resolve(templates)?
+            .replace("{{pkg}}", &pkg)
+            .replace("{{property}}", &property)
+            .replace("{{url_value}}", &value("url", ""))
+            .replace("{{bearer_token_value}}", &value("bearer-token", ":"))
+            .replace(
+                "{{connect_timeout_value}}",
+                &value("connect-timeout-ms", ":2000"),
+            )
+            .replace(
+                "{{request_timeout_value}}",
+                &value("request-timeout-ms", ":5000"),
+            )
+            .replace("{{name}}", name)
+            .replace("{{usecase}}", usecase)
+            .replace("{{event}}Event", &event_type),
+    );
+    sink.import_from(&adapters, "Json");
+    sink.import_from(&events, &event_type);
 
     let (arguments, disabled, sample_imports) = sample(model, event)?;
+    let mut test = JavaUnit::from_source(
+        &TEST
+            .resolve(templates)?
+            .replace("{{pkg}}", &pkg)
+            .replace(
+                "{{annotation}}",
+                if disabled {
+                    "@Disabled(\"todo: supply a sample for the payload component jails cannot fabricate\")\n"
+                } else {
+                    ""
+                },
+            )
+            .replace("{{args}}", &arguments)
+            .replace("{{name}}", name)
+            .replace("{{event}}Event", &event_type),
+    );
+    test.import_from(&events, &event_type);
+    if disabled {
+        test.import("org.junit.jupiter.api.Disabled");
+    }
     // **What the sample expressions name.** Every one is a builtin literal,
     // but a literal is not import-free: `UUID.fromString(..)` and
     // `Instant.parse(..)` are types, and without these a payload carrying
     // either compiles everywhere except here.
-    let sample_imports = sample_imports
-        .iter()
-        .map(|import| format!("import {import};\n"))
-        .collect::<String>();
-    let test = TEST.resolve(templates)?
-        .replace("{{pkg}}", &pkg)
-        .replace(
-            "import {{messaging}}.{{event}}Event;\n",
-            &import(&pkg, &events, &event_type),
-        )
-.replace("{{imports}}", &sample_imports)
-        .replace(
-            "{{disabled_import}}",
-            if disabled {
-                "import org.junit.jupiter.api.Disabled;\n"
-            } else {
-                ""
-            },
-        )
-        .replace(
-            "{{annotation}}",
-            if disabled {
-                "@Disabled(\"todo: supply a sample for the payload component jails cannot fabricate\")\n"
-            } else {
-                ""
-            },
-        )
-        .replace("{{args}}", &arguments)
-        .replace("{{name}}", name)
-        .replace("{{event}}Event", &event_type);
+    for name in &sample_imports {
+        test.import(name);
+    }
 
     Ok(vec![
         java(
@@ -272,13 +262,4 @@ pub(super) fn properties(
         key: format!("{}.url", property(command, component)),
         value: "https://example.invalid/events".to_string(),
     }])
-}
-
-/// One import line, or nothing when the two packages are the same.
-fn import(user: &str, owner: &str, class: &str) -> String {
-    if user == owner {
-        String::new()
-    } else {
-        format!("import {owner}.{class};\n")
-    }
 }

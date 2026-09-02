@@ -1,6 +1,6 @@
 package {{pkg}};
 
-{{event_imports}}{{disabled_import}}import java.util.ArrayList;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 

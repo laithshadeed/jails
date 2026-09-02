@@ -1,5 +1,7 @@
 package com.example.demo.adapters;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -9,8 +11,6 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.testcontainers.containers.GenericContainer;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Against a real Redis, because the behaviour worth testing is Redis's.

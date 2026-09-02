@@ -20,6 +20,7 @@
 
 use super::{Emitted, Package, java, package};
 use crate::CompileError;
+use crate::emit_java::JavaUnit;
 use jails_model::{AppModel, Component};
 
 const VERIFIER: crate::Template = crate::template!("spring/webhook_verifier_java.java");
@@ -42,13 +43,18 @@ pub(super) fn files(
         .as_ref()
         .map(|route| route.path.clone())
         .unwrap_or_else(|| property.clone());
-    // Empty when the two packages are the same, because importing a sibling is
-    // a compile error -- which is what `--package ''` produces.
-    let verifier_import = if web == base {
-        String::new()
-    } else {
-        format!("import {base}.{name}Verifier;\n")
-    };
+    let mut controller = JavaUnit::from_source(
+        &CONTROLLER
+            .resolve(templates)?
+            .replace("{{web}}", &web)
+            .replace("{{name}}", name)
+            .replace("{{path}}", &path)
+            .replace("{{timestamp_header}}", &format!("X-{name}-Timestamp"))
+            .replace("{{signature_header}}", &format!("X-{name}-Signature")),
+    );
+    // Skipped when the two packages are the same, because importing a sibling
+    // is a compile error -- which is what `--package ''` produces.
+    controller.import_from(&base, &format!("{name}Verifier"));
     Ok(vec![
         java(
             component,
@@ -70,14 +76,7 @@ pub(super) fn files(
             &format!("{name}WebhookController"),
             false,
             true,
-            CONTROLLER
-                .resolve(templates)?
-                .replace("{{web}}", &web)
-                .replace("{{name}}", name)
-                .replace("{{verifier_import}}", &verifier_import)
-                .replace("{{path}}", &path)
-                .replace("{{timestamp_header}}", &format!("X-{name}-Timestamp"))
-                .replace("{{signature_header}}", &format!("X-{name}-Signature")),
+            controller,
         )?,
         java(
             component,

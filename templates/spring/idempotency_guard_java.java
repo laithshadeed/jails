@@ -1,6 +1,6 @@
 package {{service}};
 
-{{record_import}}{{port_import}}import java.nio.charset.StandardCharsets;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.Optional;

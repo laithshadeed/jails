@@ -337,7 +337,7 @@ fn lower_operation(model: &AppModel, operation: &Operation) -> Result<Unit, Comp
         operation.id.as_str(),
         operation_kind_name(&operation.kind)
     );
-    let rendered = render(&package, &imports, &body, &artifact_id);
+    let rendered = JavaUnit::new(&package, &imports, &body).render(&artifact_id);
     let package_path = package.replace('.', "/");
     let path = ProjectPath::parse(format!("{JAVA_ROOT}/{package_path}/{type_name}.java"))
         .map_err(CompileError::new)?;
@@ -622,27 +622,172 @@ fn builtin_java(builtin: BuiltinType, required: bool, imports: &mut BTreeSet<Str
     name.to_string()
 }
 
-pub(crate) fn render(
-    package: &str,
-    imports: &BTreeSet<String>,
-    body: &str,
-    semantic_id: &str,
-) -> String {
-    let imports = if imports.is_empty() {
-        String::new()
-    } else {
+/// One Java compilation unit before it is text: the package it declares, the
+/// types it imports, and the body between them.
+///
+/// **The one Java shell.** Every emitter builds one of these, and
+/// [`JavaUnit::render`] is the only function in the compiler that writes a
+/// `package` line, an import block or the provenance header. An import an
+/// emitter needs is a fully-qualified *name* added to the set, never a
+/// rendered `import` statement spliced into a template placeholder: a
+/// placeholder puts a second, unsorted import block in the file and makes two
+/// emitters contributing to one file able to write the same import twice.
+///
+/// A template's own imports join the same set through [`JavaUnit::from_source`],
+/// so the template stays a real `.java` file and the block it renders into is
+/// still one sorted, deduplicated list.
+pub(crate) struct JavaUnit {
+    /// Whatever stands above the `package` line, verbatim. A template
+    /// override may open with a comment of its own, and a file that loses it
+    /// on the way through here would drop the one line saying jails did not
+    /// write this shape.
+    preamble: String,
+    package: String,
+    imports: BTreeSet<String>,
+    /// Everything after the import block: the type this unit declares.
+    /// Deliberately not `body`, which a board row reserves for the one struct
+    /// that carries a file about to be written.
+    declarations: String,
+}
+
+impl JavaUnit {
+    pub(crate) fn new(package: &str, imports: &BTreeSet<String>, body: &str) -> Self {
+        Self {
+            preamble: String::new(),
+            package: package.to_string(),
+            imports: imports.clone(),
+            declarations: body.to_string(),
+        }
+    }
+
+    /// The unit a rendered template already is.
+    ///
+    /// The `package` line and the import lines that follow it are lifted into
+    /// this value, so a conditional import the emitter adds lands in the same
+    /// block. Only the run of imports directly after the package line is
+    /// lifted: anything else -- a comment between two imports, say -- ends the
+    /// run and stays in the body, which is still legal Java and still ahead of
+    /// the type declaration.
+    pub(crate) fn from_source(source: &str) -> Self {
+        let mut preamble_end = 0;
+        let mut package = String::new();
+        let mut imports = BTreeSet::new();
+        let mut rest = source;
+        let mut seen_package = false;
+        loop {
+            let (line, tail) = match rest.find('\n') {
+                Some(at) => (&rest[..at], &rest[at + 1..]),
+                None => (rest, ""),
+            };
+            let trimmed = line.trim();
+            if !seen_package {
+                // A comment above the package line documents the *file* -- an
+                // override says so there -- so it is kept as the preamble. A
+                // comment after it documents whatever it precedes and stays in
+                // the declarations.
+                if trimmed.is_empty() || trimmed.starts_with("//") {
+                    rest = tail;
+                    preamble_end = source.len() - rest.len();
+                    continue;
+                }
+                let Some(name) = trimmed.strip_prefix("package ").and_then(strip_statement) else {
+                    break;
+                };
+                package = name.trim().to_string();
+                seen_package = true;
+                rest = tail;
+                continue;
+            }
+            if trimmed.is_empty() {
+                rest = tail;
+                continue;
+            }
+            let Some(name) = trimmed.strip_prefix("import ").and_then(strip_statement) else {
+                break;
+            };
+            imports.insert(name.trim().to_string());
+            rest = tail;
+        }
+        Self {
+            preamble: source[..preamble_end].to_string(),
+            package,
+            imports,
+            declarations: rest.to_string(),
+        }
+    }
+
+    /// Import `owner.class`, unless `owner` is this unit's own package --
+    /// importing a sibling is redundant, and with `--package ''` both names
+    /// are empty and the statement would not parse.
+    pub(crate) fn import_from(&mut self, owner: &str, class: &str) {
+        if owner == self.package {
+            return;
+        }
+        self.imports.insert(format!("{owner}.{class}"));
+    }
+
+    /// Import one fully-qualified name; `static a.b.C.d` for a static import.
+    pub(crate) fn import(&mut self, name: impl Into<String>) {
+        self.imports.insert(name.into());
+    }
+
+    /// The compilation unit with no provenance header: what a codemod that has
+    /// to see a whole file is handed, and what [`JavaUnit::from_source`] reads
+    /// back.
+    pub(crate) fn source(&self) -> String {
+        let mut out = String::with_capacity(self.declarations.len() + 64 * self.imports.len() + 64);
+        out.push_str(&self.preamble);
+        // Written by hand rather than with `format!`, because an `import`
+        // statement is spelled in exactly one place in this crate and this is
+        // it -- a gate counts the sites that spell one anywhere else.
+        out.push_str("package ");
+        out.push_str(&self.package);
+        out.push_str(";\n");
+        // Static imports first, a blank line, then the rest sorted: what
+        // palantir-java-format produces, so `add format` leaves a managed tree
+        // that passes `jails check`.
+        let (statics, rest): (Vec<_>, Vec<_>) = self
+            .imports
+            .iter()
+            .partition(|name| name.starts_with("static "));
+        out.push('\n');
+        for group in [statics, rest] {
+            if group.is_empty() {
+                continue;
+            }
+            for name in group {
+                out.push_str("import ");
+                out.push_str(name);
+                out.push_str(";\n");
+            }
+            out.push('\n');
+        }
+        out.push_str(self.declarations.trim_start_matches('\n'));
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out
+    }
+
+    pub(crate) fn render(&self, semantic_id: &str) -> String {
         format!(
-            "\n{}\n",
-            imports
-                .iter()
-                .map(|import| format!("import {import};"))
-                .collect::<Vec<_>>()
-                .join("\n")
+            "// Generated by jails from {semantic_id}. Clean hand edits survive regeneration.\n{}",
+            self.source()
         )
-    };
-    format!(
-        "// Generated by jails from {semantic_id}. Clean hand edits survive regeneration.\npackage {package};\n{imports}\n{body}\n"
-    )
+    }
+}
+
+/// So an emitter with a template in hand and no imports of its own can pass
+/// the rendered text where a unit is wanted.
+impl From<String> for JavaUnit {
+    fn from(source: String) -> Self {
+        Self::from_source(&source)
+    }
+}
+
+/// The name a `package` or `import` line declares, trailing `;` removed.
+fn strip_statement(rest: &str) -> Option<&str> {
+    rest.trim_end().strip_suffix(';')
 }
 
 fn lower_first(value: &str) -> String {

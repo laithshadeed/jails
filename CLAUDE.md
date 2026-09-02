@@ -609,10 +609,20 @@ overrides placement for the kinds that accept it.
 
 ## Import order is normalised at write time, not in templates
 
-Every emitted `.java` file goes through `emit::tidy_java`: static imports
-first, a blank line, then the rest sorted, which is what
-palantir-java-format produces, so `add format` leaves a project that passes
-`jails check`. Do not hand-order imports in templates. Formatter *wrapping*
+**`emit_java::JavaUnit` is the one Java shell**: a package, a sorted
+`BTreeSet` of imported names and the declarations, and `JavaUnit::render` is
+the only function in the compiler that writes a `package` line, an import
+block or the provenance header. Static imports first, a blank line, then the
+rest sorted, which is what palantir-java-format produces, so `add format`
+leaves a project that passes `jails check`. An import an emitter needs is a
+name added to the set (`import_from` skips one already in this unit's own
+package), never a rendered `import` statement substituted into a template
+placeholder; `JavaUnit::from_source` lifts a template's own `package` and
+import lines into the same value, so the template stays a real `.java` file
+and one block is rendered. A capability's Java goes out through
+`JavaUnit::source`, which is the same shell without the provenance header.
+`emit::tidy_java` then collapses doubled blank lines, and nothing else.
+Do not hand-order imports in templates. Formatter *wrapping*
 cannot be predicted from a template, so `add format` runs `spotless:apply`
 once, best-effort. `package-info.java` is written by `emit::package_infos`
 for every emitted package, only when `org.jspecify:jspecify` is a

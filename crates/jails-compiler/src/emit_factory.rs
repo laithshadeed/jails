@@ -1,6 +1,7 @@
 //! Entity-derived mutable test-data builders.
 
 use crate::emit_companion_test::JAVA_TEST_ROOT;
+use crate::emit_java::JavaUnit;
 use crate::{CompileError, emit_java};
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
 use jails_model::{AppModel, BuiltinType, Entity, Field, Package, StableId, TypeRef};
@@ -15,7 +16,7 @@ pub(crate) fn lower(
     let artifact_id = format!("art_{}_factory", entity.id.as_str());
     let mut imports = BTreeSet::from([emit_java::domain_import(model, entity)]);
     let body = body(entity, &type_name, &mut imports);
-    let rendered = emit_java::render(&package, &imports, &body, &artifact_id);
+    let rendered = JavaUnit::new(&package, &imports, &body).render(&artifact_id);
     let package_path = package.replace('.', "/");
     let path = ProjectPath::parse(format!("{JAVA_TEST_ROOT}/{package_path}/{type_name}.java"))
         .map_err(CompileError::new)?;

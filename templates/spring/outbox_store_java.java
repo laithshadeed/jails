@@ -1,6 +1,6 @@
 package {{pkg}};
 
-{{json_import}}{{event_import}}import java.time.Instant;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.Arrays;
 import java.util.List;

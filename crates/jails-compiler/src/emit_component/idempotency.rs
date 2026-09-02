@@ -16,6 +16,7 @@
 
 use super::{Emitted, Package, java, package};
 use crate::CompileError;
+use crate::emit_java::JavaUnit;
 use jails_contracts::RenderedMigration;
 use jails_model::{AppModel, Component, ComponentKind, StableId};
 use std::collections::BTreeSet;
@@ -50,14 +51,15 @@ pub(super) fn files(
     let table = table(component);
     let record = format!("{name}Receipt");
     let port = format!("{name}Receipts");
-    // Empty when the two packages coincide, because importing a sibling does
-    // not compile -- which is what `--package ''` produces.
-    let import = |user: &str, owner: &str, class: &str| {
-        if user == owner {
-            String::new()
-        } else {
-            format!("import {owner}.{class};\n")
-        }
+    // Every file below the record names the receipt, the port, or both.
+    // `import_from` skips the ones already in the unit's own package, because
+    // importing a sibling does not compile -- which is what `--package ''`
+    // produces.
+    let receipt_holder = |text: String| {
+        let mut unit = JavaUnit::from_source(&text);
+        unit.import_from(&domain, &record);
+        unit.import_from(&app, &port);
+        unit
     };
     Ok(vec![
         java(
@@ -81,10 +83,11 @@ pub(super) fn files(
             &port,
             false,
             false,
-            PORT.resolve(templates)?
-                .replace("{{app}}", &app)
-                .replace("{{name}}", name)
-                .replace("{{record_import}}", &import(&app, &domain, &record)),
+            receipt_holder(
+                PORT.resolve(templates)?
+                    .replace("{{app}}", &app)
+                    .replace("{{name}}", name),
+            ),
         )?,
         java(
             component,
@@ -93,13 +96,13 @@ pub(super) fn files(
             &format!("Jdbc{port}"),
             false,
             true,
-            STORE
-                .resolve(templates)?
-                .replace("{{adapters}}", &adapters)
-                .replace("{{name}}", name)
-                .replace("{{table}}", &table)
-                .replace("{{record_import}}", &import(&adapters, &domain, &record))
-                .replace("{{port_import}}", &import(&adapters, &app, &port)),
+            receipt_holder(
+                STORE
+                    .resolve(templates)?
+                    .replace("{{adapters}}", &adapters)
+                    .replace("{{name}}", name)
+                    .replace("{{table}}", &table),
+            ),
         )?,
         java(
             component,
@@ -108,12 +111,12 @@ pub(super) fn files(
             &format!("{name}Guard"),
             false,
             true,
-            GUARD
-                .resolve(templates)?
-                .replace("{{service}}", &service)
-                .replace("{{name}}", name)
-                .replace("{{record_import}}", &import(&service, &domain, &record))
-                .replace("{{port_import}}", &import(&service, &app, &port)),
+            receipt_holder(
+                GUARD
+                    .resolve(templates)?
+                    .replace("{{service}}", &service)
+                    .replace("{{name}}", name),
+            ),
         )?,
         java(
             component,
@@ -122,11 +125,11 @@ pub(super) fn files(
             &format!("{name}GuardTest"),
             true,
             true,
-            TEST.resolve(templates)?
-                .replace("{{service}}", &service)
-                .replace("{{name}}", name)
-                .replace("{{record_import}}", &import(&service, &domain, &record))
-                .replace("{{port_import}}", &import(&service, &app, &port)),
+            receipt_holder(
+                TEST.resolve(templates)?
+                    .replace("{{service}}", &service)
+                    .replace("{{name}}", name),
+            ),
         )?,
     ])
 }

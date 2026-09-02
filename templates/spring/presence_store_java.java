@@ -1,6 +1,6 @@
 package {{adapters}};
 
-{{port_import}}import java.time.Duration;
+import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;

@@ -21,7 +21,7 @@
 use super::{QueryFilter, scopes};
 use crate::CompileError;
 use crate::emit_companion_test::JAVA_TEST_ROOT;
-use crate::emit_java::{domain_import, import_declared_type, render};
+use crate::emit_java::{JavaUnit, domain_import, import_declared_type};
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
 use jails_model::{AppModel, Entity, FieldId, Join, Operation, Package, StableId};
 use std::collections::{BTreeMap, BTreeSet};
@@ -120,11 +120,9 @@ pub(super) fn query(
     // Spliced into the *rendered file*, not the class body: the splice places
     // the annotation above the type and its import beside the others, so it
     // needs the imports to already be there.
-    let rendered = crate::emit_capability::imported_test_container(
-        model,
-        &package,
-        render(&package, &imports, &body, &artifact_id),
-    );
+    let mut unit = JavaUnit::new(&package, &imports, &body);
+    crate::emit_capability::imported_test_container(model, &mut unit);
+    let rendered = unit.render(&artifact_id);
     let path = ProjectPath::parse(format!(
         "{JAVA_TEST_ROOT}/{}/{type_name}.java",
         package.replace('.', "/")
@@ -547,11 +545,9 @@ pub(super) fn write(
         "@SpringBootTest\n@Transactional\nclass {type_name} {{\n\n{autowired}    @Autowired\n    private {port_type} operation;\n\n    @Test\n    void writesThroughTheRealDatabase() {{\n{setup}        {declaration} = {invocation};\n\n        // `returning` answers with the row the statement wrote, so an empty\n        // answer here means it matched none -- which is the failure worth\n        // catching.\n        {assertion}\n    }}\n{missing}{unconditional}\n    // Reader-owned cases belong below this stable boundary.\n}}"
     );
     let artifact_id = format!("art_{}_write_it", operation.id.as_str());
-    let rendered = crate::emit_capability::imported_test_container(
-        model,
-        &package,
-        render(&package, &imports, &body, &artifact_id),
-    );
+    let mut unit = JavaUnit::new(&package, &imports, &body);
+    crate::emit_capability::imported_test_container(model, &mut unit);
+    let rendered = unit.render(&artifact_id);
     let path = ProjectPath::parse(format!(
         "{JAVA_TEST_ROOT}/{}/{type_name}.java",
         package.replace('.', "/")

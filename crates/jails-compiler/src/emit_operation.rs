@@ -7,7 +7,7 @@ mod query;
 mod transition;
 
 use crate::CompileError;
-use crate::emit_java::{JAVA_ROOT, entity, render};
+use crate::emit_java::{JAVA_ROOT, JavaUnit, entity};
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile, RenderedTree};
 use jails_model::{
     AppModel, BuiltinType, Entity, Facet, Field, Operation, OperationKind, Package, StableId,
@@ -511,7 +511,7 @@ fn operation_file(
         "art_{capability_id}_{}_{artifact_suffix}",
         operation.id.as_str()
     );
-    let rendered = render(&package, &imports, &body, &artifact_id);
+    let rendered = JavaUnit::new(&package, &imports, &body).render(&artifact_id);
     let path = ProjectPath::parse(format!(
         "{JAVA_ROOT}/{}/{}.java",
         package.replace('.', "/"),

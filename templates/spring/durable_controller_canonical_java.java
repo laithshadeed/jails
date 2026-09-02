@@ -1,6 +1,6 @@
 package {{web}};
 
-{{queue_import}}{{input_import}}import java.util.UUID;
+import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;

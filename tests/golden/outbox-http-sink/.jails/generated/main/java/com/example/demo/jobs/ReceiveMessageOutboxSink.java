@@ -2,6 +2,7 @@
 package com.example.demo.jobs;
 
 import com.example.demo.domain.events.MessageReceivedEvent;
+
 /** One independently configurable destination for a staged event. */
 public interface ReceiveMessageOutboxSink {
     String name();

@@ -912,7 +912,7 @@
         }
       },
       ".jails/generated/test/java/com/example/notes/domain/NoteTest.java": {
-        "bytes": "<541 bytes elided>",
+        "bytes": "<542 bytes elided>",
         "kind": "java-test",
         "mode": "regular",
         "provenance": {
@@ -1337,6 +1337,6 @@
     },
     "root": ".jails/generated"
   },
-  "projection_digest": "sha256:1db601644ee4f378372ecc87630d320f9570de1bf9e8032db5914f1d93abbfb5",
+  "projection_digest": "sha256:0c090eee1129f4ace639006544c0571ee2d60d0d8c4c95f1da7f7b8b86cfc3af",
   "schema": "jails.compiler-lock.v3"
 }

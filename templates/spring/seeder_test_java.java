@@ -2,7 +2,7 @@ package {{pkg}};
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-{{imports}}{{disabled_import}}import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Test;
 
 /**
  * The shipped seed file still binds to {@link {{name}}}. Nothing else reads

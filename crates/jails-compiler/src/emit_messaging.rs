@@ -12,6 +12,7 @@
 //! the record and the `publishEvent` the operation already makes.
 
 use crate::CompileError;
+use crate::emit_java::JavaUnit;
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile, RenderedTree};
 use jails_model::{AppModel, Operation, OperationKind, Package, StableId as _};
 use std::collections::BTreeSet;
@@ -66,57 +67,52 @@ fn files(
     let messaging = model.project.package_for(Package::Messaging);
     let events = model.project.package_for(Package::DomainEvents);
     let topic = topic(operation);
-    let event_import = import(&messaging, &events, &event_type);
     let key = partition_key(model, operation)?;
+    // Every file here names the payload record, and gets the import unless it
+    // is already in this package.
+    let payload = |text: String| {
+        let mut unit = JavaUnit::from_source(&text);
+        unit.import_from(&events, &event_type);
+        unit
+    };
 
-    let publisher = PUBLISHER
-        .resolve(templates)?
-        .replace("{{pkg}}", &messaging)
-        .replace(
-            "import java.util.concurrent.CompletableFuture;",
-            &format!("{event_import}import java.util.concurrent.CompletableFuture;"),
-        )
-        .replace("{{ordering}}", &key.javadoc)
-        .replace(
-            "kafka.send(topic, {{key}}, event)",
-            &match &key.expression {
-                Some(expression) => format!("kafka.send(topic, {expression}, event)"),
-                None => "kafka.send(topic, event)".to_string(),
-            },
-        )
-        .replace("{{topic}}", &topic)
-        .replace("{{name}}Event", &event_type)
-        .replace("{{name}}", name);
+    let publisher = payload(
+        PUBLISHER
+            .resolve(templates)?
+            .replace("{{pkg}}", &messaging)
+            .replace("{{ordering}}", &key.javadoc)
+            .replace(
+                "kafka.send(topic, {{key}}, event)",
+                &match &key.expression {
+                    Some(expression) => format!("kafka.send(topic, {expression}, event)"),
+                    None => "kafka.send(topic, event)".to_string(),
+                },
+            )
+            .replace("{{topic}}", &topic)
+            .replace("{{name}}Event", &event_type)
+            .replace("{{name}}", name),
+    );
     // **The handler port is the reaction's home, and it lives beside the
     // listener rather than in `ports.events`.** That package is the *outbound*
     // publish port an entity's `events` facet emits; an inbound handler is the
     // other direction, and filing both under one name would make
     // `TaskEvents` and `ClosedHandler` look like halves of one interface.
     let handler_type = format!("{name}Handler");
-    let handler = HANDLER
-        .resolve(templates)?
-        .replace("{{pkg}}", &messaging)
-        // The port names the payload type in its own signature, so it needs
-        // the import whenever the event record is not in this package.
-        .replace(
-            "{{event_import}}",
-            &match event_import.is_empty() {
-                true => String::new(),
-                false => format!("{event_import}\n"),
-            },
-        )
-        .replace("{{name}}Event", &event_type)
-        .replace("{{name}}", name);
-    let listener = LISTENER
-        .resolve(templates)?
-        .replace("{{pkg}}", &messaging)
-        .replace(
-            "import java.util.List;",
-            &format!("{event_import}import java.util.List;"),
-        )
-        .replace("{{topic}}", &topic)
-        .replace("{{name}}Event", &event_type)
-        .replace("{{name}}", name);
+    let handler = payload(
+        HANDLER
+            .resolve(templates)?
+            .replace("{{pkg}}", &messaging)
+            .replace("{{name}}Event", &event_type)
+            .replace("{{name}}", name),
+    );
+    let listener = payload(
+        LISTENER
+            .resolve(templates)?
+            .replace("{{pkg}}", &messaging)
+            .replace("{{topic}}", &topic)
+            .replace("{{name}}Event", &event_type)
+            .replace("{{name}}", name),
+    );
 
     // **The proof needs a component to wait for.** Its probe replays the whole
     // topic from the start of its own consumer group, so it matches the record
@@ -149,10 +145,6 @@ fn files(
     ];
     let (arguments, disabled, sample_imports) =
         crate::emit_component::http_sink::sample(model, operation)?;
-    let disabled_import = match disabled {
-        true => "import org.junit.jupiter.api.Disabled;\n",
-        false => "",
-    };
     let disabled_annotation = match disabled {
         true => "@Disabled(\"jails cannot construct a project-owned component of this payload\")\n",
         false => "",
@@ -162,29 +154,30 @@ fn files(
     // names.** The sample is `UUID.fromString(..)`, `Instant.parse(..)` and
     // the rest, and a test given only the event record's own import compiles
     // exactly as long as every component happens to be a `String`.
-    let mut imports = sample_imports
-        .iter()
-        .map(|import| format!("import {import};\n"))
-        .collect::<Vec<_>>();
-    if !event_import.is_empty() {
-        imports.push(event_import.clone());
-    }
-    imports.sort();
-    let imports = imports.concat();
+    let proof = |text: String| {
+        let mut unit = payload(text);
+        for name in &sample_imports {
+            unit.import(name);
+        }
+        if disabled {
+            unit.import("org.junit.jupiter.api.Disabled");
+        }
+        unit
+    };
 
     // **The listener test needs no broker and no `id`.** The proof below waits
     // for a record to come back and matches it by id, so it is emitted only
     // for a payload that has one; delegation to the port is a property of an
     // ordinary object, so it is proved for every event.
-    let listener_test = LISTENER_TEST
-        .resolve(templates)?
-        .replace("{{pkg}}", &messaging)
-        .replace("{{event_imports}}", &imports)
-        .replace("{{disabled_import}}", disabled_import)
-        .replace("{{disabled}}", disabled_annotation)
-        .replace("{{event_args}}", &arguments)
-        .replace("{{name}}Event", &event_type)
-        .replace("{{name}}", name);
+    let listener_test = proof(
+        LISTENER_TEST
+            .resolve(templates)?
+            .replace("{{pkg}}", &messaging)
+            .replace("{{disabled}}", disabled_annotation)
+            .replace("{{event_args}}", &arguments)
+            .replace("{{name}}Event", &event_type)
+            .replace("{{name}}", name),
+    );
     files.push(rendered(
         operation,
         "listener_test",
@@ -207,28 +200,23 @@ fn files(
         return Ok(files);
     }
 
-    let test = IT
-        .resolve(templates)?
-        .replace("{{pkg}}", &messaging)
-        .replace("{{event_imports}}", &imports)
-        .replace("{{disabled_import}}", disabled_import)
-        .replace("{{disabled}}", disabled_annotation)
-        .replace(
-            "{{kafka_testcontainers_import}}",
-            &import(
-                &messaging,
-                &model.project.package_for(Package::Base),
+    let mut test = proof(
+        IT.resolve(templates)?
+            .replace("{{pkg}}", &messaging)
+            .replace("{{disabled}}", disabled_annotation)
+            .replace(
+                "{{KAFKA_TESTCONTAINERS_CONFIG}}",
                 "KafkaTestcontainersConfig",
-            ),
-        )
-        .replace(
-            "{{KAFKA_TESTCONTAINERS_CONFIG}}",
-            "KafkaTestcontainersConfig",
-        )
-        .replace("{{event_args}}", &arguments)
-        .replace("{{topic}}", &topic)
-        .replace("{{name}}Event", &event_type)
-        .replace("{{name}}", name);
+            )
+            .replace("{{event_args}}", &arguments)
+            .replace("{{topic}}", &topic)
+            .replace("{{name}}Event", &event_type)
+            .replace("{{name}}", name),
+    );
+    test.import_from(
+        &model.project.package_for(Package::Base),
+        "KafkaTestcontainersConfig",
+    );
 
     files.push(rendered(
         operation,
@@ -301,13 +289,6 @@ fn lower_first(value: &str) -> String {
     })
 }
 
-fn import(user: &str, owner: &str, class: &str) -> String {
-    match user == owner {
-        true => String::new(),
-        false => format!("import {owner}.{class};\n"),
-    }
-}
-
 /// The handler port, which is ABI rather than an adapter.
 ///
 /// [`rendered`] marks everything it writes ejectable, and that is right for the
@@ -319,14 +300,14 @@ fn port(
     operation: &Operation,
     package: &str,
     type_name: &str,
-    body: String,
+    unit: impl Into<JavaUnit>,
 ) -> Result<(ProjectPath, RenderedFile), CompileError> {
     let (path, mut file) = rendered(
         operation,
         "handler",
         package,
         type_name,
-        body,
+        unit,
         FileKind::JavaMain,
     )?;
     file.provenance.ejectable = false;
@@ -338,7 +319,7 @@ fn rendered(
     suffix: &str,
     package: &str,
     type_name: &str,
-    body: String,
+    unit: impl Into<JavaUnit>,
     kind: FileKind,
 ) -> Result<(ProjectPath, RenderedFile), CompileError> {
     let artifact = format!("art_{}_{suffix}", operation.id.as_str());
@@ -354,10 +335,7 @@ fn rendered(
     Ok((
         path,
         RenderedFile {
-            bytes: format!(
-                "// Generated by jails from {artifact}. Clean hand edits survive regeneration.\n{body}"
-            )
-            .into_bytes(),
+            bytes: unit.into().render(&artifact).into_bytes(),
             kind,
             mode: FileMode::Regular,
             provenance: Provenance {

@@ -24,6 +24,7 @@
 
 use super::{Emitted, Package, java, package};
 use crate::CompileError;
+use crate::emit_java::JavaUnit;
 use jails_contracts::RenderedMigration;
 use jails_model::{
     AppModel, Component, ComponentKind, ComponentReference, Entity, Facet, Operation,
@@ -79,36 +80,28 @@ pub(super) fn files(
         .route
         .as_ref()
         .map_or_else(|| format!("/jobs/{property}"), |route| route.path.clone());
-    let input = |user: &str| import(user, &commands, &port);
-    let repository_import = |user: &str| {
-        import(
-            user,
-            &repository,
-            &format!("{}Repository", target.names.java_type),
-        )
-    };
+    let repository_type = format!("{}Repository", target.names.java_type);
     let (arguments, conflict, sample_imports) = sample(model, command)?;
-    let sample_imports = sample_imports
-        .iter()
-        .filter(|import| *import != "java.util.UUID")
-        .map(|import| format!("import {import};\n"))
-        .collect::<String>();
 
-    let queue = QUEUE
-        .resolve(templates)?
-        .replace("{{pkg}}", &jobs)
-        .replace("{{input_import}}", &input(&jobs))
-        .replace("{{name}}", name)
-        .replace("{{usecase}}Command", &port);
-    let store = STORE
-        .resolve(templates)?
-        .replace("{{pkg}}", &jobs)
-        .replace("{{json_import}}", &import(&jobs, &adapters, "Json"))
-        .replace("{{input_import}}", &input(&jobs))
-        .replace("{{name}}", name)
-        .replace("{{usecase}}Command", &port)
-        .replace("{{property}}", &property)
-        .replace("{{table}}", &table);
+    let mut queue = JavaUnit::from_source(
+        &QUEUE
+            .resolve(templates)?
+            .replace("{{pkg}}", &jobs)
+            .replace("{{name}}", name)
+            .replace("{{usecase}}Command", &port),
+    );
+    queue.import_from(&commands, &port);
+    let mut store = JavaUnit::from_source(
+        &STORE
+            .resolve(templates)?
+            .replace("{{pkg}}", &jobs)
+            .replace("{{name}}", name)
+            .replace("{{usecase}}Command", &port)
+            .replace("{{property}}", &property)
+            .replace("{{table}}", &table),
+    );
+    store.import_from(&adapters, "Json");
+    store.import_from(&commands, &port);
     // **The tenancy the enqueue proved, replayed from the payload it stored.**
     // A scoped command reads its claims from an `ExecutionContext` the request
     // boundary built after `ScopeAuthorizer` proved them; a worker running out
@@ -117,44 +110,56 @@ pub(super) fn files(
     // context from them is what replaying the command means -- calling it
     // without one does not compile.
     let (context, context_import) = worker_context(model, command, target)?;
-    let worker = WORKER
-        .resolve(templates)?
-        .replace("{{pkg}}", &jobs)
-        .replace("{{input_import}}", &input(&jobs))
-        .replace("{{repository_import}}", &repository_import(&jobs))
-        .replace("{{context_import}}", &context_import)
-        .replace("{{context}}", &context)
-        .replace("{{name}}", name)
-        .replace("{{usecase}}Command", &port)
-        .replace("{{target}}", &target.names.java_type)
-        .replace("{{property}}", &property);
-    let controller = CONTROLLER
-        .resolve(templates)?
-        .replace("{{web}}", &web)
-        .replace(
-            "{{queue_import}}",
-            &import(&web, &jobs, &format!("{name}Queue")),
-        )
-        .replace("{{input_import}}", &input(&web))
-        .replace("{{name}}", name)
-        .replace("{{usecase}}Command", &port)
-        .replace("{{path}}", &path);
-    let test = TEST
-        .resolve(templates)?
-        .replace("{{pkg}}", &jobs)
-        .replace("{{input_import}}", &input(&jobs))
-        .replace("{{repository_import}}", &repository_import(&jobs))
-        .replace("{{sample_imports}}", &sample_imports)
-        // Before `{{name}}` and `{{usecase}}Command`: the conflict block
-        // carries both, and substituting them first would leave a rendered
-        // test naming `{{usecase}}Command` literally.
-        .replace("{{conflict_test}}", &conflict)
-        .replace("{{args}}", &arguments)
-        .replace("{{table}}", &table)
-        .replace("{{results_table}}", &target.names.sql_table)
-        .replace("{{name}}", name)
-        .replace("{{target}}", &target.names.java_type)
-        .replace("{{usecase}}Command", &port);
+    let mut worker = JavaUnit::from_source(
+        &WORKER
+            .resolve(templates)?
+            .replace("{{pkg}}", &jobs)
+            .replace("{{context_import}}", &context_import)
+            .replace("{{context}}", &context)
+            .replace("{{name}}", name)
+            .replace("{{usecase}}Command", &port)
+            .replace("{{target}}", &target.names.java_type)
+            .replace("{{property}}", &property),
+    );
+    worker.import_from(&commands, &port);
+    worker.import_from(&repository, &repository_type);
+    let mut controller = JavaUnit::from_source(
+        &CONTROLLER
+            .resolve(templates)?
+            .replace("{{web}}", &web)
+            .replace("{{name}}", name)
+            .replace("{{usecase}}Command", &port)
+            .replace("{{path}}", &path),
+    );
+    controller.import_from(&jobs, &format!("{name}Queue"));
+    controller.import_from(&commands, &port);
+    let mut test = JavaUnit::from_source(
+        &TEST
+            .resolve(templates)?
+            .replace("{{pkg}}", &jobs)
+            // Before `{{name}}` and `{{usecase}}Command`: the conflict block
+            // carries both, and substituting them first would leave a rendered
+            // test naming `{{usecase}}Command` literally.
+            .replace("{{conflict_test}}", &conflict)
+            .replace("{{args}}", &arguments)
+            .replace("{{table}}", &table)
+            .replace("{{results_table}}", &target.names.sql_table)
+            .replace("{{name}}", name)
+            .replace("{{target}}", &target.names.java_type)
+            .replace("{{usecase}}Command", &port),
+    );
+    test.import_from(&commands, &port);
+    test.import_from(&repository, &repository_type);
+    // **What the sample expressions name.** Every one is a builtin literal,
+    // but a literal is not import-free: `UUID.fromString(..)` and
+    // `Instant.parse(..)` are types. `java.util.UUID` is the exception, in the
+    // template already because the test names an id of its own.
+    for name in sample_imports
+        .iter()
+        .filter(|name| *name != "java.util.UUID")
+    {
+        test.import(name);
+    }
 
     Ok(vec![
         // The queue is managed ABI: the store implements it, the worker drains
@@ -428,13 +433,4 @@ fn conflict_test(arguments: &[String], alternates: &[Option<String>]) -> String 
         "    /**\n     * The same id twice is the same request; the same id with different work\n     * is a mistake, and reporting it is what makes the first case safe.\n     */\n    @Test\n    void reusingAnIdRequiresTheSamePayload() {{\n        var id = UUID.randomUUID();\n        store.enqueue(id, sample());\n        store.enqueue(id, sample());\n        assertThat(store.status(id).orElseThrow().attempts()).isZero();\n\n        assertThatThrownBy(() -> store.enqueue(id, new {{{{usecase}}}}Command.Input({})))\n                .isInstanceOf({{{{name}}}}Queue.IdempotencyConflictException.class);\n    }}\n",
         other.join(", ")
     )
-}
-
-/// One import line, or nothing when the two packages are the same.
-fn import(user: &str, owner: &str, class: &str) -> String {
-    if user == owner {
-        String::new()
-    } else {
-        format!("import {owner}.{class};\n")
-    }
 }

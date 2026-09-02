@@ -1,6 +1,6 @@
 package {{pkg}};
 
-{{json_import}}{{input_import}}import java.time.OffsetDateTime;
+import java.time.OffsetDateTime;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;

@@ -1,7 +1,5 @@
 package {{pkg}};
 
-import {{adapters}}.Json;
-import {{messaging}}.{{event}}Event;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.io.IOException;
 import java.net.URI;

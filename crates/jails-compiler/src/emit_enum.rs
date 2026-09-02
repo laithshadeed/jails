@@ -1,7 +1,7 @@
 //! Lower the enum ABI and its optional Spring conversion adapter.
 
 use crate::CompileError;
-use crate::emit_java::{JAVA_ROOT, render};
+use crate::emit_java::{JAVA_ROOT, JavaUnit};
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
 use jails_model::{AppModel, Entity, Package, StableId};
 use std::collections::BTreeSet;
@@ -71,7 +71,7 @@ pub(crate) fn lower_converter(
         "@Component\npublic final class {type_name} implements Converter<String, {enum_type}> {{\n\n    @Override\n    public {enum_type} convert(String source) {{\n        return {enum_type}.fromWire(source);\n    }}\n}}"
     );
     let artifact_id = format!("art_{}_enum-converter", entity.id.as_str());
-    let rendered = render(&package, &imports, &body, &artifact_id);
+    let rendered = JavaUnit::new(&package, &imports, &body).render(&artifact_id);
     let package_path = package.replace('.', "/");
     let path = ProjectPath::parse(format!("{JAVA_ROOT}/{package_path}/{type_name}.java"))
         .map_err(CompileError::new)?;

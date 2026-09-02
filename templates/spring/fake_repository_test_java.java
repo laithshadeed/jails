@@ -1,6 +1,6 @@
 package {{pkg}};
 
-{{imports}}/**
+/**
  * The fake is held to the same contract as the real adapter.
  *
  * <p>No database and no application context: the in-memory adapter is an

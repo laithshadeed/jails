@@ -1,6 +1,6 @@
 package {{pkg}};
 
-{{input_import}}{{repository_import}}{{sample_imports}}import java.util.UUID;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

@@ -1,6 +1,6 @@
 package {{adapters}};
 
-{{container_import}}{{disabled_import}}import java.time.Duration;
+import java.time.Duration;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;

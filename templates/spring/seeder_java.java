@@ -1,6 +1,6 @@
 package {{pkg}};
 
-{{imports}}import java.io.IOException;
+import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.List;
 import org.springframework.boot.ApplicationArguments;

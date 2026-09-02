@@ -1,6 +1,6 @@
 package {{pkg}};
 
-{{event_import}}/**
+/**
  * What the application does when a {{name}}Event arrives.
  *
  * <p>This is the seam the listener delegates across, and it exists so the

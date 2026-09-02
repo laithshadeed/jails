@@ -20,6 +20,7 @@
 //! reader did not write.
 
 use crate::CompileError;
+use crate::emit_java::JavaUnit;
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
 use jails_model::{AppModel, Capability, Entity, Package, StableId, TypeRef};
 use std::collections::BTreeSet;
@@ -43,45 +44,41 @@ pub(crate) fn lower(
     let repository = crate::emit_java::entity_package(model, entity, Package::Repository);
     let resource = format!("db/seeds/{}.json", entity.names.sql_table);
     let rows = [row(model, entity, true), row(model, entity, false)];
-    let imports = format!(
-        "{}{}{}",
-        import(&adapters, &domain, name),
-        import(&adapters, &repository, &format!("{name}Repository")),
-        // The reader is a class of this same package, so this is empty today
-        // -- and stays here because `cap json` may be placed elsewhere.
-        import(&adapters, &adapters, &reader),
+    let mut seeder = JavaUnit::from_source(
+        &SEEDER
+            .resolve(templates)?
+            .replace("{{pkg}}", &adapters)
+            .replace("{{resource}}", &resource)
+            .replace("{{json}}", &reader)
+            .replace("{{name}}", name),
     );
-    let seeder = SEEDER
-        .resolve(templates)?
-        .replace("{{pkg}}", &adapters)
-        .replace("{{imports}}", &imports)
-        .replace("{{resource}}", &resource)
-        .replace("{{json}}", &reader)
-        .replace("{{name}}", name);
+    seeder.import_from(&domain, name);
+    seeder.import_from(&repository, &format!("{name}Repository"));
+    // The reader is a class of this same package, so this adds nothing today
+    // -- and stays because `cap json` may be placed elsewhere.
+    seeder.import_from(&adapters, &reader);
     let disabled = rows[0].is_none() || rows[1].is_none();
-    let test = TEST.resolve(templates)?
-        .replace("{{pkg}}", &adapters)
-        .replace("{{imports}}", &import(&adapters, &domain, name))
-        .replace("{{resource}}", &resource)
-        .replace(
-            "{{disabled_import}}",
-            if disabled {
-                "import org.junit.jupiter.api.Disabled;\n"
-            } else {
-                ""
-            },
-        )
-        .replace(
-            "{{disabled}}",
-            &if disabled {
-                format!(
-                    "    @Disabled(\"todo: jails could not write a sample of every {name} component; fill in src/main/resources/{resource} by hand, then delete this @Disabled\")\n"
-                )
-            } else {
-                String::new()
-            },
-        )
-        .replace("{{name}}", name);
+    let mut test = JavaUnit::from_source(
+        &TEST
+            .resolve(templates)?
+            .replace("{{pkg}}", &adapters)
+            .replace("{{resource}}", &resource)
+            .replace(
+                "{{disabled}}",
+                &if disabled {
+                    format!(
+                        "    @Disabled(\"todo: jails could not write a sample of every {name} component; fill in src/main/resources/{resource} by hand, then delete this @Disabled\")\n"
+                    )
+                } else {
+                    String::new()
+                },
+            )
+            .replace("{{name}}", name),
+    );
+    test.import_from(&domain, name);
+    if disabled {
+        test.import("org.junit.jupiter.api.Disabled");
+    }
 
     Ok(vec![
         // The data itself, and an empty array when jails could not sample
@@ -93,12 +90,12 @@ pub(crate) fn lower(
             RESOURCE_ROOT,
             &resource,
             FileKind::Resource,
-            match (&rows[0], &rows[1]) {
+            Rendered::Resource(match (&rows[0], &rows[1]) {
                 (Some(first), Some(second)) => {
                     format!("[\n  {{\n{first}\n  }},\n  {{\n{second}\n  }}\n]\n")
                 }
                 _ => "[]\n".to_string(),
-            },
+            }),
         )?,
         rendered(
             entity,
@@ -106,7 +103,7 @@ pub(crate) fn lower(
             JAVA_MAIN_ROOT,
             &format!("{}/{name}Seeder.java", adapters.replace('.', "/")),
             FileKind::JavaMain,
-            seeder,
+            Rendered::Java(seeder),
         )?,
         rendered(
             entity,
@@ -114,7 +111,7 @@ pub(crate) fn lower(
             JAVA_TEST_ROOT,
             &format!("{}/{name}SeederTest.java", adapters.replace('.', "/")),
             FileKind::JavaTest,
-            test,
+            Rendered::Java(test),
         )?,
     ])
 }
@@ -223,18 +220,15 @@ fn rendered(
     root: &str,
     relative: &str,
     kind: FileKind,
-    body: String,
+    body: Rendered,
 ) -> Result<(ProjectPath, RenderedFile), CompileError> {
     let artifact = format!("art_{}_{}", entity.id.as_str(), suffix);
     let path = ProjectPath::parse(format!("{root}/{relative}")).map_err(CompileError::new)?;
     // A JSON file has nowhere to carry a comment, so only the Java gets the
     // provenance banner every other managed source has.
-    let bytes = if kind == FileKind::Resource {
-        body
-    } else {
-        format!(
-            "// Generated by jails from {artifact}. Clean hand edits survive regeneration.\n{body}"
-        )
+    let bytes = match body {
+        Rendered::Resource(text) => text,
+        Rendered::Java(unit) => unit.render(&artifact),
     };
     Ok((
         path,
@@ -253,11 +247,9 @@ fn rendered(
     ))
 }
 
-/// One import line, or nothing when the two packages are the same.
-fn import(user: &str, owner: &str, class: &str) -> String {
-    if user == owner {
-        String::new()
-    } else {
-        format!("import {owner}.{class};\n")
-    }
+/// A seed artifact is either the data or a Java unit; only the second has
+/// anywhere to carry a provenance header.
+enum Rendered {
+    Resource(String),
+    Java(JavaUnit),
 }

@@ -1,6 +1,6 @@
 package {{app}};
 
-{{record_import}}import java.util.Optional;
+import java.util.Optional;
 
 /**
  * Where receipts are kept.

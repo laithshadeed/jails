@@ -1,6 +1,6 @@
 package {{adapters}};
 
-{{record_import}}{{port_import}}import java.util.Optional;
+import java.util.Optional;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 

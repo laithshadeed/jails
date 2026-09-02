@@ -50,23 +50,6 @@ for f in $(find templates -type f); do rel=${f#templates/}; b=$(basename $f)
 
 ## Steps
 
-**S55.2 -- One Java shell.** `emit_java::render(package, imports, body,
-artifact_id)` writes the package line, the import block and the class shell,
-and 20 emitters call it; `emit_capability::render` is a second copy, and 19
-`format!` sites still spell an `import` line by hand. Count them:
-
-```
-grep -rn 'fn render(' crates/jails-compiler/src
-grep -rn 'import ' crates/jails-compiler/src --include=*.rs | grep -c 'format!'
-```
-
-One `JavaUnit { package, imports, body }` value with import dedup and sorted
-rendering, built by every emitter and rendered in one place, is the first
-rung of A3.14's IR and the only one this pass takes: it deletes the copies
-without inventing `JavaExpr`. The exit is one `fn render` and the second
-grep at zero. `Pack` already has this shape for capabilities; extend it
-rather than writing a second.
-
 **S55.3 -- One proof renderer.** `emit_operation/proof.rs` (566 raw),
 `emit_http/proof.rs` and the companion-test halves of `emit_unit.rs` each
 construct a request for a route and assert a status. The fact they turn on --

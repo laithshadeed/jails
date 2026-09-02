@@ -7,6 +7,7 @@
 //! modules, but the common dependency + Java-files shape lives here once.
 
 use crate::CompileError;
+use crate::emit_java::JavaUnit;
 use jails_contracts::{
     BuildDependency, BuildFeature, FileKind, FileMode, ProjectPath, PropertyEntry, Provenance,
     RenderedFile, RenderedTree,
@@ -51,6 +52,12 @@ struct JavaFile {
     suffix: &'static str,
     template: crate::Template,
     before_boot: Option<(u32, crate::Template)>,
+    /// Classes of the pack's *default* package this file names. Declared here
+    /// rather than spelled as an `import` line in the template, because the
+    /// statement is needed only when `package_overrides` puts the file
+    /// somewhere else -- and a conditional line is not something a `.java`
+    /// template can carry.
+    imports: &'static [&'static str],
     source_set: SourceSet,
     class_name: fn(&Capability) -> String,
     template_class: fn(&Capability) -> String,
@@ -280,6 +287,18 @@ pub(crate) fn lower_and_emit(
                     SourceSet::Main => (MAIN_ROOT, FileKind::JavaMain),
                     SourceSet::Test | SourceSet::IntegrationTest => (TEST_ROOT, FileKind::JavaTest),
                 };
+                let mut unit = JavaUnit::from_source(&substitute(
+                    template_for(file, boot_major).resolve(observed.templates)?,
+                    &package,
+                    &template_class,
+                    capability,
+                    boot_major,
+                    &fragments,
+                ));
+                for class in file.imports {
+                    unit.import_from(&default_package, class);
+                }
+                with_test_container(model, file.source_set, &mut unit);
                 emit(
                     output,
                     capability,
@@ -288,20 +307,10 @@ pub(crate) fn lower_and_emit(
                     root,
                     kind,
                     file.suffix,
-                    with_test_container(
-                        model,
-                        file.source_set,
-                        &package,
-                        render(
-                            template_for(file, boot_major).resolve(observed.templates)?,
-                            &package,
-                            &default_package,
-                            &template_class,
-                            capability,
-                            boot_major,
-                            &fragments,
-                        ),
-                    ),
+                    // `source`, not `render`: a capability's Java carries no
+                    // provenance header, because `remove` retires the whole
+                    // file rather than reconciling its bytes.
+                    unit.source(),
                 )?;
             }
             for resource in pack.resources {
@@ -438,16 +447,11 @@ fn emit(
 /// whatever `spring.datasource.url` names -- which on a developer's machine is
 /// a real database on `:5432`, so the test passes or fails against somebody's
 /// local schema instead of its own container.
-fn with_test_container(
-    model: &AppModel,
-    source_set: SourceSet,
-    package: &str,
-    body: String,
-) -> String {
+fn with_test_container(model: &AppModel, source_set: SourceSet, unit: &mut JavaUnit) {
     if !matches!(source_set, SourceSet::Test) {
-        return body;
+        return;
     }
-    imported_test_container(model, package, body)
+    imported_test_container(model, unit);
 }
 
 /// Splice `@Import(TestcontainersConfig.class)` into a generated test.
@@ -458,24 +462,32 @@ fn with_test_container(
 /// splice. Without it a generated `@SpringBootTest` has no DataSource: JDBC
 /// auto-config demands one the moment the starter is present, so the context
 /// fails to start and every case in the class errors.
-pub(crate) fn imported_test_container(model: &AppModel, package: &str, body: String) -> String {
+pub(crate) fn imported_test_container(model: &AppModel, unit: &mut JavaUnit) {
     if !model
         .capabilities
         .values()
         .any(|capability| capability.kind == "db")
     {
-        return body;
+        return;
     }
-    let base = model.project.package_for(Package::Base);
-    // `extra` is the import *statement*, and only when the config is not in
-    // this file's own package. Passing the package name itself puts a bare
-    // `com.example.app` line in the middle of the imports, which javac reports
-    // as "class, interface, enum, or record expected".
-    let extra = match package == base {
-        true => String::new(),
-        false => format!("import {base}.TestcontainersConfig;\n"),
+    // The splice needs a whole compilation unit -- it puts the annotation above
+    // the type and `Import` beside the other imports -- so it is handed the
+    // unit's source and the result read back. `extra` is empty because the
+    // config's own import is added below, to the set.
+    let Some(spliced) =
+        jails_codemod::annotate::splice_import(&unit.source(), "TestcontainersConfig", "")
+    else {
+        // No `@SpringBootTest` to anchor to: nothing is annotated, so nothing
+        // is imported either.
+        return;
     };
-    jails_codemod::annotate::splice_import(&body, "TestcontainersConfig", &extra).unwrap_or(body)
+    *unit = JavaUnit::from_source(&spliced);
+    // Skipped when the config is in this file's own package: importing a
+    // sibling is redundant and, with `--package ''`, would not parse.
+    unit.import_from(
+        &model.project.package_for(Package::Base),
+        "TestcontainersConfig",
+    );
 }
 
 fn template_for(file: &JavaFile, boot_major: Option<u32>) -> crate::Template {
@@ -485,20 +497,17 @@ fn template_for(file: &JavaFile, boot_major: Option<u32>) -> crate::Template {
     }
 }
 
-fn render(
+/// Fill in a pack template's placeholders. Substitution only: what varies
+/// structurally is a fragment the caller rendered, and an import the pack
+/// needs is the unit's, not a placeholder here.
+fn substitute(
     template: &str,
     package: &str,
-    default_package: &str,
     class: &str,
     capability: &Capability,
     boot_major: Option<u32>,
     fragments: &[(&str, &str)],
 ) -> String {
-    let hub_import = if package == default_package {
-        String::new()
-    } else {
-        format!("import {default_package}.EventHub;\n")
-    };
     let mut template = template.to_string();
     for (key, body) in fragments {
         template = template.replace(&format!("{{{{{key}}}}}"), body);
@@ -508,7 +517,6 @@ fn render(
         .replace("{{web}}", package)
         .replace("{{class}}", class)
         .replace("{{name}}", class)
-        .replace("{{hub_import}}", &hub_import)
         .replace("{{path}}", "events")
         .replace("{{REDIS_IMAGE}}", "redis:7-alpine")
         .replace("{{image}}", "axllent/mailpit:v1.21")

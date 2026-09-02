@@ -73,7 +73,7 @@ pub(super) fn lower_fake_repository(
     // holds, which the executor correctly reports as reader-owned. The
     // capability still shows in `semantic_ids`.
     let artifact_id = format!("art_{}_repository_memory", entity.id.as_str());
-    let rendered = render(&package, &imports, &body, &artifact_id);
+    let rendered = JavaUnit::new(&package, &imports, &body).render(&artifact_id);
     let package_path = package.replace('.', "/");
     let path = ProjectPath::parse(format!("{JAVA_ROOT}/{package_path}/{type_name}.java"))
         .map_err(CompileError::new)?;
@@ -200,7 +200,7 @@ pub(super) fn lower_db_repository(
         key_type = key_type,
     );
     let artifact_id = format!("art_{capability_id}_{}_repository", entity.id.as_str());
-    let rendered = render(&package, &imports, &body, &artifact_id);
+    let rendered = JavaUnit::new(&package, &imports, &body).render(&artifact_id);
     let package_path = package.replace('.', "/");
     let path = ProjectPath::parse(format!("{JAVA_ROOT}/{package_path}/{type_name}.java"))
         .map_err(CompileError::new)?;
@@ -284,11 +284,9 @@ pub(super) fn lower_db_repository_it(
         "@SpringBootTest\n@Transactional\nclass {type_name} {{\n\n    @Autowired\n    private {record}Repository repository;\n\n{autowired}    @Test\n    void satisfiesThe{record}RepositoryContractAgainstTheRealDatabase() {{\n{setup}        {record}RepositoryContract.savesReadsAndDeletes(\n                repository, new {record}({arguments}));\n    }}\n\n    // Reader-owned cases belong below this stable boundary.\n}}"
     );
     let artifact_id = format!("art_{capability_id}_{}_repository_it", entity.id.as_str());
-    let rendered = crate::emit_capability::imported_test_container(
-        model,
-        &package,
-        render(&package, &imports, &body, &artifact_id),
-    );
+    let mut unit = JavaUnit::new(&package, &imports, &body);
+    crate::emit_capability::imported_test_container(model, &mut unit);
+    let rendered = unit.render(&artifact_id);
     let path = ProjectPath::parse(format!(
         "{}/{}/{type_name}.java",
         crate::emit_companion_test::JAVA_TEST_ROOT,
@@ -353,18 +351,22 @@ pub(super) fn lower_repository_contract(
         domain_import(model, entity),
         "static org.assertj.core.api.Assertions.assertThat".to_string(),
     ]);
-    let body = CONTRACT
-        .resolve(templates)?
-        .replace("{{pkg}}", &package)
-        .replace("{{imports}}", &import_block(&imports))
-        .replace("{{record}}", record)
-        .replace("{{key}}", &primary_key.names.java_member);
+    let mut unit = JavaUnit::from_source(
+        &CONTRACT
+            .resolve(templates)?
+            .replace("{{pkg}}", &package)
+            .replace("{{record}}", record)
+            .replace("{{key}}", &primary_key.names.java_member),
+    );
+    for name in &imports {
+        unit.import(name);
+    }
     let artifact_id = format!("art_{}_repository_contract", entity.id.as_str());
     Ok(Some(test_unit(
         &package,
         &type_name,
         artifact_id.clone(),
-        prefixed(&artifact_id, body),
+        unit.render(&artifact_id),
         Provenance {
             artifact_id,
             ejection_id: None,
@@ -407,12 +409,16 @@ pub(super) fn lower_fake_repository_test(
     ) else {
         return Ok(None);
     };
-    let body = FAKE_TEST
-        .resolve(templates)?
-        .replace("{{pkg}}", &package)
-        .replace("{{imports}}", &import_block(&imports))
-        .replace("{{record}}", record)
-        .replace("{{arguments}}", &arguments);
+    let mut unit = JavaUnit::from_source(
+        &FAKE_TEST
+            .resolve(templates)?
+            .replace("{{pkg}}", &package)
+            .replace("{{record}}", record)
+            .replace("{{arguments}}", &arguments),
+    );
+    for name in &imports {
+        unit.import(name);
+    }
     // **Entity-scoped, like the adapter it tests, and for the same reason.**
     // The in-memory adapter's owner switches from `cap_scaffold_default` to
     // `cap_fake` the moment `add fake` is run, at an unchanged path -- so a
@@ -424,7 +430,7 @@ pub(super) fn lower_fake_repository_test(
         &package,
         &type_name,
         artifact_id.clone(),
-        prefixed(&artifact_id, body),
+        unit.render(&artifact_id),
         Provenance {
             artifact_id: artifact_id.clone(),
             ejection_id: Some(capability_id.to_string()),
@@ -436,40 +442,6 @@ pub(super) fn lower_fake_repository_test(
             compiler_pass: "capability-fake".to_string(),
         },
     )?))
-}
-
-/// The import block a template's `{{imports}}` stands in for, blank line and
-/// all. Empty for a file that needs none, so the template does not open with a
-/// stray blank line.
-fn import_block(imports: &BTreeSet<String>) -> String {
-    if imports.is_empty() {
-        return String::new();
-    }
-    // Static imports first, then a blank line, then the rest -- what
-    // palantir-java-format produces, so a project that later runs `jails fmt`
-    // over the managed tree finds nothing to change.
-    let (statics, rest): (Vec<_>, Vec<_>) = imports
-        .iter()
-        .partition(|import| import.starts_with("static "));
-    let block = |group: Vec<&String>| {
-        group
-            .iter()
-            .map(|import| format!("import {import};\n"))
-            .collect::<String>()
-    };
-    match (statics.is_empty(), rest.is_empty()) {
-        (true, _) => format!("{}\n", block(rest)),
-        (_, true) => format!("{}\n", block(statics)),
-        _ => format!("{}\n{}\n", block(statics), block(rest)),
-    }
-}
-
-/// The header line every generated file carries, which `render` adds for the
-/// bodies it builds and a template-rendered one has to be given.
-fn prefixed(artifact_id: &str, body: String) -> String {
-    format!(
-        "// Generated by jails from {artifact_id}. Clean hand edits survive regeneration.\n{body}"
-    )
 }
 
 fn test_unit(
@@ -540,7 +512,7 @@ pub(super) fn lower_search_adapter(
         "@Repository\npublic final class {type_name} implements {record}Search {{\n\n    private static final String SQL =\n            \"\"\"\n            select {column_list}\n              from {table}\n             where {column} @@ websearch_to_tsquery('{configuration}', :query)\n             order by ts_rank({column}, websearch_to_tsquery('{configuration}', :query)) desc\n             limit :limit\n            \"\"\";\n\n    private final JdbcClient jdbc;\n\n    public {type_name}(JdbcClient jdbc) {{\n        this.jdbc = jdbc;\n    }}\n\n    @Override\n    public List<{record}> matching(String query, int limit) {{\n        return jdbc.sql(SQL)\n                .param(\"query\", query)\n                .param(\"limit\", limit)\n                .query({record}.class)\n                .list();\n    }}\n}}"
     );
     let artifact_id = format!("art_{capability_id}_{}_search", entity.id.as_str());
-    let rendered = render(&package, &imports, &body, &artifact_id);
+    let rendered = JavaUnit::new(&package, &imports, &body).render(&artifact_id);
     let package_path = package.replace('.', "/");
     let path = ProjectPath::parse(format!("{JAVA_ROOT}/{package_path}/{type_name}.java"))
         .map_err(CompileError::new)?;

@@ -1,6 +1,6 @@
 //! Shared application-owned implementation of the closed `uuid7()` default.
 
-use super::{JAVA_ROOT, Unit, render};
+use super::{JAVA_ROOT, JavaUnit, Unit};
 use crate::CompileError;
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
 use jails_model::{AppModel, Package, StableId, Value};
@@ -60,7 +60,7 @@ pub(super) fn lower(model: &AppModel) -> Result<Option<Unit>, CompileError> {
         return new UUID(high, low);
     }
 }"#;
-    let rendered = render(&package, &imports, body, artifact_id);
+    let rendered = JavaUnit::new(&package, &imports, body).render(artifact_id);
     let path = ProjectPath::parse(format!(
         "{JAVA_ROOT}/{}/{}.java",
         package.replace('.', "/"),
