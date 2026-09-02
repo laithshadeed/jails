@@ -78,10 +78,10 @@ cargo test --test cli model::
 mise run verify-rewrite
 ```
 
-`the_specification_complete_example_links_except_its_one_recorded_gap` is the
-canary: it extracts §4 out of `docs/01-jdl-v1.md` and links it, pinning both
-that the rest of the example links and that the one recorded gap still
-refuses.
+`the_specification_complete_example_links_whole` is the canary: it extracts
+§4 out of `docs/01-jdl-v1.md` and links it, `eject Task.repo.fake` included --
+the readable boundary path resolves through `jails_model::boundary`, the one
+registry the linker and the emitters both read.
 
 ---
 
@@ -116,16 +116,3 @@ and pays §6.2's full price: grammar, typed payload, validation, stable-ID rule
 (what happens to `ent_order` when `Order` moves into a slice), ownership
 boundary, formatter, CLI mapping, upgrade rule (every existing model lands on
 the implicit slice without a byte changing), conformance tests.
-
-## The one item you share with B
-
-**A3.15 -- the boundary registry** lives in `docs/20-generated-java.md`
-because most of it is about output names. The linker half is yours:
-`known_targets` is the set of stable IDs already in the model, so `eject
-Task.repo.fake` refuses with `model-ejection-target` and §16.4's readable
-boundary path does not resolve. One registry serves both halves; agree its
-shape with B before either of you writes it, because an ejection has to
-resolve to the id the compiler emits and those are built by `format!` at the
-point of use (`Entity.repo.fake` against art_ent_note_repository_memory). A
-registry written only here would be a second answer to "what is this artifact
-called".

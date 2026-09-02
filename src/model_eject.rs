@@ -6,7 +6,7 @@ use jails_model::{EjectionId, Evolution, StableId};
 use jails_support::{Failure, Result};
 use jails_support::{hex, sha256};
 
-pub(crate) fn run(semantic_id: String, invocation: Invocation) -> Result<()> {
+pub(crate) fn run(reference: String, invocation: Invocation) -> Result<()> {
     // Observed rather than assumed, and observed exactly the way `capture`
     // does it -- the emitters branch on the Boot version, so resolving the
     // ejection boundary against `spring_boot: None` finds none of a Spring
@@ -15,6 +15,19 @@ pub(crate) fn run(semantic_id: String, invocation: Invocation) -> Result<()> {
     // Relative, because it becomes a `ProjectPath` in the plan; the read is
     // anchored to `root`. See `model_command::project_root`.
     let current = crate::model_command::Current::load(&invocation)?;
+    // A readable boundary path (`Note.repo.fake`) resolves through the one
+    // registry the linker reads, to the artifact id the compiler emits; an
+    // artifact or node id is taken as written. The source keeps the path as
+    // typed, and the linker resolves it again on every read.
+    let semantic_id = match resolve(&current.model, &reference) {
+        Ok(id) => id,
+        Err(unresolved) => {
+            return Err(Failure::Told(format!(
+                "{}\n       fix: {}",
+                unresolved.message, unresolved.fix
+            )));
+        }
+    };
     if current
         .model
         .ejections
@@ -47,9 +60,9 @@ pub(crate) fn run(semantic_id: String, invocation: Invocation) -> Result<()> {
     if !next_source.ends_with('\n') {
         next_source.push('\n');
     }
-    next_source.push_str(&format!("\neject {semantic_id} @id({})\n", id.as_str()));
+    next_source.push_str(&format!("\neject {reference} @id({})\n", id.as_str()));
     finish_generation(PreparedMutation {
-        name: semantic_id,
+        name: reference,
         invocation,
         current,
         next_source,
@@ -57,4 +70,22 @@ pub(crate) fn run(semantic_id: String, invocation: Invocation) -> Result<()> {
         authored_migration: None,
         reader_paths,
     })
+}
+
+/// The artifact id `reference` names: itself when it is already an artifact
+/// or node id, otherwise the boundary the registry resolves it to.
+fn resolve(
+    model: &jails_model::AppModel,
+    reference: &str,
+) -> std::result::Result<String, jails_model::boundary::Unresolved> {
+    if reference.starts_with("art_")
+        || model.capabilities.keys().any(|id| id.as_str() == reference)
+        || model.components.keys().any(|id| id.as_str() == reference)
+        || model.entities.keys().any(|id| id.as_str() == reference)
+        || model.operations.keys().any(|id| id.as_str() == reference)
+        || model.units.keys().any(|id| id.as_str() == reference)
+    {
+        return Ok(reference.to_string());
+    }
+    jails_model::boundary::resolve_in(model, reference)
 }

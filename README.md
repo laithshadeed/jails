@@ -60,7 +60,7 @@ The compiler entry points:
 jails model check [--manifest .jails/model.jdl] [--frozen]
 jails model plan  [--manifest .jails/model.jdl] [--bundle plan.json]
 jails model apply --bundle plan.json
-jails model eject <implementation-boundary-id>
+jails model eject <boundary>
 jails model explain
 jails model fmt [--check]
 jails sync
@@ -75,8 +75,10 @@ current model and executes its plan directly. `explain` lists every name the
 compiler derived rather than the author writing, with the rule that produced
 it.
 
-**Ejection** is the escape hatch for one implementation boundary, such as
-art_cap_fake_ent_note_repository or a controller and its test. It moves the
+**Ejection** is the escape hatch for one implementation boundary, named by a
+readable path (`Note.repo.fake`, `Note.http.api`, `Audit.implementation`)
+that the boundary registry resolves, or by the artifact id generated
+provenance reports (art_ent_note_repository_memory). It moves the
 captured live files, hand edits included, from `.jails/generated/main/java` to
 the matching `src/main/java` or `src/test/java` paths, records an `eject`
 declaration in the same plan, and leaves the ejected source alone forever

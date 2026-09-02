@@ -7,6 +7,7 @@
 
 mod app;
 pub mod artifact;
+pub mod boundary;
 mod build;
 mod builtin;
 pub mod capability;

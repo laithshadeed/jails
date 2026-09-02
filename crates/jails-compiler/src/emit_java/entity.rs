@@ -18,6 +18,7 @@ use super::*;
 use crate::recipe::{
     BootCondition, Fragment, Import, JavaFile, Naming, Node, Placement, Recipe, SourceSet,
 };
+use jails_model::boundary;
 
 /// The typed values of an entity its templates may spell.
 #[derive(Clone, Copy)]
@@ -181,7 +182,7 @@ fn has_wire_values(_: &AppModel, entity: &Entity) -> bool {
 const FACETS: Recipe<Entity> = recipe(
     &[
         facet(
-            "record",
+            boundary::RECORD.role,
             crate::template!("spring/entity_record_java.java"),
             Package::Domain,
             Naming::Suffix(""),
@@ -189,7 +190,7 @@ const FACETS: Recipe<Entity> = recipe(
             &[],
         ),
         facet(
-            "enum",
+            boundary::ENUM.role,
             crate::template!("spring/entity_enum_java.java"),
             Package::Domain,
             Naming::Suffix(""),
@@ -197,7 +198,7 @@ const FACETS: Recipe<Entity> = recipe(
             &[],
         ),
         facet(
-            "repository",
+            boundary::REPOSITORY.role,
             crate::template!("spring/entity_repository_java.java"),
             Package::Repository,
             Naming::Suffix("Repository"),
@@ -224,7 +225,7 @@ const FACETS: Recipe<Entity> = recipe(
         // class without the annotation -- the type is the boundary, the
         // annotation only says who constructs it.
         facet(
-            "service",
+            boundary::SERVICE.role,
             crate::template!("spring/entity_service_java.java"),
             Package::Service,
             Naming::Suffix("Service"),
@@ -232,7 +233,7 @@ const FACETS: Recipe<Entity> = recipe(
             &[Import::Role("record"), Import::Role("repository")],
         ),
         facet(
-            "events",
+            boundary::EVENTS.role,
             crate::template!("spring/entity_events_java.java"),
             Package::PortsEvents,
             Naming::Suffix("Events"),
@@ -244,7 +245,7 @@ const FACETS: Recipe<Entity> = recipe(
         // scan waiting for the table to grow, and the caller who wants
         // everything can say so.
         facet(
-            "search",
+            boundary::SEARCH.role,
             crate::template!("spring/entity_search_java.java"),
             Package::PortsSearch,
             Naming::Suffix("Search"),
@@ -290,7 +291,7 @@ const TESTKIT: Recipe<Entity> = recipe(
         source_set: SourceSet::Test,
         ejectable: true,
         ..facet(
-            "factory",
+            boundary::FACTORY.role,
             crate::template!("spring/entity_factory_java.java"),
             Package::Testkit,
             Naming::Suffix("Factory"),
@@ -325,7 +326,7 @@ const TESTKIT: Recipe<Entity> = recipe(
 /// project can register it.
 const CONVERTER: Recipe<Entity> = recipe(
     &[facet(
-        "enum-converter",
+        boundary::ENUM_CONVERTER.role,
         crate::template!("spring/enum_converter_java.java"),
         Package::Web,
         Naming::Suffix("Converter"),

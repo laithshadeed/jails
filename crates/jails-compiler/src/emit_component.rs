@@ -698,7 +698,7 @@ const HTTP_WORKFLOW: Recipe<Component> = recipe(
 ///
 /// `http_sink` and `durable_job` are the two kinds that stay functions, and
 /// the eight unit-shaped kinds render through `emit_unit`.
-fn recipe_for(kind: ComponentKind) -> Option<&'static Recipe<Component>> {
+pub(crate) fn recipe_for(kind: ComponentKind) -> Option<&'static Recipe<Component>> {
     match kind {
         ComponentKind::Fetcher => Some(&FETCHER),
         ComponentKind::Auth => Some(&AUTH),

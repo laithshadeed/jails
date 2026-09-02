@@ -88,6 +88,55 @@ fn model_eject_transfers_generated_java_once_and_reader_edits_survive() {
     assert_eq!(snapshot_tree(&root), before_retry);
 }
 
+/// JDL v1 §16.4: the preferred reference is a readable boundary path. The
+/// path is what the source keeps and what the linker resolves on every read;
+/// the artifact it moves is the one the id would have.
+#[test]
+fn model_eject_resolves_a_readable_boundary_path_to_the_same_artifact() {
+    let root = eject_model_project("model-eject-path");
+    apply_canonical_model(&root, "initial-plan");
+    let generated = root.join(
+        ".jails/generated/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java",
+    );
+    let reader =
+        root.join("src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java");
+    let generated_bytes = fs::read(&generated).unwrap();
+
+    let applied = jails_cmd(&root, None)
+        .args(["model", "eject", "Note.repo.fake"])
+        .output()
+        .unwrap();
+    assert!(
+        applied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    assert!(!generated.exists());
+    assert_eq!(fs::read(&reader).unwrap(), generated_bytes);
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(model.contains("eject Note.repo.fake @id(eject_"), "{model}");
+
+    // The id and the path name one boundary, so the second transfer refuses
+    // as the first one's.
+    let retried = jails_cmd(&root, None)
+        .args(["model", "eject", "art_ent_note_repository_memory"])
+        .output()
+        .unwrap();
+    assert!(!retried.status.success());
+    let stderr = String::from_utf8(retried.stderr).unwrap();
+    assert!(stderr.contains("already reader-owned"), "{stderr}");
+
+    // A path the registry does not carry refuses before anything is planned,
+    // naming what the entity does have.
+    let unknown = jails_cmd(&root, None)
+        .args(["model", "eject", "Note.repo.mysql"])
+        .output()
+        .unwrap();
+    assert!(!unknown.status.success());
+    let stderr = String::from_utf8(unknown.stderr).unwrap();
+    assert!(stderr.contains("`Note.repo.postgres`"), "{stderr}");
+}
+
 #[test]
 fn model_eject_refuses_a_reader_destination_collision_without_writing() {
     let root = eject_model_project("model-eject-collision");

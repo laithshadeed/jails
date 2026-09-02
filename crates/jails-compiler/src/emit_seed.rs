@@ -22,7 +22,7 @@
 use crate::CompileError;
 use crate::emit_java::JavaUnit;
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
-use jails_model::{AppModel, Capability, Entity, Package, StableId, TypeRef};
+use jails_model::{AppModel, Capability, Entity, Package, StableId, TypeRef, boundary};
 use std::collections::BTreeSet;
 
 const JAVA_MAIN_ROOT: &str = ".jails/generated/main/java";
@@ -86,7 +86,7 @@ pub(crate) fn lower(
         // fail to bind, which is worse than an empty one the test reports.
         rendered(
             entity,
-            "seed_data",
+            &boundary::SEED_DATA,
             RESOURCE_ROOT,
             &resource,
             FileKind::Resource,
@@ -99,7 +99,7 @@ pub(crate) fn lower(
         )?,
         rendered(
             entity,
-            "seeder",
+            &boundary::SEEDER,
             JAVA_MAIN_ROOT,
             &format!("{}/{name}Seeder.java", adapters.replace('.', "/")),
             FileKind::JavaMain,
@@ -107,7 +107,7 @@ pub(crate) fn lower(
         )?,
         rendered(
             entity,
-            "seeder_test",
+            &boundary::SEEDER_TEST,
             JAVA_TEST_ROOT,
             &format!("{}/{name}SeederTest.java", adapters.replace('.', "/")),
             FileKind::JavaTest,
@@ -216,13 +216,13 @@ fn class(capability: &Capability) -> String {
 
 fn rendered(
     entity: &Entity,
-    suffix: &str,
+    boundary: &boundary::Boundary,
     root: &str,
     relative: &str,
     kind: FileKind,
     body: Rendered,
 ) -> Result<(ProjectPath, RenderedFile), CompileError> {
-    let artifact = format!("art_{}_{}", entity.id.as_str(), suffix);
+    let artifact = boundary.owned_by(entity.id.as_str());
     let path = ProjectPath::parse(format!("{root}/{relative}")).map_err(CompileError::new)?;
     // A JSON file has nowhere to carry a comment, so only the Java gets the
     // provenance banner every other managed source has.

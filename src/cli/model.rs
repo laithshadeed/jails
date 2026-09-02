@@ -42,9 +42,9 @@ pub(crate) enum ModelCommand {
         /// Stable id, role, package or value to filter by; omit to list every record
         filter: Option<String>,
     },
-    /// Transfer generated Java for one semantic node into reader-owned source
+    /// Transfer generated Java for one implementation boundary into reader-owned source
     Eject {
-        /// Stable entity, operation, or capability id recorded in the model
+        /// A boundary path (Note.repo.fake, Audit.implementation), an artifact id from provenance, or a capability id
         semantic_id: String,
     },
 }

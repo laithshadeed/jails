@@ -11,7 +11,7 @@ and **MAY** have their RFC 2119 meanings.
 
 The complete-document example in §4 is valid JDL v1 and is an executable
 conformance fixture:
-`the_specification_complete_example_links_except_its_one_recorded_gap`
+`the_specification_complete_example_links_whole`
 extracts it from this file and links it. Smaller `jdl` blocks are valid
 declaration fragments in the surrounding entity/workspace context unless the
 text says they show a before/after transformation.
@@ -2487,11 +2487,10 @@ smaller `jdl` fragment is parsed in a minimal synthetic document appropriate to
 its context. Documentation examples MUST be extracted in CI rather than copied
 into disconnected test strings.
 
-`the_specification_complete_example_links_except_its_one_recorded_gap` is that
-extraction for §4: it reads the block out of this file rather than a copy, and
-pins the one construct that does not resolve yet (A3.15, in
-`docs/20-generated-java.md`). The smaller
-fragments are not extracted, and that is the rest of this family.
+`the_specification_complete_example_links_whole` is that extraction for §4:
+it reads the block out of this file rather than a copy and links the whole of
+it, `eject Task.repo.fake` included. The smaller fragments are not extracted,
+and that is the rest of this family.
 
 ## 22. Upgrade from the pre-v1 draft
 

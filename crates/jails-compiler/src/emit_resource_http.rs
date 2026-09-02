@@ -22,7 +22,7 @@ use crate::emit_java::{
     JAVA_ROOT, JavaUnit, Unit, domain_import, java_type, primary_key, with_suffix,
 };
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
-use jails_model::{AppModel, Entity, Package, StableId};
+use jails_model::{AppModel, Entity, Package, StableId, boundary};
 use std::collections::{BTreeMap, BTreeSet};
 
 const JAVA_TEST_ROOT: &str = ".jails/generated/test/java";
@@ -103,7 +103,7 @@ fn requests(model: &AppModel, entity: &Entity) -> Result<Unit, CompileError> {
          {reads}",
         body.join(",\n")
     );
-    let artifact_id = format!("art_{}_http_requests", entity.id.as_str());
+    let artifact_id = boundary::HTTP_REQUESTS.owned_by(entity.id.as_str());
     let path = ProjectPath::parse(format!(
         ".jails/generated/requests/{}.http",
         entity.names.sql_table
@@ -137,7 +137,7 @@ fn port(model: &AppModel, entity: &Entity) -> Result<Unit, CompileError> {
     let record = &entity.names.java_type;
     let body =
         format!("public interface {type_name} {{\n\n    {record} create({record} request);\n}}");
-    let artifact_id = format!("art_{}_http", entity.id.as_str());
+    let artifact_id = boundary::HTTP.owned_by(entity.id.as_str());
     unit(
         entity,
         package,
@@ -346,7 +346,7 @@ fn controller(
          \x20   // Reader-owned controller methods belong below this stable boundary.\n\
          }}"
     );
-    let artifact_id = format!("art_{}_http_controller", entity.id.as_str());
+    let artifact_id = boundary::HTTP_API.owned_by(entity.id.as_str());
     unit(
         entity,
         package,
@@ -504,7 +504,7 @@ fn controller_test(
          \x20   // Reader-owned tests belong below this stable boundary.\n\
          }}"
     );
-    let artifact_id = format!("art_{}_http_controller_test", entity.id.as_str());
+    let artifact_id = boundary::HTTP_API_TEST.owned_by(entity.id.as_str());
     unit(
         entity,
         package,

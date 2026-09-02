@@ -397,7 +397,12 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
         .chain(entities.keys().map(StableId::as_str))
         .chain(operations.keys().map(StableId::as_str))
         .collect::<BTreeSet<_>>();
-    let ejections = crate::ejection::link(document.ejections, &known_targets, &mut linker);
+    let ejections = crate::ejection::link(
+        document.ejections,
+        &known_targets,
+        crate::ejection::resolver(&entities, &components, &capabilities),
+        &mut linker,
+    );
 
     if !linker.diagnostics.is_empty() {
         return Err(Diagnostics::from_vec(linker.diagnostics));

@@ -41,10 +41,10 @@ compiler is agent 5's. The field-syntax parser has landed in your crate as
 - **`derived` is recomputed, never accumulated**, and `pinned` is decided by
   comparison with the convention. Anything that carries a flag off the
   source breaks `jails model explain`.
-- **`the_specification_complete_example_links_except_its_one_recorded_gap`
-  pins both halves of §4.** It must keep passing through every step, and the
-  one recorded gap (`eject Task.repo.fake`) stays recorded -- A3.15 is not
-  this pass.
+- **`the_specification_complete_example_links_whole` pins §4.** It must keep
+  passing through every step, `eject Task.repo.fake` included: the boundary
+  registry (`jails_model::boundary`) resolves that path, and this pass does
+  not touch it.
 - **A count with no method is a count that cannot be re-measured.** The
   registry table in `docs/10-language.md` carries its greps; keep them
   beside any number you change.

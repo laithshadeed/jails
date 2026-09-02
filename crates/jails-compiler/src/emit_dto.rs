@@ -9,7 +9,7 @@ use crate::emit_companion_test::JAVA_TEST_ROOT;
 use crate::emit_java::JavaUnit;
 use crate::{CompileError, emit_java};
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
-use jails_model::{AppModel, Entity, Field, Package, StableId};
+use jails_model::{AppModel, Entity, Field, Package, StableId, boundary};
 use std::collections::BTreeSet;
 
 pub(crate) fn lower(
@@ -155,7 +155,7 @@ fn request(
 ) -> Result<emit_java::Unit, CompileError> {
     let package = crate::emit_java::entity_package(model, entity, Package::Web);
     let type_name = format!("{}Request", entity.names.java_type);
-    let artifact_id = format!("art_{}_dto_request", entity.id.as_str());
+    let artifact_id = boundary::DTO_REQUEST.owned_by(entity.id.as_str());
     let mut imports = BTreeSet::from([emit_java::domain_import(model, entity)]);
     let asked = entity
         .fields
@@ -238,7 +238,7 @@ fn request(
 fn response(model: &AppModel, entity: &Entity) -> Result<emit_java::Unit, CompileError> {
     let package = crate::emit_java::entity_package(model, entity, Package::Web);
     let type_name = format!("{}Response", entity.names.java_type);
-    let artifact_id = format!("art_{}_dto_response", entity.id.as_str());
+    let artifact_id = boundary::DTO_RESPONSE.owned_by(entity.id.as_str());
     let mut imports = BTreeSet::from([emit_java::domain_import(model, entity)]);
     let components = components(model, entity, &mut imports, None);
     let variable = lower_first(&entity.names.java_type);
@@ -275,7 +275,7 @@ fn contract_test(model: &AppModel, entity: &Entity) -> Result<emit_java::Unit, C
     let package = crate::emit_java::entity_package(model, entity, Package::Web);
     let record = &entity.names.java_type;
     let type_name = format!("{record}DtoTest");
-    let artifact_id = format!("art_{}_dto_test", entity.id.as_str());
+    let artifact_id = boundary::DTO_TEST.owned_by(entity.id.as_str());
     let imports = BTreeSet::from([
         "java.util.Arrays".to_string(),
         "java.util.List".to_string(),

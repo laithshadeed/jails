@@ -317,6 +317,7 @@ fn layers_lists_each_module_once() {
 /// classified, so deleting one cannot silently loosen a boundary.
 const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-model", "app", 2),
+    ("jails-model", "boundary", 2),
     ("jails-model", "artifact", 2),
     ("jails-model", "build", 2),
     ("jails-model", "builtin", 2),

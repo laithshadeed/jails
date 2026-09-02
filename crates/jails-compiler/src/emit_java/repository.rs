@@ -10,7 +10,7 @@
 //! `jails beans` reports and a scaffold that compiles and cannot run.
 
 use super::*;
-use jails_model::Package;
+use jails_model::{Package, boundary};
 
 const CONTRACT: crate::Template = crate::template!("spring/repository_contract_java.java");
 const FAKE_TEST: crate::Template = crate::template!("spring/fake_repository_test_java.java");
@@ -76,7 +76,7 @@ pub(super) fn lower_fake_repository(
     // the adapter look like a *different* artifact wanting a path the first one
     // holds, which the executor correctly reports as reader-owned. The
     // capability still shows in `semantic_ids`.
-    let artifact_id = format!("art_{}_repository_memory", entity.id.as_str());
+    let artifact_id = boundary::REPOSITORY_FAKE.owned_by(entity.id.as_str());
     let rendered = JavaUnit::new(&package, &imports, &body).render(&artifact_id);
     let package_path = package.replace('.', "/");
     let path = ProjectPath::parse(format!("{JAVA_ROOT}/{package_path}/{type_name}.java"))
@@ -203,7 +203,7 @@ pub(super) fn lower_db_repository(
         "@Repository\npublic final class {type_name} implements {record}Repository {{\n\n    private final JdbcClient jdbc;\n\n    public {type_name}(JdbcClient jdbc) {{\n        this.jdbc = jdbc;\n    }}\n\n    @Override\n    public Optional<{record}> findById({key_type} id) {{\n        return jdbc.sql(\"select {column_list} from {table} where {key_column} = :id\")\n                .param(\"id\", id)\n                .query({record}.class)\n                .optional();\n    }}\n\n    @Override\n    public List<{record}> findAll() {{\n        return jdbc.sql(\"select {column_list} from {table} order by {key_column}\")\n                .query({record}.class)\n                .list();\n    }}\n\n    @Override\n    public {record} save({record} value) {{\n        return jdbc.sql(\"insert into {table} ({written_list}) values ({values}){conflict} returning {column_list}\"){params}\n                .query({record}.class)\n                .single();\n    }}\n\n    @Override\n    public boolean deleteById({key_type} id) {{\n        return jdbc.sql(\"delete from {table} where {key_column} = :id\")\n                .param(\"id\", id)\n                .update() > 0;\n    }}\n}}",
         key_type = key_type,
     );
-    let artifact_id = format!("art_{capability_id}_{}_repository", entity.id.as_str());
+    let artifact_id = boundary::REPOSITORY_POSTGRES.stored_by(capability_id, entity.id.as_str());
     let rendered = JavaUnit::new(&package, &imports, &body).render(&artifact_id);
     let package_path = package.replace('.', "/");
     let path = ProjectPath::parse(format!("{JAVA_ROOT}/{package_path}/{type_name}.java"))
@@ -287,7 +287,7 @@ pub(super) fn lower_db_repository_it(
     let body = format!(
         "@SpringBootTest\n@Transactional\nclass {type_name} {{\n\n    @Autowired\n    private {record}Repository repository;\n\n{autowired}    @Test\n    void satisfiesThe{record}RepositoryContractAgainstTheRealDatabase() {{\n{setup}        {record}RepositoryContract.savesReadsAndDeletes(\n                repository, new {record}({arguments}));\n    }}\n\n    // Reader-owned cases belong below this stable boundary.\n}}"
     );
-    let artifact_id = format!("art_{capability_id}_{}_repository_it", entity.id.as_str());
+    let artifact_id = boundary::REPOSITORY_POSTGRES_IT.stored_by(capability_id, entity.id.as_str());
     let mut unit = JavaUnit::new(&package, &imports, &body);
     crate::emit_capability::imported_test_container(model, &mut unit);
     let rendered = unit.render(&artifact_id);
@@ -365,7 +365,7 @@ pub(super) fn lower_repository_contract(
     for name in &imports {
         unit.import(name);
     }
-    let artifact_id = format!("art_{}_repository_contract", entity.id.as_str());
+    let artifact_id = boundary::REPOSITORY_CONTRACT.owned_by(entity.id.as_str());
     Ok(Some(test_unit(
         &package,
         &type_name,
@@ -429,7 +429,7 @@ pub(super) fn lower_fake_repository_test(
     // capability-scoped id makes the same file a *new* artifact with no merge
     // base, and reconciliation refuses it as reader-owned. The `db` proof
     // beside this one is capability-scoped because `db` never hands over.
-    let artifact_id = format!("art_{}_repository_memory_test", entity.id.as_str());
+    let artifact_id = boundary::REPOSITORY_FAKE_TEST.owned_by(entity.id.as_str());
     Ok(Some(test_unit(
         &package,
         &type_name,
@@ -515,7 +515,7 @@ pub(super) fn lower_search_adapter(
     let body = format!(
         "@Repository\npublic final class {type_name} implements {record}Search {{\n\n    private static final String SQL =\n            \"\"\"\n            select {column_list}\n              from {table}\n             where {column} @@ websearch_to_tsquery('{configuration}', :query)\n             order by ts_rank({column}, websearch_to_tsquery('{configuration}', :query)) desc\n             limit :limit\n            \"\"\";\n\n    private final JdbcClient jdbc;\n\n    public {type_name}(JdbcClient jdbc) {{\n        this.jdbc = jdbc;\n    }}\n\n    @Override\n    public List<{record}> matching(String query, int limit) {{\n        return jdbc.sql(SQL)\n                .param(\"query\", query)\n                .param(\"limit\", limit)\n                .query({record}.class)\n                .list();\n    }}\n}}"
     );
-    let artifact_id = format!("art_{capability_id}_{}_search", entity.id.as_str());
+    let artifact_id = boundary::SEARCH_POSTGRES.stored_by(capability_id, entity.id.as_str());
     let rendered = JavaUnit::new(&package, &imports, &body).render(&artifact_id);
     let package_path = package.replace('.', "/");
     let path = ProjectPath::parse(format!("{JAVA_ROOT}/{package_path}/{type_name}.java"))

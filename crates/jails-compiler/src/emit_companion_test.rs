@@ -19,7 +19,7 @@
 use crate::emit_java::JavaUnit;
 use crate::{CompileError, emit_java};
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
-use jails_model::{AppModel, BuiltinType, Entity, Field, Package, StableId, TypeRef};
+use jails_model::{AppModel, BuiltinType, Entity, Field, Package, StableId, TypeRef, boundary};
 use std::collections::BTreeSet;
 
 pub(crate) const JAVA_TEST_ROOT: &str = ".jails/generated/test/java";
@@ -38,7 +38,7 @@ pub(crate) fn lower(
     };
     let package = crate::emit_java::entity_package(model, entity, Package::Domain);
     let type_name = format!("{}Test", entity.names.java_type);
-    let artifact_id = format!("art_{}_test", entity.id.as_str());
+    let artifact_id = boundary::TEST.owned_by(entity.id.as_str());
     let rendered = JavaUnit::new(&package, &imports, &body).render(&artifact_id);
     let package_path = package.replace('.', "/");
     let path = ProjectPath::parse(format!("{JAVA_TEST_ROOT}/{package_path}/{type_name}.java"))

@@ -1402,17 +1402,13 @@ entity Task {
 /// the whole point -- a copy is a second document that drifts silently, and a
 /// test asserting a copy links proves nothing about what a reader sees.
 ///
-/// One line is a recorded gap rather than a passing assertion. §16.4 says
-/// the *preferred* ejection reference is a readable boundary path --
-/// `Entity.repo.fake` -- resolved by a boundary registry. There is no boundary
-/// registry: `known_targets` in the linker is the set of stable IDs, and
-/// `jails model eject` takes a "stable entity, operation, or capability id".
-/// So `eject Task.repo.fake` refuses, and this test pins both halves: the rest
-/// of the example links, and that line still refuses with the recorded
-/// diagnostic. When the registry lands, the second assertion fails and this
-/// test is how you find out the first one can absorb it.
+/// `eject Task.repo.fake` is the line to watch: §16.4 says the preferred
+/// ejection reference is a readable boundary path resolved by a boundary
+/// registry, and `jails_model::boundary` is that registry. The linker
+/// resolves the path to `art_ent_task_repository_memory`, the id the compiler
+/// emits the in-memory adapter under, so the example links whole.
 #[test]
-fn the_specification_complete_example_links_except_its_one_recorded_gap() {
+fn the_specification_complete_example_links_whole() {
     let document =
         fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/01-jdl-v1.md"))
             .expect("docs/01-jdl-v1.md is checked in");
@@ -1437,26 +1433,7 @@ fn the_specification_complete_example_links_except_its_one_recorded_gap() {
 
     // The whole example, as written. This is the assertion that fails when the
     // language and the linker drift apart.
-    let whole = jdl_project("spec-section-4-whole", example);
-    let refused = jails_cmd(&whole, None)
-        .args(["model", "check"])
-        .output()
-        .unwrap();
-    let said = String::from_utf8_lossy(&refused.stderr).into_owned();
-    assert!(
-        !refused.status.success() && said.contains("model-ejection-target"),
-        "§16.4's readable boundary path resolves now -- delete this half and the \
-         `known_targets` note in `docs/01-jdl-v1.md` §16.4's entry:\n{said}"
-    );
-    assert!(
-        said.matches("] $.").count() == 1,
-        "the example has a second diagnostic beyond the recorded ejection gap:\n{said}"
-    );
-    fs::remove_dir_all(&whole).ok();
-
-    // Everything else, which must link cleanly.
-    let without = example.replace("eject Task.repo.fake\n", "");
-    let root = jdl_project("spec-section-4-linked", &without);
+    let root = jdl_project("spec-section-4-whole", example);
     let checked = jails_cmd(&root, None)
         .args(["model", "check"])
         .output()
@@ -1465,6 +1442,27 @@ fn the_specification_complete_example_links_except_its_one_recorded_gap() {
         checked.status.success(),
         "the §4 example does not link:\n{}",
         String::from_utf8_lossy(&checked.stderr)
+    );
+    fs::remove_dir_all(&root).ok();
+}
+
+/// A boundary path an entity does not have refuses at link time, naming the
+/// paths it does have: the registry, not the parser, decides what is valid.
+#[test]
+fn an_unregistered_boundary_path_refuses_with_the_paths_the_owner_has() {
+    let root = jdl_project(
+        "spec-boundary-path-unknown",
+        &format!("{MODEL}\neject Note.repo.mysql\n"),
+    );
+    let checked = jails_cmd(&root, None)
+        .args(["model", "check"])
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&checked.stderr).into_owned();
+    assert!(!checked.status.success(), "{said}");
+    assert!(
+        said.contains("model-ejection-target") && said.contains("`Note.repo.fake`"),
+        "{said}"
     );
     fs::remove_dir_all(&root).ok();
 }
