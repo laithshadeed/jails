@@ -23,13 +23,7 @@ pub fn new(request: Request<'_>) -> Result<()> {
         )));
     }
     gradle_project::require_gradle(&request)?;
-    let (group, package, git, offline, app) = (
-        request.group,
-        request.package,
-        request.git,
-        request.offline,
-        request.app,
-    );
+    let (group, package, offline) = (request.group, request.package, request.offline);
     let devtools = request.devtools;
 
     let deps_for_gradle = effective_deps(request.deps, devtools);
@@ -69,29 +63,13 @@ pub fn new(request: Request<'_>) -> Result<()> {
     if initializr_java(java) != java {
         set_java_release(&tree, initializr_java(java), java)?;
     }
-    write_fixtures_dir(&tree)?;
-    finish_spring_project(
-        &tree,
+    complete(
+        publication,
+        &request,
         deps,
-        Seed {
-            name,
-            package: &resolved_package(name, group, package),
-            java,
-            app,
-        },
-    )?;
-    ensure_enforcer(&tree, java)?;
-    write_mise(&tree, java)?;
-    write_agents(&tree, java)?;
-    // start.spring.io's zip already ships a .gitignore, so just init.
-    if git {
-        git_init(&tree, debug);
-    }
-    let applied = seed(&publication, app, request.no_start, debug)?;
-
-    publication.publish()?;
-    println!("Created ./{name} (deps: {deps}, Java {java})");
-    reported(applied)
+        &resolved_package(name, group, package),
+        Origin::Initializr,
+    )
 }
 
 /// Fetch and unpack start.spring.io's answer into the reserved scratch tree.
@@ -182,7 +160,6 @@ fn new_offline(request: &Request<'_>, deps: &str) -> Result<()> {
         java,
         git,
         app,
-        debug,
         pretend,
         ..
     } = *request;
@@ -243,12 +220,33 @@ fn new_offline(request: &Request<'_>, deps: &str) -> Result<()> {
         ),
         "pom.xml",
     )?;
+    write_application_sources(tree, &package, &class)?;
+    complete(publication, request, deps, &package, Origin::Offline)
+}
+
+/// The application class and its context test, the one hand-written pair
+/// every Spring project starts from whichever build it uses.
+///
+/// Both files carry only the package and the class name; everything else a
+/// project gets is the model's, which is why this is not a template engine
+/// and not three copies.
+pub(super) fn write_application_sources(
+    tree: publish::Tree<'_>,
+    package: &str,
+    class: &str,
+) -> Result<()> {
+    let source = tree.join("src/main/java").join(package.replace('.', "/"));
+    let tests = tree.join("src/test/java").join(package.replace('.', "/"));
+    tree.ensure_directory_at(&source)
+        .map_err(|error| format!("failed to create {}: {error}", source.display()))?;
+    tree.ensure_directory_at(&tests)
+        .map_err(|error| format!("failed to create {}: {error}", tests.display()))?;
     super::write::write_new_file(
         tree,
         &source.join(format!("{class}Application.java")),
         &crate::template::render(
             crate::template_here!("new/offline_application.java"),
-            &[("package", &package), ("class", &class)],
+            &[("package", package), ("class", class)],
         ),
     )?;
     super::write::write_new_file(
@@ -256,31 +254,66 @@ fn new_offline(request: &Request<'_>, deps: &str) -> Result<()> {
         &tests.join(format!("{class}ApplicationTests.java")),
         &crate::template::render(
             crate::template_here!("new/offline_application_test.java"),
-            &[("package", &package), ("class", &class)],
+            &[("package", package), ("class", class)],
         ),
-    )?;
-    write_fixtures_dir(&tree)?;
+    )
+}
+
+/// Where the project's files came from; the two differ only in what git
+/// needs and what the report says.
+#[derive(Clone, Copy)]
+enum Origin {
+    /// start.spring.io's zip, which already ships a `.gitignore`.
+    Initializr,
+    Offline,
+}
+
+/// Everything a Spring project gets after its build file and application
+/// class are in the tree, whichever way they arrived: the fixtures directory,
+/// the seeded model and its first compile, the enforcer, the toolchain pins,
+/// git, publication and the report.
+fn complete(
+    publication: publish::Publication,
+    request: &Request<'_>,
+    deps: &str,
+    package: &str,
+    origin: Origin,
+) -> Result<()> {
+    let (name, java, app, git, debug) = (
+        request.name,
+        request.java,
+        request.app,
+        request.git,
+        request.debug,
+    );
+    let tree = &publication.tree();
+    write_fixtures_dir(tree)?;
     finish_spring_project(
-        &tree,
+        tree,
         deps,
         Seed {
             name,
-            package: &package,
+            package,
             java,
             app,
         },
     )?;
-    ensure_enforcer(&tree, java)?;
-    write_mise(&tree, java)?;
-    write_agents(&tree, java)?;
+    ensure_enforcer(tree, java)?;
+    write_mise(tree, java)?;
+    write_agents(tree, java)?;
     if git {
-        tree.put(".gitignore", GITIGNORE)?;
-        git_init(&tree, debug);
+        if matches!(origin, Origin::Offline) {
+            tree.put(".gitignore", GITIGNORE)?;
+        }
+        git_init(tree, debug);
     }
     let applied = seed(&publication, app, request.no_start, debug)?;
 
     publication.publish()?;
-    println!("Created ./{name} offline (deps: {deps}, Java {java})");
+    match origin {
+        Origin::Initializr => println!("Created ./{name} (deps: {deps}, Java {java})"),
+        Origin::Offline => println!("Created ./{name} offline (deps: {deps}, Java {java})"),
+    }
     reported(applied)
 }
 

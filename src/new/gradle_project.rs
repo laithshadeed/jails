@@ -556,22 +556,7 @@ pub(super) fn create(request: &super::Request<'_>, deps: &str, boot: &str) -> Re
     write_build(&plan, &tree)?;
     write_wrapper(&plan, &tree, request.offline, request.debug)?;
 
-    super::write::write_new_file(
-        tree,
-        &source.join(format!("{class}Application.java")),
-        &crate::template::render(
-            crate::template_here!("new/offline_application.java"),
-            &[("package", &package), ("class", &class)],
-        ),
-    )?;
-    super::write::write_new_file(
-        tree,
-        &tests.join(format!("{class}ApplicationTests.java")),
-        &crate::template::render(
-            crate::template_here!("new/offline_application_test.java"),
-            &[("package", &package), ("class", &class)],
-        ),
-    )?;
+    super::spring::write_application_sources(tree, &package, &class)?;
     super::write_fixtures_dir(&tree)?;
     // **The same seeding the Maven path does, for the same reason.** Six
     // defaults written into `application.properties` as reader-owned bytes

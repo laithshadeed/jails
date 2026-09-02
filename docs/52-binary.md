@@ -43,7 +43,7 @@ agents will need to touch under R2; keep your edits to it small and early.
 | `src/**` production / raw | 13,071 / 17,988 |
 | `src/model_*.rs` frontends | 16 files |
 | re-parses of an edited source, each a check rather than a second decision | 9 |
-| `src/new/**` raw | 2,543 |
+| `src/new/**` raw | 2623 |
 | `src/cli.rs` + `src/cli/*.rs` raw | 2,350 |
 | `editor_command`, `contract_command`, `tool_command` raw | 1,400 |
 | `tests/cli/model.rs` | 13,765 lines |
@@ -53,13 +53,6 @@ grep -rn 'parse(&next\|parse(&requested' src --include=*.rs | wc -l
 ```
 
 ## Steps
-
-**S52.3 -- `new`'s three seeds.** `src/new/write.rs` writes `App.java`, its
-test and a `package-info.java` by hand before the model takes over. The
-online and offline bodies in `spring.rs` are the same forty lines but for
-`download_starter`; fold them. `gradle_project.rs` (759 raw) is the third
-copy of "seed a project and a model": measure what it shares with `plain.rs`
-before deciding how much of it is Gradle.
 
 **S52.5 -- The surfaces with no page.** `contract`, `editor`, `request`,
 `runner` and `setup` have inventory rows and journeys and no `jails <name>`
