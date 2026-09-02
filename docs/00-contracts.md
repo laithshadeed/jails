@@ -63,6 +63,14 @@ Four agents, four disjoint areas. Work only in the paths your file lists.
 | **C — cutover** | `docs/30-cutover.md` | `crates/jails-workspace/**`, `crates/jails-project/**`, the nine legacy crates, `crates/jails-{drive,report,java}/**`, `src/new.rs`, `src/app.rs`, `src/dispatch.rs` |
 | **D — gates and CI** | `docs/40-gates-and-ci.md` | `.github/**`, `.githooks/**`, `mise.toml`, `scripts/**`, `tests/common/**`, `tests/architecture/**`, `tests/corpus/**` |
 
+**Superseded for the duration of the simplification pass (2026-09-02).**
+`docs/50-simplify.md` is the brief for five agents working the tree at once,
+and `docs/51-kernel.md` to `docs/55-compiler.md` are their plans; its
+ownership table replaces the one above until the pass ends, and its rules R1
+to R9 add to the resolution rules below rather than replacing them. The open
+items in the four workstream documents keep their identifiers; each plan lists
+the ones it closes, and closes them by deletion here as everywhere.
+
 ### The files all four touch
 
 Four things are shared by construction. Each has a resolution rule, so a

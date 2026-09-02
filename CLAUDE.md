@@ -46,6 +46,16 @@ names the paths it owns and the paths it must not touch:
 | `docs/30-cutover.md` | C | `crates/jails-workspace`, `jails-project`, the legacy crates |
 | `docs/40-gates-and-ci.md` | D | `.github/`, `mise.toml`, `scripts/`, `tests/common`, `tests/architecture` |
 
+**The six became twelve on 2026-09-02, on purpose and for one pass.**
+`docs/50-simplify.md` is the brief for five agents deleting what the cutover
+left behind -- the unreachable transaction kernel, the binary's sixteen copies
+of one pipeline, the two compatibility parsers, fifty-five orphaned templates,
+the second Maven parser and SQL projection -- and `docs/51-kernel.md` to
+`docs/55-compiler.md` are the five plans, each naming the paths it owns. Its
+ownership table supersedes the one above while the pass runs; the plans are
+deleted item by item as they close, and the four workstream documents shrink
+with them.
+
 **Every identifier survived both merges**, deliberately: `P<phase>.<item>`,
 `A<section>.<item>`, `B<n>`, `M<n>`, `research.md §N`, `modern.md §N` and
 `jdl-sol.md §N` all still resolve, because the identifier travelled rather than
