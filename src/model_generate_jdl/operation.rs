@@ -72,10 +72,7 @@ pub(super) fn operation_declaration(
             .values()
             .find(|candidate| candidate.label == entity_label)
             .is_some_and(|entity| entity.fields.iter().any(|field| field.semantics.version)))
-    .then(|| {
-        args.if_match
-            .unwrap_or(jails_spec::spec::kind::Precondition::Required)
-    });
+    .then(|| args.if_match.unwrap_or(jails_model::Precondition::Required));
     let managed = |as_input: bool| {
         model
             .entities
@@ -464,7 +461,7 @@ pub(super) fn operation_declaration(
     // binder only reads a form.** On a JSON body Jackson does the binding
     // and the annotation is not even looked at -- so a `--bind` there is a
     // wire name the reader asked for and silently did not get.
-    if !args.bind.is_empty() && args.consumes != Some(jails_spec::spec::kind::WireFormat::Form) {
+    if !args.bind.is_empty() && args.consumes != Some(jails_model::RequestFormat::Form) {
         return Err(Failure::Told(
             "this endpoint reads a JSON body, where the wire names come from Jackson and `--bind` is not read at all.\n       fix: pass `--consumes form`, or set `spring.jackson.property-naming-strategy` for the whole project".to_string(),
         ));
@@ -604,7 +601,7 @@ pub(super) fn operation_declaration(
             // `--consumes json` is the one way to ask for a body, and it is
             // the only shape that needs a verb with one.
             ArtifactKind::Query
-                if args.consumes == Some(jails_spec::spec::kind::WireFormat::Json)
+                if args.consumes == Some(jails_model::RequestFormat::Json)
                     && !fields.is_empty() =>
             {
                 "POST".to_string()
@@ -612,7 +609,7 @@ pub(super) fn operation_declaration(
             ArtifactKind::Query => "GET".to_string(),
             ArtifactKind::Transition => args.method.map_or_else(
                 || "PUT".to_string(),
-                |method| method.label().to_ascii_uppercase(),
+                |method| method.wire_name().to_string(),
             ),
             _ => unreachable!("event paths are rejected during validation"),
         };

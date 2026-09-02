@@ -311,10 +311,30 @@ pub enum SortDirection {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 pub enum Precondition {
     Required,
     Optional,
+    /// The operation states that it takes no precondition at all.
+    ///
+    /// **Not a `--if-match` value**, which is what `value(skip)` says: the
+    /// CLI's flag chooses between insisting on the caller's version and
+    /// checking one when it arrives, and "neither" is spelled by not passing
+    /// the flag to a kind that has no compare-and-swap. JDL still says it,
+    /// because a linked operation records what it decided.
+    #[cfg_attr(feature = "cli", value(skip))]
     None,
+}
+
+impl Precondition {
+    /// The canonical spelling, which is the JDL `if-match` word.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Required => "required",
+            Self::Optional => "optional",
+            Self::None => "none",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

@@ -13,6 +13,28 @@
 use super::*;
 use jails_spec::spec::manifest::APP_MANIFEST_SCHEMA;
 
+/// Read one closed-vocabulary value out of the manifest.
+///
+/// Routed through `clap::ValueEnum` rather than a hand-written `parse` per
+/// enum, so the manifest accepts exactly the words the flag accepts and the
+/// refusal lists exactly the words that exist. A variant the CLI does not
+/// offer -- `Precondition::None`, which JDL states and no flag chooses -- is
+/// `value(skip)` and is therefore absent from both.
+fn value_named<T: clap::ValueEnum>(value: &str, line_number: usize, what: &str) -> Result<T> {
+    T::from_str(value, false).map_err(|_| {
+        format!(
+            "line {line_number}: unknown {what} `{value}`; known: {}",
+            T::value_variants()
+                .iter()
+                .filter_map(|variant| variant.to_possible_value())
+                .map(|possible| possible.get_name().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+        .into()
+    })
+}
+
 pub(super) fn manifest_path(root: &Path, requested: Option<&Path>) -> Result<PathBuf> {
     let path = match requested {
         Some(path) if path.is_absolute() => path.to_path_buf(),
@@ -132,17 +154,11 @@ pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<GenerateArgs>)
                 "unique" => intent.uniques = string_array(value, line_number, key)?,
                 "method" => {
                     let value = string(value, line_number, key)?;
-                    intent.method = Some(
-                        jails_spec::spec::kind::HttpMethod::parse(value)
-                            .map_err(|why| format!("line {line_number}: {why}"))?,
-                    );
+                    intent.method = Some(value_named(value, line_number, "HTTP method")?);
                 }
                 "consumes" => {
                     let value = string(value, line_number, key)?;
-                    intent.consumes = Some(
-                        jails_spec::spec::kind::WireFormat::parse(value)
-                            .map_err(|why| format!("line {line_number}: {why}"))?,
-                    );
+                    intent.consumes = Some(value_named(value, line_number, "request format")?);
                 }
                 "package" => intent.package = Some(string(value, line_number, key)?.to_string()),
                 // `on` and `yields` are the names. `strategy_on` and
@@ -176,10 +192,7 @@ pub(super) fn parse_manifest(text: &str) -> Result<(Manifest, Vec<GenerateArgs>)
                 "bind" => intent.bind = string_array(value, line_number, key)?,
                 "if_match" => {
                     let value = string(value, line_number, key)?;
-                    intent.if_match = Some(
-                        jails_spec::spec::kind::Precondition::parse(value)
-                            .map_err(|why| format!("line {line_number}: {why}"))?,
-                    );
+                    intent.if_match = Some(value_named(value, line_number, "If-Match policy")?);
                 }
                 "on_conflict" => {
                     intent.on_conflict = Some(string(value, line_number, key)?.to_string())

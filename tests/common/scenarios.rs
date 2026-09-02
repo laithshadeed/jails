@@ -1342,8 +1342,8 @@ pub struct Invocation {
     pub package: Option<String>,
     pub on: Option<String>,
     pub yields: Option<String>,
-    pub method: Option<jails_spec::spec::kind::HttpMethod>,
-    pub consumes: Option<jails_spec::spec::kind::WireFormat>,
+    pub method: Option<jails_model::EndpointMethod>,
+    pub consumes: Option<jails_model::RequestFormat>,
     pub timestamps: bool,
 }
 
@@ -1362,12 +1362,8 @@ pub fn invocation(step: &[&str]) -> Option<Invocation> {
             "--package" => parsed.package = Some((*rest.next()?).to_string()),
             "--on" => parsed.on = Some((*rest.next()?).to_string()),
             "--yields" | "--returns" => parsed.yields = Some((*rest.next()?).to_string()),
-            "--method" => {
-                parsed.method = jails_spec::spec::kind::HttpMethod::parse(rest.next()?).ok()
-            }
-            "--consumes" => {
-                parsed.consumes = jails_spec::spec::kind::WireFormat::parse(rest.next()?).ok()
-            }
+            "--method" => parsed.method = jails_model::EndpointMethod::parse(rest.next()?).ok(),
+            "--consumes" => parsed.consumes = jails_model::RequestFormat::parse(rest.next()?).ok(),
             "--index" => parsed.indexes.push((*rest.next()?).to_string()),
             other if other.starts_with('-') => return None,
             other => parsed.fields.push(other.to_string()),

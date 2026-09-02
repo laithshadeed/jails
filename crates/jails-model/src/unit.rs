@@ -44,6 +44,7 @@ pub struct HttpEndpoint {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 pub enum EndpointMethod {
     Get,
     Post,
@@ -70,6 +71,19 @@ impl EndpointMethod {
         matches!(self, Self::Post | Self::Put | Self::Patch)
     }
 
+    /// The lowercase spelling: what the CLI parses, what a JDL `route`
+    /// member is written with, and what a refusal prints. The uppercase
+    /// [`Self::wire_name`] is the same verb on the wire.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Get => "get",
+            Self::Post => "post",
+            Self::Put => "put",
+            Self::Patch => "patch",
+            Self::Delete => "delete",
+        }
+    }
+
     /// The uppercase spelling every HTTP surface uses: the route grammar's own
     /// `METHOD /path`, Spring's `RequestMethod` constant, and the collision
     /// key. `{:?}` renders `Post`, which is none of those.
@@ -86,12 +100,22 @@ impl EndpointMethod {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 pub enum RequestFormat {
     Json,
     Form,
 }
 
 impl RequestFormat {
+    /// The canonical spelling: what the CLI parses, what a JDL `consumes`
+    /// clause is written with, and what a refusal prints.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Json => "json",
+            Self::Form => "form",
+        }
+    }
+
     pub fn parse(value: &str) -> Result<Self, String> {
         match value {
             "json" => Ok(Self::Json),

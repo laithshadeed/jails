@@ -75,7 +75,7 @@ pub(super) fn v1_declaration(
             "GET"
         };
         let method = args.method.map_or(default_method.to_string(), |method| {
-            method.label().to_ascii_uppercase()
+            method.wire_name().to_string()
         });
         let path = serde_json::to_string(path)
             .map_err(|error| Failure::Told(format!("could not quote route path: {error}")))?;
@@ -424,7 +424,7 @@ pub(super) fn reject_v1_options(args: &GenerateArgs, kind: ComponentKind) -> Res
             kind.label()
         )));
     }
-    if !args.bind.is_empty() && args.consumes != Some(jails_spec::spec::kind::WireFormat::Form) {
+    if !args.bind.is_empty() && args.consumes != Some(jails_model::RequestFormat::Form) {
         return Err(Failure::Told(
             "component `--bind` overrides are valid only with `--consumes form`.\n       fix: select form consumption or remove the bindings"
                 .to_string(),

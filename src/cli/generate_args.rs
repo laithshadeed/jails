@@ -165,7 +165,7 @@ pub(crate) struct GenerateArgs {
     /// sends no header and Spring answers 400 for a missing required one
     /// before any generated code runs.
     #[arg(long = "if-match", value_name = "POLICY")]
-    pub(crate) if_match: Option<jails_spec::spec::kind::Precondition>,
+    pub(crate) if_match: Option<jails_model::Precondition>,
     /// Bind one component from a request parameter of a different name.
     /// Repeatable, as `component=parameter`.
     ///
@@ -190,7 +190,7 @@ pub(crate) struct GenerateArgs {
     /// `--on <Type>` becomes the `@RequestBody` parameter on a verb that
     /// carries one; `--returns <Type>` is what the handler returns.
     #[arg(long, value_name = "METHOD")]
-    pub(crate) method: Option<jails_spec::spec::kind::HttpMethod>,
+    pub(crate) method: Option<jails_model::EndpointMethod>,
     /// How the generated endpoint reads its request. Defaults to `json`.
     ///
     ///   jails g usecase Ping email:string! --on User --consumes form
@@ -200,5 +200,5 @@ pub(crate) struct GenerateArgs {
     /// endpoint answers 415 to. Valid on `controller`, `usecase`,
     /// `query` and `transition`.
     #[arg(long, value_name = "FORMAT")]
-    pub(crate) consumes: Option<jails_spec::spec::kind::WireFormat>,
+    pub(crate) consumes: Option<jails_model::RequestFormat>,
 }

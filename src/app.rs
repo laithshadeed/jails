@@ -81,12 +81,12 @@ struct GenerateIntent {
     /// Components pinned to a constant, as `component=literal`.
     set: Vec<String>,
     /// Whether a `transition` insists on the caller's `If-Match`.
-    if_match: Option<jails_spec::spec::kind::Precondition>,
+    if_match: Option<jails_model::Precondition>,
     /// Components bound from a request parameter of a different name.
     bind: Vec<String>,
-    method: Option<jails_spec::spec::kind::HttpMethod>,
+    method: Option<jails_model::EndpointMethod>,
     /// How that endpoint reads its request: `json` (the default) or `form`.
-    consumes: Option<jails_spec::spec::kind::WireFormat>,
+    consumes: Option<jails_model::RequestFormat>,
 }
 
 impl GenerateIntent {
