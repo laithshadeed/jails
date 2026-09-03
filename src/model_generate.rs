@@ -349,6 +349,11 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
                 // carried an afternoon of edits -- and a migration is the
                 // other: it is append-only, so the moment to read it is
                 // before it reaches a database.
+                // **The JDL first, then the files.** The declaration is
+                // what the reader asked for; the files are what it implies.
+                for line in crate::plan_delta::model_hunk(&bundle) {
+                    println!("{line}");
+                }
                 for line in &delta.lines {
                     println!("{line}");
                 }

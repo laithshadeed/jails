@@ -326,6 +326,61 @@ fn preview_export_and_apply_all_name_one_plan_digest() {
 /// number of them. `-uall` because a directory git has never seen is one
 /// `status` collapses to a single `??` line, which would compare a report of
 /// files against a listing of directories.
+/// Every mutation prints the JDL it wrote, above the files that JDL implies.
+///
+/// The CLI is sugar over one editable source, and this is where a reader
+/// learns the language from the tool: the next edit can be made by hand in
+/// the file. `--pretend` prints the same lines without writing them.
+#[test]
+fn a_mutation_prints_the_declaration_it_wrote_above_the_files_it_implied() {
+    let root = model_project("model-jdl-hunk", EMPTY_MODEL);
+
+    let record = jails_cmd(&root, None)
+        .args(["g", "record", "Money", "amount:long"])
+        .output()
+        .unwrap();
+    assert!(
+        record.status.success(),
+        "{}",
+        String::from_utf8_lossy(&record.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&record.stdout).to_string();
+    let hunk: Vec<&str> = stdout
+        .lines()
+        .skip_while(|line| !line.starts_with("applied"))
+        .skip(1)
+        .take_while(|line| !line.trim_start().starts_with("create "))
+        .collect();
+    assert_eq!(
+        hunk,
+        vec!["  entity Money {", "    amount: long", "  }"],
+        "the declaration is printed above the file list:\n{stdout}"
+    );
+
+    // One line for a setting, and the same lines under `--pretend`.
+    let setting = jails_cmd(&root, None)
+        .args(["--pretend", "set", "server.port=9090"])
+        .output()
+        .unwrap();
+    assert!(
+        setting.status.success(),
+        "{}",
+        String::from_utf8_lossy(&setting.stderr)
+    );
+    let previewed = String::from_utf8_lossy(&setting.stdout).to_string();
+    assert!(
+        previewed.contains("  prop server.port = \"9090\""),
+        "{previewed}"
+    );
+    assert!(previewed.contains("nothing was written."), "{previewed}");
+    assert!(
+        !fs::read_to_string(root.join(".jails/model.jdl"))
+            .unwrap()
+            .contains("server.port"),
+        "--pretend wrote the declaration it printed"
+    );
+}
+
 #[test]
 fn every_line_of_a_mutation_report_is_a_file_git_sees_change() {
     let root = model_project("report-is-the-change", EMPTY_MODEL);

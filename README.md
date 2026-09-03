@@ -15,7 +15,8 @@ For the compiler design, the crate map and the contributor guide, see
 cargo build --workspace && cargo test --workspace && cargo install --path .
 ```
 
-Installs to `~/.cargo/bin/jails`. Shell completion:
+Installs `jails` into cargo's install root (`~/.cargo/bin` unless
+`CARGO_INSTALL_ROOT` says otherwise). Shell completion:
 `source <(jails completion bash)`.
 
 ## The application compiler
@@ -142,6 +143,12 @@ refuses before writes.
 `doctor`, `stats`, `notes` and `test`. `doctor --json` and `test --json` keep
 their exit codes, so `jails doctor --json && deploy` behaves like
 `jails doctor && deploy`.
+
+Every mutation prints the JDL it wrote above the files that JDL implies, so
+`jails g record Money amount:long` shows the `entity Money { … }` declaration
+it added to `.jails/model.jdl`. The CLI is sugar over that one editable
+source: the next change can be made by hand in the file and applied with
+`jails sync`.
 
 - `jails explain <kind>` — what a generator kind is for and the trap it
   invites. The generated Javadoc carries the same reasoning for whoever reads

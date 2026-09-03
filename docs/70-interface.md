@@ -68,7 +68,7 @@ reopening a contract:
 | 7 | I70.2 | one JSON encoding, carrying the same value as the human report |
 | 8 | I70.8, I70.9, I71.18 | a one-screen `--help`, global flags printed once, `g <kind> --help` about the kind |
 | 9 | I71.29, I71.26, I71.28 | README, the specification and the binary agree |
-| 10 | I71.14 | every mutation prints the JDL it wrote |
+| ~~10~~ | ~~I71.14~~ | ~~every mutation prints the JDL it wrote~~ |
 
 **Worth a prototype before a decision:** `jails undo` (I71.15), bare `jails`
 as status (I71.17), an LSP for the model (I71.19), an MCP server (I71.20),
@@ -407,12 +407,6 @@ jdl` prints the declaration families, the attributes per declaration, the
 the registries `docs/10-language.md` counts. *Done when* its attribute
 count equals the parser's refusal list.
 
-**I71.14 — every mutation prints the JDL it wrote.** *Change* above the
-file list, the hunk written into `.jails/model.jdl`: four to six lines
-for a scaffold, one for `set`. The bundle already holds the model's before
-and after images. The reader learns the language from the tool and sees
-the CLI as sugar over one source. *Done when* `g record Money amount:long`
-prints the `entity Money { … }` hunk first.
 
 **I71.21 — the manifest is the model (prototype).** *Today*
 `.jails/app.toml` is a second declarative source whose `[[generate]]` rows

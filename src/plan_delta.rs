@@ -97,6 +97,69 @@ impl Delta {
     }
 }
 
+/// The JDL this transition wrote into the model, as a reader would have
+/// typed it.
+///
+/// **The CLI is sugar over one editable source, and this is where a reader
+/// learns that.** `jails g record Money amount:long` is a shorthand for a
+/// declaration; printing the declaration teaches the language from the tool
+/// itself, and the next edit can be made by hand in the file. It is also the
+/// honest answer to "what did that command actually change", because the
+/// model is the only input the compiler reads.
+///
+/// Read out of the bundle rather than off the disk: `ReplaceModelFile`
+/// carries the before- and after-images, so the hunk cannot disagree with
+/// what apply will write, and `--pretend` shows the same lines without
+/// having written them. Only the added lines: a removal names the
+/// declaration it took out through the file list, and a reader looking at
+/// `entity Money {` wants the thing they now have.
+pub(crate) fn model_hunk(bundle: &jails_contracts::PlanBundle) -> Vec<String> {
+    use jails_contracts::PlannedOperation as Op;
+    let blob = |image: &jails_contracts::FileImageRef| -> Option<String> {
+        bundle
+            .blobs
+            .get(&image.blob)
+            .and_then(|bytes| String::from_utf8(bytes.clone()).ok())
+    };
+    for operation in &bundle.plan.operations {
+        let Op::ReplaceModelFile {
+            path,
+            before,
+            after,
+        } = operation
+        else {
+            continue;
+        };
+        let (Some(after), before) = (blob(after), before.as_ref().and_then(blob)) else {
+            continue;
+        };
+        // Zero context: the declaration and nothing around it. `diff -u`'s
+        // three lines of context would print a neighbouring entity a reader
+        // did not just write.
+        let Some(hunk) =
+            jails_support::unified::diff(path.as_str(), before.as_deref(), Some(&after), 0)
+        else {
+            continue;
+        };
+        let mut added: Vec<String> = hunk
+            .lines()
+            .filter(|line| line.starts_with('+') && !line.starts_with("+++"))
+            .map(|line| line[1..].to_string())
+            .collect();
+        // The blank line the writer puts between declarations is part of the
+        // edit and not part of the declaration, and a line of two spaces in
+        // a report reads as a bug.
+        while added.first().is_some_and(|line| line.trim().is_empty()) {
+            added.remove(0);
+        }
+        while added.last().is_some_and(|line| line.trim().is_empty()) {
+            added.pop();
+        }
+        return added.into_iter().map(|line| format!("  {line}")).collect();
+    }
+    Vec::new()
+}
+
 /// What this plan would do, one line per path it changes.
 ///
 /// **A dry run that prints a count is not a dry run.** The question a reader

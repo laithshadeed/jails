@@ -172,6 +172,9 @@ pub(crate) fn report_plan(
             bundle.plan.operations.len(),
             delta.summary()
         );
+        for line in crate::plan_delta::model_hunk(bundle) {
+            println!("{line}");
+        }
         for line in &delta.lines {
             println!("{line}");
         }

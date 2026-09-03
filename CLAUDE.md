@@ -1249,10 +1249,14 @@ the companion test is emitted whole and `@Disabled`, naming the component.
 - **clap `alias` is invisible to `clap_complete`**; use `visible_alias` for
   anything typed interactively. **Free-form `String` args don't tab-complete**;
   any closed value set is a `clap::ValueEnum`.
-- **The crate is on edition `"2024"`**, deliberately. Install target is
-  `~/.cargo/bin/jails` via `cargo install --path .`; bash completion is
-  registered in `~/code/my-dotfiles/home/.bashrc.d/60-completions.sh`, a
-  separate repository.
+- **The crate is on edition `"2024"`**, deliberately. `cargo install --path .`
+  installs into cargo's install root, which on this machine is `~/.local/bin`
+  rather than `~/.cargo/bin`: `CARGO_INSTALL_ROOT` is set in
+  `my-dotfiles/home/.bashrc.d/00-env.sh` because mise claims `~/.cargo/bin` as
+  the `rust` tool's bin path and shims every binary in it, and the shim rebuilds
+  mise's whole toolset before exec'ing -- 36.7 ms against 2.1 ms direct. Bash
+  completion is registered in
+  `~/code/my-dotfiles/home/.bashrc.d/60-completions.sh`, a separate repository.
 - **Tests never call start.spring.io**; `write_spring_fixture` in
   `tests/common/mod.rs` is a hand-written, version-pinned fixture.
 
