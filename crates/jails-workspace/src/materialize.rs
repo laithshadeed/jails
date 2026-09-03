@@ -85,19 +85,26 @@ pub(crate) const BUNDLE_SCHEMA: &str = "jails.plan-bundle.v1";
 /// live tree got into its current state. Keeping it off `PlanDraft` keeps the
 /// compiler's purity contract exactly where it was.
 ///
-/// The guard is [`Restore::Refuse`] everywhere but `jails resource repair`,
-/// because a managed file that vanished is usually the reader saying something
-/// -- a half-finished `git checkout`, a deletion meant as "stop generating
-/// this" -- and silently writing it back answers a question nobody asked.
-/// `jails resource repair` is the one command that *can* answer it: a fix
-/// line saying to restore the file by hand is advice a reader who deleted it
-/// cannot take.
+/// The guard is [`Restore::Refuse`] for every plan that is *about* something
+/// else. `jails sync` is the exception, because making the tree match the
+/// model is the whole of what it means: a file that is simply gone has an
+/// exact answer, and telling the reader who deleted it to restore it by hand
+/// is advice they cannot take.
+///
+/// A sealed migration whose *bytes changed* is a different question and stays
+/// `jails resource repair`'s. A database has already run the old text, so an
+/// edit is a fault to report rather than a difference to reconcile, and a
+/// command a reader runs after merging a branch must not quietly rewrite it.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Restore {
-    /// Refuse, naming the file. Every ordinary plan.
+    /// Refuse, naming the file. Every plan that is about something else.
     Refuse,
-    /// Write the desired bytes back. `jails resource repair` only.
-    Deleted,
+    /// Write back what is simply gone: a managed file, a managed reader
+    /// facet, a sealed migration that is missing. `jails sync`.
+    Missing,
+    /// [`Restore::Missing`], and rewrite a sealed migration whose bytes were
+    /// edited. `jails resource repair` only.
+    MissingOrEdited,
     /// Delete a managed file the reader edited, because they said to.
     ///
     /// **The other half of the same guard.** A file the compiler no longer
@@ -112,6 +119,22 @@ pub enum Restore {
     /// because that is two sets of edits to reconcile rather than one set to
     /// discard.
     EditedAndRemoved,
+}
+
+impl Restore {
+    /// Write back a managed path that is not on disk at all.
+    pub(crate) fn restores_missing(self) -> bool {
+        matches!(self, Self::Missing | Self::MissingOrEdited)
+    }
+
+    /// Rewrite a sealed migration whose bytes are not the published ones.
+    ///
+    /// Separate from [`Restore::restores_missing`] because the two answer
+    /// different questions: one puts back a file nobody has, the other
+    /// overwrites bytes a reader typed.
+    pub(crate) fn rewrites_edited_migrations(self) -> bool {
+        matches!(self, Self::MissingOrEdited)
+    }
 }
 
 /// Freeze a draft into the exact, content-addressed plan.
@@ -176,13 +199,14 @@ pub fn materialize(
     // plan's.** An ordinary command that found one edited would be rewriting a
     // file the reader touched as a side effect of something else; repair is
     // the command that exists to say "put back what was published".
-    if restore == Restore::Deleted {
+    if restore.restores_missing() {
         restore_sealed_migrations(
             snapshot,
             &sealed_bytes,
             &mut base,
             &mut blobs,
             &mut operations,
+            restore.rewrites_edited_migrations(),
         )?;
     }
     crate::reader_facet::materialize(
@@ -729,10 +753,17 @@ fn restore_sealed_migrations(
     base: &mut jails_contracts::SnapshotPreconditions,
     blobs: &mut BTreeMap<ContentDigest, Vec<u8>>,
     operations: &mut Vec<PlannedOperation>,
+    rewrite_edited: bool,
 ) -> Result<(), Diagnostic> {
     for (path, bytes) in sealed {
         let live = snapshot.files.get(path);
         if live.is_some_and(|file| file.bytes == *bytes) {
+            continue;
+        }
+        // A migration that is *there* and says something else is a fault to
+        // report, not a difference to reconcile: a database has already run
+        // the old text. Only repair overwrites one.
+        if live.is_some() && !rewrite_edited {
             continue;
         }
         let before = live

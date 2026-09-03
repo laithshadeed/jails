@@ -287,12 +287,6 @@ lock is gone are the same capture), so the refusal now names both repairs
 rather than guessing, and `doctor` carries a `merge base` row for the
 condition before a mutation runs into it.
 
-**I71.7 — one verb makes the tree match the model.** *Change* `sync`
-restores a deleted managed file (BASE is in the base tree, the render is
-the model's) and says `restore <path> deleted by hand`; `resource repair`
-is an alias for one release. *Done when* the
-deletion above is healed by `jails sync` and the report names the file.
-
 **I71.15 — `jails undo` (prototype).** *Change* add `jails undo`, built
 on what exists: every planned operation carries a before-image (`before: Option<FileImageRef>` in `plan.rs`; blobs in the
 bundle), so the inverse plan is the same bundle with before and after

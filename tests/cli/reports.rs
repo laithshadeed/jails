@@ -353,16 +353,22 @@ fn doctor_reports_missing_and_changed_managed_outputs_with_repair_guidance() {
     .unwrap();
 
     let output = jails_cmd(&root, None).arg("doctor").output().unwrap();
-    assert!(!output.status.success());
+    // Both rows are warnings, and neither is a failure: `sync` writes a
+    // deleted managed file back from the model and merges an edited one
+    // forward, so in both cases the project converges on the next run and the
+    // reader is entitled to know rather than to be told they broke something.
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
     let report = String::from_utf8_lossy(&output.stdout);
-    // A deletion is a fault and an edit is not: `sync` refuses while a managed
-    // file is gone, so nothing converges until somebody restores it, while an
-    // edit is merged forward on every sync and the reader is entitled to know
-    // they are doing it rather than to be told they broke something.
     assert!(report.contains("managed output"), "{report}");
     assert!(report.contains("NoteController.java deleted"), "{report}");
+    // The repair the row names is a jails command, because a deleted managed
+    // file is drift `sync` undoes rather than a decision the reader owes.
     assert!(
-        report.contains("restore the file from version control"),
+        report.contains("`jails sync` writes it back from the model"),
         "{report}"
     );
     assert!(report.contains("managed edits"), "{report}");

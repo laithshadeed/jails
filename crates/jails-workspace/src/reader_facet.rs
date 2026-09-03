@@ -200,7 +200,7 @@ fn reconcile_managed_file(
             }
         }
         // See `reconcile.rs`: `resource repair` writes it back.
-        (Some(_), None, Some(desired)) if restore == crate::materialize::Restore::Deleted => {
+        (Some(_), None, Some(desired)) if restore.restores_missing() => {
             Ok(ManagedFileMerge::Write(desired.to_vec()))
         }
         (Some(_), None, Some(_)) => Err(Diagnostic::new(

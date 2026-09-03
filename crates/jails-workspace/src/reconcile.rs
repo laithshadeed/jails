@@ -315,7 +315,7 @@ fn reconcile_artifact(
             // it -- so there is nothing of the reader's left to lose once the
             // bytes are gone, and refusing forever would leave a project with
             // no way out of a deletion.
-            (Some(_), None, Some(theirs)) if restore == crate::materialize::Restore::Deleted => {
+            (Some(_), None, Some(theirs)) if restore.restores_missing() => {
                 Some((theirs.bytes.clone(), theirs.kind, theirs.mode))
             }
             (Some(_), None, Some(_)) => {

@@ -1761,17 +1761,27 @@ entity Widget {
     let rendered = fs::read_to_string(&widget).unwrap();
 
     // A reader deletes a managed file -- a half-finished `git checkout`, or a
-    // deletion meant as "stop generating this". Every ordinary plan refuses,
-    // and that is the guard working.
+    // deletion meant as "stop generating this". `sync` is the verb that makes
+    // the tree match the model, and a file that is simply gone has an exact
+    // answer, so it writes it back rather than teaching the reader a second
+    // command they will use once.
     fs::remove_file(&widget).unwrap();
-    let refused = jails_cmd(&root, None).arg("sync").output().unwrap();
-    assert!(!refused.status.success());
-    let message = String::from_utf8_lossy(&refused.stderr);
-    assert!(message.contains("was deleted by you"), "{message}");
-    // The fix line has to name a command that writes it back, not `jails
-    // sync`, which is the command that just refused.
-    assert!(message.contains("jails resource repair"), "{message}");
+    let healed = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(
+        healed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&healed.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&healed.stdout).contains("Widget.java"),
+        "{}",
+        String::from_utf8_lossy(&healed.stdout)
+    );
+    assert_eq!(fs::read_to_string(&widget).unwrap(), rendered);
 
+    // `resource repair` does the same thing, and is still the command for the
+    // one case `sync` leaves alone: a sealed migration whose bytes changed.
+    fs::remove_file(&widget).unwrap();
     let repaired = jails_cmd(&root, None)
         .args(["resource", "repair"])
         .output()

@@ -234,7 +234,15 @@ pub(crate) fn sync(no_start: bool, invocation: Invocation) -> Result<()> {
         &manifest,
         source.as_bytes(),
         model,
-        Repair::No,
+        // **`sync` is the verb that makes the tree match the model, and a
+        // deleted managed file is the tree not matching it.** It used to
+        // refuse and name `jails resource repair`, which is a second verb for
+        // the same sentence -- and the reader who deleted the file reached
+        // for `sync` first, got a refusal, and had to learn a command they
+        // will use once. Nothing can be lost: a managed file is reproducible
+        // from the model, a reader edit inside one is a merge rather than a
+        // deletion, and deleting it again is one keystroke.
+        Repair::MissingManagedFiles,
         invocation.output.into(),
     )?;
     // **A dry run must not write.** `sync` is the command a
@@ -590,7 +598,10 @@ pub(crate) fn materialize_seed(root: &Path) -> Result<()> {
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum Repair {
     No,
-    DeletedManagedFiles,
+    /// `jails sync`: write back what is simply gone.
+    MissingManagedFiles,
+    /// `jails resource repair`: also rewrite an edited sealed migration.
+    MissingOrEditedMigrations,
 }
 
 /// Whether this compilation's diagnostics reach the reader.
@@ -675,7 +686,8 @@ fn compile(
         jails_compiler::COMPILER_VERSION,
         match repair {
             Repair::No => jails_workspace::Restore::Refuse,
-            Repair::DeletedManagedFiles => jails_workspace::Restore::Deleted,
+            Repair::MissingManagedFiles => jails_workspace::Restore::Missing,
+            Repair::MissingOrEditedMigrations => jails_workspace::Restore::MissingOrEdited,
         },
     )
     .map_err(|error| {
@@ -704,7 +716,7 @@ pub(crate) fn repair(invocation: Invocation) -> Result<()> {
         &manifest,
         source.as_bytes(),
         model,
-        Repair::DeletedManagedFiles,
+        Repair::MissingOrEditedMigrations,
         invocation.output.into(),
     )?;
     let execution = jails_workspace::execute(&root, &bundle)

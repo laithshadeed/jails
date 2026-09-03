@@ -357,20 +357,23 @@ entity Visit {
     let deleted = jails_cmd(&root, None).arg("doctor").output().unwrap();
     let deleted_out = String::from_utf8_lossy(&deleted.stdout).to_string();
     assert!(
-        deleted_out.contains("deleted") && deleted_out.contains("refuses while it is gone"),
-        "a deleted managed file is a failure, because sync cannot converge past it:\n{deleted_out}"
-    );
-    assert!(
-        !deleted.status.success(),
-        "a FAIL row must leave doctor with a non-zero status"
+        deleted_out.contains("deleted since the lock accepted it")
+            && deleted_out.contains("`jails sync` writes it back"),
+        "a deleted managed file is drift `sync` undoes, and the row says so:\n{deleted_out}"
     );
 
-    // And the refusal the row describes is the one `sync` actually gives.
-    let refused = jails_cmd(&root, None).arg("sync").output().unwrap();
+    // And the repair the row names is the one `sync` actually does.
+    let healed = jails_cmd(&root, None).arg("sync").output().unwrap();
     assert!(
-        !refused.status.success(),
-        "sync should refuse while an accepted file is missing:\n{}",
-        String::from_utf8_lossy(&refused.stdout)
+        healed.status.success(),
+        "sync should write the file back:\n{}",
+        String::from_utf8_lossy(&healed.stderr)
+    );
+    assert!(test.is_file(), "the deleted managed file is back");
+    assert!(
+        String::from_utf8_lossy(&healed.stdout).contains("VisitTest.java"),
+        "a file that comes back should not come back silently:\n{}",
+        String::from_utf8_lossy(&healed.stdout)
     );
 }
 

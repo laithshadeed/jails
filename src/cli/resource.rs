@@ -22,12 +22,15 @@ pub(crate) enum ResourceCommand {
         #[arg(long)]
         table: String,
     },
-    /// Restore sealed history and reconcile owned projections
+    /// Rewrite a sealed migration whose bytes changed
     ///
     /// On a canonical project this takes no arguments: managed output is
-    /// rendered from the model, so repair is ordinary
-    /// compilation with the deleted-managed-file guard waived, and there is
-    /// nothing to select or to choose a strategy between.
+    /// rendered from the model, so repair is ordinary compilation with two
+    /// guards waived, and there is nothing to select or to choose a strategy
+    /// between. `jails sync` waives the first of them -- it writes back any
+    /// managed file that is simply gone -- so the case left here is a sealed
+    /// migration whose text a reader changed, which `sync` deliberately will
+    /// not overwrite because a database has already run the old one.
     Repair {
         /// Simple entity name or fully qualified generated Java type
         selector: Option<String>,

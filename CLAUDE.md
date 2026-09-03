@@ -172,6 +172,17 @@ captures the reader-owned backfill file as a precondition; drop requires the
 accepted column and refuses while an operation references the field. Rolling
 and expand/contract are campaigns and refuse.
 
+**`sync` is the verb that makes the tree match the model, and that includes
+putting back what is gone.** A managed file, a managed reader facet or a
+sealed migration that is simply missing is restored -- it is reproducible
+from the model, a reader edit inside one is a merge rather than a deletion,
+and refusing taught the reader a second command they would use once. A
+sealed migration whose *bytes changed* is the one case `sync` leaves alone
+and `resource repair` still owns: a database has already run the old text,
+so an edit is a fault to report rather than a difference to reconcile.
+`Restore::{Missing, MissingOrEdited}` is that split, and `doctor` reports a
+deleted managed file as a `warn` naming `jails sync`, not a `fail`.
+
 **Destroy is subtraction.** Removing a declaration and compiling is the whole
 of it; there is no reverse renderer and no file table. Removal refuses while an
 operation edge still points at the declaration. A stored entity requires

@@ -87,9 +87,12 @@ fn collect() -> Result<Vec<Check>> {
         }
     }
 
-    // A deleted managed file is a `Fail` because `sync` refuses while it is
-    // gone -- "restore it or eject its implementation boundary; nothing was
-    // written" -- so the project cannot converge until somebody acts.
+    // A deleted managed file is drift the tool can undo: `sync` writes it
+    // back from the model, because making the tree match the model is what
+    // that verb means. It is a `Warn` rather than a `Fail` for that reason --
+    // the project converges on the next `sync`, with nothing for the reader
+    // to decide -- and the row still names the file, because a file that came
+    // back should not come back silently.
     checks.push(match missing.is_empty() {
         true => Check::new(
             Status::Ok,
@@ -97,14 +100,11 @@ fn collect() -> Result<Vec<Check>> {
             "every file the lock accepted is on disk",
         ),
         false => Check::new(
-            Status::Fail,
+            Status::Warn,
             "managed output",
-            format!(
-                "{} deleted; `jails sync` refuses while it is gone",
-                list(&missing)
-            ),
+            format!("{} deleted since the lock accepted it", list(&missing)),
         )
-        .fix("restore the file from version control"),
+        .fix("`jails sync` writes it back from the model"),
     });
 
     // An *edited* one is not a fault at all: the merge preserves it and the
