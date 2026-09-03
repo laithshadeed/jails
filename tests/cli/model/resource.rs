@@ -201,55 +201,6 @@ fn canonical_preserve_table_rename_refuses_overlap_without_writes() {
     assert_eq!(snapshot_tree(&root), before);
 }
 
-/// A qualified selector is refused rather than read past.
-///
-/// `billing.Invoice` is vertical-slice syntax, and nothing in the model
-/// declares a slice, so the old reading renamed whatever entity carried the
-/// last segment and threw the prefix away -- which, with an `Invoice` in two
-/// places, silently picks one.
-#[test]
-fn canonical_rename_refuses_a_qualified_selector_and_writes_nothing() {
-    let root = model_project("model-rename-qualified", EMPTY_MODEL);
-    let generated = jails_cmd(&root, None)
-        .args(["g", "record", "Invoice", "total:int"])
-        .output()
-        .unwrap();
-    assert!(
-        generated.status.success(),
-        "{}",
-        String::from_utf8_lossy(&generated.stderr)
-    );
-    let before = snapshot_tree(&root);
-
-    let renamed = jails_cmd(&root, None)
-        .args([
-            "rename",
-            "resource",
-            "billing.Invoice",
-            "Bill",
-            "--strategy",
-            "preserve-table",
-            "--force",
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        !renamed.status.success(),
-        "a qualified selector was accepted"
-    );
-    let stderr = String::from_utf8(renamed.stderr).unwrap();
-    assert!(
-        stderr.contains("`billing` is not a thing this model declares"),
-        "{stderr}"
-    );
-    assert!(
-        stderr.contains("name the entity itself -- `Invoice`"),
-        "{stderr}"
-    );
-    assert!(stderr.contains("--package"), "{stderr}");
-    assert_eq!(snapshot_tree(&root), before, "a refusal wrote something");
-}
-
 #[test]
 fn canonical_preserve_table_rename_refuses_a_destination_collision() {
     let root = model_project("model-rename-collision", EMPTY_MODEL);

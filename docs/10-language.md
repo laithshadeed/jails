@@ -85,23 +85,30 @@ registry the linker and the emitters both read.
 
 ## Open items
 
-**P9.3 -- slices.** Two halves, and the actionable one closed: `rename
-resource` accepted a `<slice>.<name>` selector and read past the prefix, so
-with an `Invoice` in two packages it renamed whichever entity carried the
-last segment and said nothing. It refuses a qualified selector now, naming
-the entity and pointing at `--package`.
+**P9.3 -- slices.** `rename resource` accepts a `<slice>.<name>` selector
+and nothing declares a slice, so the prefix is decorative: `rsplit('.')`
+keeps the last segment. Measured rather than assumed -- the prefix cannot
+disambiguate anything, because the linker refuses two entities that project
+to one Java type (`model-java-type-collision`), so a bare name always
+resolves to exactly one entity. Six tests in `tests/cli/generate.rs` pass
+`Billing.Task` deliberately, so the form is an exercised surface and not an
+accident. Refusing it is a breaking change to a CLI people may be using; it
+was tried and reverted.
 
-What is left is the construct, and it is not v1's. The normative spec does
-not mention a slice: `docs/01-jdl-v1.md` has no such section, and the §4.2
-this item used to cite does not exist. A slice derives package layout,
-ports, migrations and route prefixes, so §20.4 puts it past a version
-boundary -- an old compiler would accept the declaration and ignore the
-names it moves, which is the case that rule exists for -- and §6.2 prices
-it at grammar, typed payload, validation, stable-ID rule (what happens to
-`ent_order` when `Order` moves into a slice), ownership boundary,
-formatter, CLI mapping, upgrade rule and conformance tests. Meanwhile
-`--package` already collapses one entity's classes into one package, which
-is how a vertical slice is spelled today (`Entity::java_package`).
+The construct itself is not v1's. The normative spec never mentions a
+slice: `docs/01-jdl-v1.md` has no section defining one, and the §4.2 this
+item used to cite does not exist. A slice derives package layout, ports,
+migrations and route prefixes, so §20.4 puts it past a version boundary --
+an old compiler would accept the declaration and ignore the names it moves,
+which is the case that rule exists for -- and §6.2 prices it at grammar,
+typed payload, validation, stable-ID rule (what happens to `ent_order` when
+`Order` moves into a slice), ownership boundary, formatter, CLI mapping,
+upgrade rule and conformance tests. Meanwhile `--package` already collapses
+one entity's classes into a single package, which is how a vertical slice
+is spelled today (`Entity::java_package`).
 
-**Exit:** a `jdl 2` that defines it, or a decision that `--package` is
-enough. Neither is a defect, so this item is a question rather than a debt.
+**Exit:** a `jdl 2` that defines it, and the selector becomes a reference to
+a declaration rather than a prefix that is thrown away; or a decision that
+`--package` is enough, and the selector is refused in the same breaking
+change. Both are decisions rather than debt, which is why this item has sat
+here.
