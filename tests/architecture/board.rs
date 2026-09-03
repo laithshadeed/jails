@@ -384,7 +384,13 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 //
                 // 1474 -> 1468: S60.7. Managed tests are written beside the
                 // reader's, so the storage wiring check reads one test tree.
-                ceiling: 1468,
+                //
+                // 1468 -> 1486: I71.8 adds the `merge base` check. A modelled
+                // project with no `.jails/compiler.lock.json` has lost BASE,
+                // and the next mutation refuses on the first managed path it
+                // renders -- which reads as a collision. The check asks the
+                // resolved `Project` for two files and re-derives nothing.
+                ceiling: 1486,
                 // Withdrawn, not reached: none of the hand-written checks is a
                 // re-encoded dependency fact, so a lower target measures a
                 // saving that is not there. Ratchet against growth.

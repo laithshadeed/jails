@@ -246,11 +246,25 @@ fn reconcile_artifact(
         match (base_file, live, desired_file) {
             (None, None, Some(theirs)) => Some((theirs.bytes.clone(), theirs.kind, theirs.mode)),
             (None, Some(_), Some(_)) => {
+                // **A lost merge base is indistinguishable from a collision,
+                // so the fix names both.** BASE for every managed file lives
+                // in `.jails/compiler.lock.json`; without it the compiler
+                // renders onto a path that is already there and the file
+                // reads as reader-owned -- which is also exactly what a
+                // reader writing their own `Message.java` looks like. The
+                // snapshot cannot tell the two apart (a project that has
+                // never generated and one whose lock was deleted are the same
+                // capture), so asserting either would be a guess. Naming the
+                // second repair is what turns a puzzle about one file into a
+                // `git checkout`.
                 return Err(Diagnostic::new(
                     "workspace-generated-path-reader-owned",
                     output_path.to_string(),
                     format!("generated path `{output_path}` is already reader-owned"),
-                    "move the existing file or explicitly import it before generating",
+                    "if you wrote this file, move it or import it before generating; if jails \
+                     wrote it, restore `.jails/compiler.lock.json` from version control -- the \
+                     lock is the merge base, and without it every generated file reads as \
+                     reader-owned",
                 ));
             }
             (Some(base), Some(ours), Some(theirs)) if ours.bytes == base.bytes => {

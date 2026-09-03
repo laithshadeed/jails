@@ -4,6 +4,49 @@
 //!
 use super::*;
 
+/// **A lost merge base looks exactly like a collision, and the refusal says
+/// so.**
+///
+/// The lock is BASE. Without it there is no base for *any* managed file, so
+/// the first path the compiler renders lands on one that is already there and
+/// the reader was told, about their own generated code, to move it or import
+/// it. The capture cannot tell which happened -- a project that has never
+/// generated and one whose lock was deleted are the same capture -- so the
+/// refusal names both repairs rather than guessing, and `doctor` carries a
+/// row for the condition before a mutation runs into it.
+#[test]
+fn a_missing_lock_is_named_as_the_missing_merge_base() {
+    let root = jdl_project("merge-lost-base", MODEL);
+    let first = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(first.status.success(), "{first:?}");
+    assert!(root.join(".jails/compiler.lock.json").is_file());
+
+    fs::remove_file(root.join(".jails/compiler.lock.json")).unwrap();
+
+    let doctor = jails_cmd(&root, None).arg("doctor").output().unwrap();
+    let report = String::from_utf8_lossy(&doctor.stdout);
+    assert!(
+        report.contains("merge base") && report.contains("compiler.lock.json"),
+        "doctor should name the missing merge base: {report}"
+    );
+
+    let refused = jails_cmd(&root, None)
+        .args(["g", "field", "Note", "body:string", "--pretend"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    let told = String::from_utf8_lossy(&refused.stderr);
+    assert!(told.contains("already reader-owned"), "{told}");
+    // Both repairs, because the capture cannot tell a deleted lock from a
+    // file the reader wrote: a project that has never generated and one whose
+    // lock is gone look identical from here.
+    assert!(
+        told.contains("restore `.jails/compiler.lock.json` from version control"),
+        "{told}"
+    );
+    assert!(told.contains("if you wrote this file"), "{told}");
+}
+
 #[test]
 fn jdl_v1_drives_the_real_generate_edit_generate_loop() {
     let root = jdl_project(

@@ -790,6 +790,13 @@ this phase, and their refusals are worded by the caller that reports them.
   with no cluster installed, prints `Can't exec "--version"` and exits 0 --
   which `doctor` reported as an `ok` row with an error message sitting in the
   version column (`jails_drive::doctor::probe`).
+- **The lock is BASE, and losing it is indistinguishable from a collision.**
+  Without `.jails/compiler.lock.json` there is no merge base for any managed
+  file, so the first path the compiler renders reads as reader-owned -- which
+  is also exactly what a reader writing that file looks like, because a
+  project that has never generated and one whose lock was deleted are the same
+  capture. The refusal names both repairs rather than guessing, and `doctor`
+  carries a `merge base` row for a modelled project with no lock.
 - **`crates/jails-report/src/doctor/`** -- split by *who is being asked*:
   `environment.rs` asks the machine, `wiring.rs` asks the project whether a
   capability is wired up, and `doctor.rs` keeps the report and `--json`.

@@ -143,6 +143,7 @@ fn run_checks(project: &Project) -> Vec<Check> {
     checks.extend(capability_drift_checks());
     checks.extend(template_override_checks());
     checks.push(beans_check(root));
+    checks.extend(merge_base_check(project));
     checks
 }
 
@@ -182,6 +183,39 @@ fn template_override_checks() -> Vec<Check> {
 /// Every project jails mutates records its capabilities in the model and
 /// `jails sync` reconciles them by compiling, so there is nothing here to
 /// re-plan; the row names where the answer lives.
+/// The merge base, and whether this project still has one.
+///
+/// **The lock is BASE.** Every managed file is merged three ways against the
+/// projection it was last generated from, and that projection lives in
+/// `.jails/compiler.lock.json`. Without it jails cannot tell a file it wrote
+/// from a file the reader wrote, so the next mutation refuses on the first
+/// managed path it renders -- which reads as a collision rather than as a
+/// missing file. A modelled project with no lock is worth saying before the
+/// reader runs into it.
+///
+/// `Warn`, not `Fail`: a project whose first mutation has not run yet has no
+/// lock and nothing is wrong with it, which is why the row asks for the model
+/// first.
+fn merge_base_check(project: &Project) -> Vec<Check> {
+    let root = project.root();
+    if !root.join(".jails/model.jdl").is_file() || root.join(".jails/compiler.lock.json").is_file()
+    {
+        return Vec::new();
+    }
+    vec![
+        Check::new(
+            Status::Warn,
+            "merge base",
+            "this project has a model but no `.jails/compiler.lock.json`, so jails cannot tell \
+             generated code from your own edits",
+        )
+        .fix(
+            "restore the lock from version control; it is written by every mutation and is \
+             meant to be committed",
+        ),
+    ]
+}
+
 fn capability_drift_checks() -> Vec<Check> {
     vec![Check::new(
         Status::Skip,

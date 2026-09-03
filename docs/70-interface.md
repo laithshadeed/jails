@@ -277,11 +277,15 @@ documenting `rm .jails/compiler.lock.json && jails sync` as the merge
 resolution with the re-baseline caveat. *Done when* a fresh `new` carries
 the `.gitattributes` and the lock never appears in a `git diff`.
 
-**I71.8 — a lost merge base is said out loud.** *Change* when no lock
-exists and managed files do, the mutation prints *no compiler lock:
-treating the managed tree as accepted; edits since the last generation
-cannot be told from generated code until the next one*, and `doctor`
-carries the row. *Done when* the lost-lock run prints it.
+**I71.8 — a lost merge base is said out loud.** *Landed, and the premise
+was wrong.* jails does not treat the managed tree as accepted when the
+lock is gone: it refuses, on the first managed path it renders, because
+without BASE that path reads as reader-owned -- and it told the reader to
+move their own generated code. The capture cannot tell a deleted lock from
+a file the reader wrote (a project that has never generated and one whose
+lock is gone are the same capture), so the refusal now names both repairs
+rather than guessing, and `doctor` carries a `merge base` row for the
+condition before a mutation runs into it.
 
 **I71.7 — one verb makes the tree match the model.** *Change* `sync`
 restores a deleted managed file (BASE is in the base tree, the render is
