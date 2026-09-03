@@ -93,9 +93,8 @@ pub(crate) enum RunServicesArg {
     // `jails commands` still lists it -- what it is not is on the screen a
     // reader meets first. The pointer is one line rather than a second list,
     // because a list here would drift from the one clap already walks.
-    after_help = "Options above are global and apply to every command; \
-`jails explain --flag <name>` says why each exists. \
-`jails commands` lists every command, kind, capability and flag."
+    after_help = "Global options apply to every command; `jails explain --flag <name>` \
+says why each exists, and `jails commands` lists everything."
 )]
 pub(crate) struct Cli {
     #[command(subcommand)]
@@ -104,6 +103,10 @@ pub(crate) struct Cli {
     /// Print the mvnw/mvnd/mvn/java/git/curl commands jails executes
     #[arg(long, global = true)]
     pub(crate) debug: bool,
+
+    /// Print how long each pipeline phase took and what it read
+    #[arg(long, global = true)]
+    pub(crate) timing: bool,
 
     // `--dry-run` is an alias, not a second flag. A per-command `bool` that
     // dispatch ORs with this one -- `dry_run || pretend` -- is two names for
@@ -209,6 +212,8 @@ pub(crate) struct BatchReport {
 pub(crate) struct Invocation {
     pub(crate) pretend: bool,
     pub(crate) debug: bool,
+    /// Print the phase table: `--timing`, or `--debug`, which subsumes it.
+    pub(crate) timing: bool,
     /// The reader has authorised discarding edits to files being removed.
     ///
     /// `--yes` on `remove`, `destroy` and `rename`. Presentation in the same
@@ -363,6 +368,7 @@ impl Invocation {
         Self {
             pretend: false,
             debug,
+            timing: debug,
             batch_effects: false,
             batch_report: None,
             output: Output::Human,

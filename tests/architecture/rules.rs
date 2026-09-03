@@ -381,6 +381,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-model", "unit", 2),
     // Portable values shared by the pure compiler and filesystem boundary.
     ("jails-contracts", "draft", 3),
+    ("jails-contracts", "lock_bytes", 3),
     ("jails-contracts", "path", 3),
     ("jails-contracts", "plan", 3),
     ("jails-contracts", "snapshot", 3),

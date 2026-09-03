@@ -905,8 +905,12 @@ fn the_first_screen_of_help_is_one_screen_and_hides_nothing_from_the_catalog() {
     assert!(help.status.success());
     let help = String::from_utf8_lossy(&help.stdout);
     let lines = help.lines().count();
+    // Forty, not thirty-nine: the twenty day-one commands, the eight global
+    // flags, `--help`, `--version` and one footer line. `--timing` was the
+    // eighth flag and cost the line honestly; hiding a live flag to get back
+    // under a round number would trade the catalog's completeness for it.
     assert!(
-        lines < 40,
+        lines <= 40,
         "`jails --help` is {lines} lines, and the first screen is meant to fit on a \
          screen:\n{help}"
     );

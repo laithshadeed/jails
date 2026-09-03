@@ -116,6 +116,8 @@ fn lock_projection_mismatch() -> Diagnostic {
 const COMPILER_LOCK_SCHEMA_V1: &str = "jails.compiler-lock.v1";
 const COMPILER_LOCK_SCHEMA_V2: &str = "jails.compiler-lock.v2";
 const COMPILER_LOCK_SCHEMA_V3: &str = "jails.compiler-lock.v3";
+/// v3's fields with the projection's bytes stored as text.
+const COMPILER_LOCK_SCHEMA_V4: &str = "jails.compiler-lock.v4";
 
 #[derive(Deserialize)]
 struct CompilerLockV1 {
@@ -644,7 +646,13 @@ fn accepted_compiler_state(
 }
 
 fn decode_compiler_lock(bytes: &[u8]) -> Result<AcceptedCompilerState, Diagnostic> {
-    let header: serde_json::Value = serde_json::from_slice(bytes).map_err(lock_undecodable)?;
+    let mut header: serde_json::Value = serde_json::from_slice(bytes).map_err(lock_undecodable)?;
+    // **Back to the shape the types decode from, whatever the file holds.**
+    // A v4 lock stores a generated file's bytes as text; every earlier one
+    // stores an array and has nothing to expand. Either way what the
+    // verification below digests is the one form `serde` derives, so a lock
+    // from any release is checked under one rule.
+    jails_contracts::lock_bytes::expand(&mut header);
     let schema = header
         .get("schema")
         .and_then(serde_json::Value::as_str)
@@ -676,7 +684,7 @@ fn decode_compiler_lock(bytes: &[u8]) -> Result<AcceptedCompilerState, Diagnosti
                 migration_bytes: BTreeMap::new(),
             })
         }
-        COMPILER_LOCK_SCHEMA_V3 => {
+        COMPILER_LOCK_SCHEMA_V3 | COMPILER_LOCK_SCHEMA_V4 => {
             let lock: CompilerLockV3 = serde_json::from_value(header).map_err(lock_undecodable)?;
             verify_model(&lock.model, &lock.model_digest)?;
             let projection = serde_json::to_vec(&lock.projection).map_err(lock_unverifiable)?;

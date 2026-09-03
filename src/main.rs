@@ -79,6 +79,9 @@ fn main() -> std::process::ExitCode {
         root: None,
         pretend,
         debug,
+        // `--debug` subsumes it: the table was under `--debug` before this
+        // flag existed and a reader who learnt it there keeps it.
+        timing: cli.timing || debug,
         output: cli.output,
         diff: cli.diff,
         ast: cli.ast,

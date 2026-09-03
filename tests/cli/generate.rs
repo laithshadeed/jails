@@ -1567,6 +1567,62 @@ fn plain_project_scaffold_refuses_without_writing_uncompilable_spring_java() {
     );
 }
 
+/// `--timing` is the phase table on its own flag, and each row says what it read.
+///
+/// **The four phases are what a mutation *is***, and the reader who wants to
+/// know why a command took a second wants to know which of them took it. It
+/// was under `--debug` before, a flag documented as echoing the Maven and
+/// `git` commands jails runs -- of which a mutation runs none.
+#[test]
+fn timing_prints_the_four_phases_and_what_each_read() {
+    let root = temp_dir("timing-phases");
+    write_spring_fixture(&root);
+    let timed = jails_cmd(&root, None)
+        .args(["g", "record", "Timed", "amount:long", "--timing"])
+        .output()
+        .unwrap();
+    assert!(timed.status.success(), "{timed:?}");
+    let timed = String::from_utf8(timed.stdout).unwrap();
+    for phase in ["capture", "compile", "materialize", "execute"] {
+        assert!(
+            timed.contains(&format!("timing  {phase}")),
+            "missing {phase} timing in {timed}"
+        );
+    }
+    // **A duration alone cannot tell a slow phase from one handed more
+    // files**, which is the question the table exists to answer -- so every
+    // row carries the work behind its number.
+    assert!(
+        timed.contains("read ") && timed.contains(" files, "),
+        "capture did not say what it read: {timed}"
+    );
+    assert!(
+        timed.contains("rendered ") && timed.contains(" blobs, "),
+        "compile or materialize did not say what it produced: {timed}"
+    );
+    assert!(
+        timed.contains(" written, ") && timed.contains(" deleted"),
+        "execute did not say what it wrote: {timed}"
+    );
+    // It is a report, not a mode: the mutation applied exactly as it would
+    // have without the flag.
+    assert!(
+        root.join("src/main/java/com/example/demo/domain/Timed.java")
+            .is_file(),
+        "{timed}"
+    );
+    // And the ordinary run says none of it.
+    let quiet = jails_cmd(&root, None)
+        .args(["g", "record", "Quiet", "amount:long"])
+        .output()
+        .unwrap();
+    assert!(quiet.status.success(), "{quiet:?}");
+    assert!(
+        !String::from_utf8_lossy(&quiet.stdout).contains("  timing  "),
+        "{quiet:?}"
+    );
+}
+
 #[test]
 fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
     let root = temp_dir("prepared-review");

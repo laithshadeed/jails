@@ -509,8 +509,11 @@ was read.",
     (
         "timing",
         "Print what each phase of a mutation cost.",
-        "Separate from `--debug`, which echoes the commands jails runs. This answers where the \
-wall clock went: capture, compile, materialize, execute, and what each of them read.",
+        "Its own flag, because the two answer different questions. `--debug` echoes the \
+subprocesses jails runs, which a mutation has none of; this is the four phases a mutation \
+*is* -- capture, compile, materialize, execute -- with the work each did beside its wall \
+time, so a slow command says which half of the pipeline to look at. `--debug` prints it too, \
+so nothing that read the table before has to change.",
     ),
     (
         "debug",

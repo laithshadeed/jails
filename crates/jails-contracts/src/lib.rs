@@ -4,6 +4,7 @@
 //! handles, project roots, parsers, renderers, or executor implementations.
 
 mod draft;
+pub mod lock_bytes;
 mod path;
 mod plan;
 mod snapshot;

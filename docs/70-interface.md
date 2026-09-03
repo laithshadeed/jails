@@ -238,13 +238,29 @@ per path. A lost lock or a lost base is announced, never silently rebuilt.
 ### Change
 
 **I70.22 — the merge base is a tree of files, not an array of integers.**
-*Change* BASE is one file per managed path under `.jails/base/<project
-path>` and the lock is `path -> artifact id, digest`: the ratio becomes
-1×, a base diff is readable per file, git deduplicates unchanged blobs.
-The merge base is kept (`docs/00-contracts.md` §6.1); only its encoding
-changes. Interim, if the tree layout waits: strings instead of integer
-arrays (1.48×). *Done when* the ratio reads under 1.1 with the tree, under
-1.5 with the interim.
+*The interim landed*, and it is most of the win: the projection's bytes go
+into the lock as the text they are rather than as four characters per byte.
+Measured on a thirty-entity project, debug binary: the lock was 445.9 kB
+against a 25.0 kB tree (**17.8×**) and is now 123.2 kB (**4.9×**), of which
+the projection is 39.4 kB (**1.58×** the tree) and the accepted model 44.9 kB
+-- the model is now the larger half. Capture reads 152 kB where it read
+475 kB, so a mutation at thirty entities went from about 30 ms to about
+16 ms as a side effect.
+
+The digest rule did not change with the encoding: `projection_digest` is
+still a digest of the form `serde` derives, and the reader recomputes exactly
+that from what it decoded, which is what lets a lock written by the previous
+release verify and be rewritten in the new shape by the next mutation. The
+schema is `jails.compiler-lock.v4` so an older client refuses rather than
+finding no `bytes` and inferring an empty merge base.
+
+*What remains for 1.1×* is the tree layout the item names: BASE as one file
+per managed path under `.jails/base/`, the lock as `path -> artifact id,
+digest`. That takes the projection out of the JSON entirely, makes a base
+diff readable per file, and lets git deduplicate unchanged blobs -- none of
+which the interim does. It also leaves the accepted model as the lock's only
+bulk, and 44.9 kB of model for thirty entities is the next thing to measure.
+
 
 **I71.45 — a merge is a merge.** *Change* the model conflicts only where
 two branches touched the same declaration (step 4 puts a new entity beside
@@ -648,10 +664,13 @@ completes kinds, capabilities, entities, fields and markers.
 test --pretend` returns that line in under 10 ms.
 
 
-**I70.9 — global flags appear once.** *Landed:* the seven global flags
+**I70.9 — global flags appear once.** *Landed:* the eight global flags
 carry one help line each, the rationale moved to `jails explain --flag
 <name>`, and one line at the foot of `jails --help` says they are global
-and where the reasons are. *Remains:* a subcommand's help still lists all
+and where the reasons are. The screen is 40 lines: twenty commands, eight
+flags, `--help`, `--version` and the footer. `--timing` (I71.5) was the
+eighth flag and cost one line, which is why the number is 40 rather than
+the 39 measured before it. *Remains:* a subcommand's help still lists all
 seven, so `jails resource --help` is 21 lines against the item's 20; 15 of
 those are its own. clap hides an argument from every help or from none, so
 collapsing them to a summary line on subcommands needs either per-context
@@ -833,10 +852,6 @@ container: `start db` 10.0 s, `migrate` 476 ms, `migrate --check` 324 ms,
 
 ### Change
 
-**I71.5 — the stopwatch is a first-class flag.** *Change* `--timing`
-prints the four phases and what each read, on every mutation, apart from
-`--debug`'s command echo. *Done when* `jails --timing g record X a:int`
-prints the table above for that run.
 
 **I71.3 — the executor's work is proportional to the change.** *Change*
 verify preconditions by `stat` against what the last execution recorded,

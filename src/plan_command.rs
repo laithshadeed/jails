@@ -22,6 +22,7 @@ pub(crate) fn invocation() -> Result<Option<Invocation>> {
     let mut args = std::env::args_os().skip(1).peekable();
     let mut plan_in = None;
     let mut debug = false;
+    let mut timing = false;
     let mut output = Output::Human;
     let mut diff = false;
     let mut ast = false;
@@ -44,6 +45,7 @@ pub(crate) fn invocation() -> Result<Option<Invocation>> {
                 }
             }
             "--debug" => debug = true,
+            "--timing" => timing = true,
             "--diff" => diff = true,
             "--ast" => ast = true,
             "--pretend" | "--dry-run" | "-p" => pretend = true,
@@ -105,6 +107,7 @@ pub(crate) fn invocation() -> Result<Option<Invocation>> {
         root: None,
         pretend: false,
         debug,
+        timing: timing || debug,
         output,
         diff,
         ast,

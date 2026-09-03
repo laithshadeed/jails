@@ -75,7 +75,8 @@ pub(crate) fn report_already_declared(name: &str, invocation: &Invocation) {
     }
 }
 
-/// Where the wall clock went, under `--debug`.
+/// Where the wall clock went, under `--timing` (and under `--debug`, which
+/// subsumes it).
 ///
 /// **Named for the pipeline's own steps, because that is what runs**: capture
 /// the workspace, apply the patch to the model, compile it, materialize the
@@ -83,11 +84,17 @@ pub(crate) fn report_already_declared(name: &str, invocation: &Invocation) {
 /// not have is worse than none, because it sends the reader looking for the
 /// wrong thing.
 ///
+/// **Each row says what its phase read**, because a duration alone cannot
+/// distinguish a phase that is slow from one that was handed more work: 300 ms
+/// of capture over 1,457 files and 300 ms over 36 are different findings, and
+/// only the count separates them. The detail is built behind the same switch
+/// as the clock, so a run without the flag formats nothing.
+///
 /// `execute` is absent on a preview, and that absence is the point: it is how
 /// a reader confirms `--pretend` stopped before the only step that writes.
 #[derive(Default)]
 struct Stopwatch {
-    phases: Vec<(&'static str, std::time::Duration)>,
+    phases: Vec<(&'static str, std::time::Duration, String)>,
     since: Option<std::time::Instant>,
 }
 
@@ -99,17 +106,29 @@ impl Stopwatch {
         }
     }
 
-    fn mark(&mut self, phase: &'static str) {
+    fn mark(&mut self, phase: &'static str, read: impl FnOnce() -> String) {
         if let Some(since) = self.since {
-            self.phases.push((phase, since.elapsed()));
+            self.phases.push((phase, since.elapsed(), read()));
             self.since = Some(std::time::Instant::now());
         }
     }
 
     fn report(&self) {
-        for (phase, elapsed) in &self.phases {
-            println!("  timing  {phase:<12}{:>8.1?}", elapsed);
+        for (phase, elapsed, read) in &self.phases {
+            println!("  timing  {phase:<12}{elapsed:>8.1?}   {read}");
         }
+    }
+}
+
+/// A byte count a reader can compare at a glance.
+///
+/// The phase table's whole value is the ratio between two rows, and
+/// `21451526` against `1409921` is two numbers to count digits on.
+fn bytes(count: usize) -> String {
+    match count {
+        0..=9_999 => format!("{count} B"),
+        10_000..=999_999 => format!("{:.1} kB", count as f64 / 1_000.0),
+        _ => format!("{:.1} MB", count as f64 / 1_000_000.0),
     }
 }
 
@@ -124,7 +143,7 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
         reader_paths,
     } = prepared;
     let model_path = Path::new(crate::model_command::JDL_PATH);
-    let mut clock = Stopwatch::start(invocation.debug);
+    let mut clock = Stopwatch::start(invocation.timing);
     // The invocation's, so `jails new --app` can replay a manifest into the
     // project it is creating rather than into whatever encloses the directory
     // the reader is standing in.
@@ -183,7 +202,13 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
     .map_err(|error| {
         Failure::diagnosed(error.code, format!("could not capture workspace: {error}"))
     })?;
-    clock.mark("capture");
+    clock.mark("capture", || {
+        format!(
+            "read {} files, {}",
+            snapshot.files.len(),
+            bytes(snapshot.files.values().map(|file| file.bytes.len()).sum())
+        )
+    });
     // **The refusal says the whole request was abandoned.** A command naming
     // several things -- `jails add csv security` -- plans all of them and
     // applies all of them or none, and a reader who is not told that has to
@@ -204,7 +229,13 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
     // `PreparedMutation::authored_migration`. It is still the plan's, not a
     // side effect -- the materializer allocates its version from the observed
     // history and refuses if the path it lands on already exists.
-    clock.mark("compile");
+    clock.mark("compile", || {
+        format!(
+            "rendered {} files, {} migrations",
+            draft.generated.files.len(),
+            draft.migrations.len()
+        )
+    });
     // The one observation the capture could not make: which paths the render
     // wants is known only now, and a reader file already at one of them is a
     // collision the materializer refuses by name.
@@ -253,7 +284,14 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
             format!("could not materialize exact plan: {error}"),
         )
     })?;
-    clock.mark("materialize");
+    clock.mark("materialize", || {
+        format!(
+            "{} operations, {} blobs, {}",
+            bundle.plan.operations.len(),
+            bundle.blobs.len(),
+            bytes(bundle.blobs.values().map(Vec::len).sum())
+        )
+    });
 
     if let Some(path) = &invocation.plan_out {
         write_bundle(path, &bundle)?;
@@ -294,7 +332,12 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
     let execution = jails_workspace::execute(&root, &bundle).map_err(|error| {
         Failure::diagnosed(error.code, format!("could not apply exact plan: {error}"))
     })?;
-    clock.mark("execute");
+    clock.mark("execute", || {
+        format!(
+            "{} written, {} deleted",
+            execution.files_written, execution.files_deleted
+        )
+    });
     if converted {
         eprintln!("  create  {}", crate::model_command::JDL_PATH);
         eprintln!(

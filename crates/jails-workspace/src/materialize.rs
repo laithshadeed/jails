@@ -41,7 +41,14 @@ mod authoring_source;
 
 use authoring_source::publish_authoring_source;
 
-const COMPILER_LOCK_SCHEMA: &str = "jails.compiler-lock.v3";
+mod lock;
+pub(crate) use lock::encode_compiler_lock;
+use lock::materialize_compiler_lock;
+
+/// **v4 is v3 with the projection's bytes as text.** The number is what
+/// makes a client from the previous release refuse the file rather than
+/// look for an array, find a string, and infer an empty merge base.
+const COMPILER_LOCK_SCHEMA: &str = "jails.compiler-lock.v4";
 
 #[derive(Serialize)]
 struct CompilerLock<'a> {
@@ -331,94 +338,6 @@ fn materialize_migrations(
         operations.push(PlannedOperation::AppendMigration { path, after });
     }
 
-    Ok(())
-}
-
-/// The lock's bytes: the accepted model and projection, each sealed by its
-/// digest, and the published migrations. One encoder, so `relocate` -- which
-/// rewrites the projection's paths and nothing else -- writes the same file
-/// every plan does.
-pub(crate) fn encode_compiler_lock(
-    compiler: &str,
-    model: &jails_model::AppModel,
-    projection: &jails_contracts::RenderedTree,
-    migrations: BTreeMap<ProjectPath, ContentDigest>,
-    migration_bytes: BTreeMap<ProjectPath, Vec<u8>>,
-) -> Result<Vec<u8>, Diagnostic> {
-    let model_bytes = model.canonical_json().map_err(|error| {
-        lock_encoding(format!("could not encode accepted compiler model: {error}"))
-    })?;
-    let model_digest = digest(&model_bytes)?;
-    let projection_bytes = serde_json::to_vec(projection).map_err(|error| {
-        lock_encoding(format!(
-            "could not encode accepted compiler projection: {error}"
-        ))
-    })?;
-    let projection_digest = digest(&projection_bytes)?;
-    serde_json::to_vec_pretty(&CompilerLock {
-        schema: COMPILER_LOCK_SCHEMA,
-        compiler,
-        model_digest,
-        model,
-        projection_digest,
-        projection,
-        migrations,
-        migration_bytes,
-    })
-    .map_err(|error| lock_encoding(format!("could not encode compiler lock: {error}")))
-}
-
-/// The lock would not serialise. One code for the three halves it is made of,
-/// because a reader can do nothing different about any of them.
-fn lock_encoding(message: String) -> Diagnostic {
-    Diagnostic::without_a_fix(
-        "workspace-lock-encoding",
-        crate::capture::COMPILER_LOCK,
-        message,
-    )
-}
-
-fn materialize_compiler_lock(
-    snapshot: &WorkspaceSnapshot,
-    draft: &PlanDraft,
-    compiler_version: &str,
-    migrations: BTreeMap<ProjectPath, ContentDigest>,
-    migration_bytes: BTreeMap<ProjectPath, Vec<u8>>,
-    blobs: &mut BTreeMap<ContentDigest, Vec<u8>>,
-    operations: &mut Vec<PlannedOperation>,
-) -> Result<(), Diagnostic> {
-    let lock_bytes = encode_compiler_lock(
-        compiler_version,
-        &draft.next_model,
-        &draft.generated,
-        migrations,
-        migration_bytes,
-    )?;
-    let path = crate::capture::project_path(crate::capture::COMPILER_LOCK)?;
-    let before = snapshot
-        .files
-        .get(&path)
-        .map(|file| {
-            file_image(
-                &file.bytes,
-                if file.executable {
-                    FileMode::Executable
-                } else {
-                    FileMode::Regular
-                },
-                blobs,
-            )
-        })
-        .transpose()?;
-    let after = file_image(&lock_bytes, FileMode::Regular, blobs)?;
-    if before.as_ref() == Some(&after) {
-        return Ok(());
-    }
-    operations.push(PlannedOperation::ReplaceStateFile {
-        path,
-        before,
-        after,
-    });
     Ok(())
 }
 
