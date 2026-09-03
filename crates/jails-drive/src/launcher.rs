@@ -63,6 +63,22 @@ impl TooStale {
             ),
         }
     }
+
+    /// The same fact in a clause, for a reason line that already says the
+    /// outputs are stale and needs only to name *which* file made them so.
+    ///
+    /// A reader who is told the outputs are stale and not which source did it
+    /// has to go and find the file themselves, and the one they reach for
+    /// first is the one they just edited -- which, after a `resource field
+    /// add`, is the model rather than the seven files it rewrote.
+    pub fn summary(&self) -> String {
+        match self {
+            TooStale::NothingCompiled => "nothing is compiled yet".to_string(),
+            TooStale::SourceIsNewer(path) => {
+                format!("{} is newer than the compiled classes", path.display())
+            }
+        }
+    }
 }
 
 /// Where a build writes what it compiles: `target/` under Maven, `build/`

@@ -12,7 +12,7 @@ pub(super) fn plan(
     build: crate::build::Build,
     requested: &[String],
     options: &TestOptions,
-    compiled_outputs_current: bool,
+    stale: Option<&crate::launcher::TooStale>,
 ) -> Result<TestPlan> {
     let mut selectors: Vec<TestSelector> = requested
         .iter()
@@ -55,17 +55,24 @@ pub(super) fn plan(
     // `dependency:build-classpath` and Gradle through the task jails' marked
     // block registers (`launcher::test_classpath`). A build that cannot
     // answer refuses there, by name, not here by kind.
-    let build_only_reason = if options.compile == crate::testing::TestCompilePolicy::Build {
-        Some("the build tool is the explicit compile owner")
-    } else if !compiled_outputs_current {
-        Some("compiled test outputs are stale")
-    } else if options.scope != crate::testing::TestScope::Unit || options.database_schema {
-        Some("the warm engine only accepts isolated unit tests")
-    } else if !options.tags.is_empty() {
-        Some("JUnit tag eligibility is not yet attributable per warm test")
-    } else {
-        None
-    };
+    // The staleness itself, not a bool: the reader is told the outputs are
+    // stale *and* which source made them so, because "go and find it" is the
+    // step they would otherwise take next and get wrong.
+    let build_only_reason: Option<String> =
+        if options.compile == crate::testing::TestCompilePolicy::Build {
+            Some("the build tool is the explicit compile owner".to_string())
+        } else if let Some(stale) = stale {
+            Some(format!(
+                "compiled test outputs are stale: {}",
+                stale.summary()
+            ))
+        } else if options.scope != crate::testing::TestScope::Unit || options.database_schema {
+            Some("the warm engine only accepts isolated unit tests".to_string())
+        } else if !options.tags.is_empty() {
+            Some("JUnit tag eligibility is not yet attributable per warm test".to_string())
+        } else {
+            None
+        };
 
     if options.engine == TestEnginePolicy::Warm
         && options.scope == crate::testing::TestScope::Unit
@@ -93,7 +100,8 @@ pub(super) fn plan(
         if options.engine == TestEnginePolicy::Warm {
             return Err(format!(
                 "strict warm execution is unavailable: {}\n       fix: choose `--engine auto` so the build tool owns this partition",
-                build_only_reason.unwrap_or("the selected policy is incompatible")
+                build_only_reason
+                    .unwrap_or_else(|| "the selected policy is incompatible".to_string())
             )
             .into());
         }
@@ -105,7 +113,7 @@ pub(super) fn plan(
             } else {
                 let mut partition_reasons = reasons.clone();
                 if let Some(reason) = build_only_reason {
-                    partition_reasons.push(SelectionReason::Widened(reason.to_string()));
+                    partition_reasons.push(SelectionReason::Widened(reason));
                 }
                 partition_reasons
             },
@@ -354,7 +362,7 @@ mod tests {
             crate::build::Build::Maven,
             &["BetaTest".into(), "AlphaTest".into(), "AlphaTest".into()],
             &options(),
-            false,
+            Some(&crate::launcher::TooStale::NothingCompiled),
         )
         .unwrap();
         assert_eq!(plan.requested.len(), 2);
@@ -375,7 +383,7 @@ mod tests {
             crate::build::Build::Maven,
             &["AlphaTest".into()],
             &options,
-            true,
+            None,
         )
         .unwrap();
         assert_eq!(plan.partitions[0].engine, TestEngine::TestdV2);
@@ -392,7 +400,7 @@ mod tests {
             crate::build::Build::Maven,
             &["AlphaTest".into()],
             &options(),
-            true,
+            None,
         )
         .unwrap();
         assert_eq!(current.partitions[0].engine, TestEngine::TestdV2);
@@ -406,7 +414,7 @@ mod tests {
             crate::build::Build::Maven,
             &["AlphaTest".into()],
             &options(),
-            false,
+            Some(&crate::launcher::TooStale::NothingCompiled),
         )
         .unwrap();
         assert_eq!(stale.partitions[0].engine, TestEngine::Maven);
@@ -429,7 +437,7 @@ mod tests {
             crate::build::Build::Maven,
             &["PlainTest".into(), "ContextTest".into()],
             &options(),
-            true,
+            None,
         )
         .unwrap();
         assert_eq!(plan.partitions.len(), 2);
@@ -453,7 +461,7 @@ mod tests {
                 crate::build::Build::Gradle,
                 &["AlphaTest".into()],
                 &no_compile,
-                false,
+                Some(&crate::launcher::TooStale::NothingCompiled),
             )
             .is_err()
         );

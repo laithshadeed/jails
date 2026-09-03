@@ -932,10 +932,11 @@ there the unit is a whole service block rather than a setting.)
   0.6 s it merely matches. Use it when mvnd is not available or not working; do
   not expect it to beat the default. Whenever a source file is newer than the
   compiled classes — or nothing is compiled, or you asked for `--json`,
-  `--slowest` or `--fail-fast`, which read Surefire's XML — it says why and runs
-  the full Maven path instead. Running stale classes silently would be green
-  over code that no longer exists, which is the one outcome worse than being
-  slow. `jails check` is always `mvn clean verify` and is not affected.
+  `--slowest` or `--fail-fast`, which read Surefire's XML — it says why, names
+  the source that is newer, and runs the full Maven path instead. Running stale
+  classes silently would be green over code that no longer exists, which is the
+  one outcome worse than being slow. `jails check` is always `mvn clean verify`
+  and is not affected.
 
   The launcher itself is a dependency in your POM, and the first `--fast`
   installs it as an owned entity — one line in the report, then silence on

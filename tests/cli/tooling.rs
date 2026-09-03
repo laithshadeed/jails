@@ -1925,7 +1925,9 @@ fn test_fast_is_a_visible_alias_for_the_complete_auto_engine() {
     let report = String::from_utf8_lossy(&cold.stdout);
     assert!(
         report.contains("`--fast` normalized to auto")
-            && report.contains("compiled test outputs are stale"),
+            // The staleness *and* what made it stale: "go and find the file"
+            // is the step the reader would otherwise take next.
+            && report.contains("compiled test outputs are stale: nothing is compiled yet"),
         "the alias must expose the complete auto-engine decision: {report}"
     );
 }

@@ -163,14 +163,6 @@ changed path under no known root selects nothing. *Change* it is
 path that widened it. *Done when* the `--affected` run above executes
 every test and prints the path as its reason.
 
-**I71.24 — every test engine sees every source root.** *Today* the warm
-engine and the fingerprint read `src/` only. *Change* both take
-`source_roots()`; the fingerprint learns the managed tree in the same
-change that makes generated tests eligible, or `--fast` will run stale
-classes green. *Done when* `jails testd NoteTest` on a fresh scaffold runs
-warm in under 200 ms, and `test --fast` after `resource field add` reports
-the stale class.
-
 ---
 
 ## 2. Generated files in git
@@ -883,7 +875,7 @@ already writes. *Done when*
 
 **I71.33 — README's measurements name their subject.** *Change* the testd
 and `--fast` paragraphs say which project and which tests their numbers
-were taken on, and carry the §1 caveat until I71.24 closes. *Done when*
+were taken on. *Done when*
 README line 936 names the project.
 
 ---

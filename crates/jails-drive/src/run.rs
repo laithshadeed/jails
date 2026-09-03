@@ -389,8 +389,8 @@ fn test_report_once_with_fallback(
         options.failed = false;
     }
     let requested = execution_requested.as_slice();
-    let compiled_outputs_current = crate::launcher::staleness(&root, build).is_none();
-    let plan = test_plan::plan(&root, build, requested, &options, compiled_outputs_current)?;
+    let stale = crate::launcher::staleness(&root, build);
+    let plan = test_plan::plan(&root, build, requested, &options, stale.as_ref())?;
     if options.explain_selection || options.fast {
         test_plan::explain(&plan);
     }
