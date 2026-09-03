@@ -29,6 +29,7 @@
 
 mod epoch;
 
+use crate::inspect::roots::{InputRoot, RootKind, SourceSet, input_roots};
 use crate::process::{CommandSpec, Diagnostics, OutputMode};
 use jails_support::Result;
 use jails_support::{domain_hash, sha256};
@@ -68,6 +69,9 @@ pub(crate) fn select(
         }
     };
 
+    // Where the source is, asked once for the whole selection: every
+    // classification below is against this one answer.
+    let roots = input_roots(root);
     let mut graph = Graph::default();
     let mut reasons = Vec::new();
     for main in layout.classes(false) {
@@ -117,8 +121,24 @@ pub(crate) fn select(
             )],
         };
     }
-    if let Some(path) = changed.iter().find(|path| !is_java_source(path)) {
-        if resource_output_is_current(root, layout, path) {
+    // A source root this jails does not know is the unknown the pathspec used
+    // to hide: the file was never reported, so the selection came back empty
+    // and the run was green over an edit nothing had compiled. It widens, and
+    // it says which path did it -- a reason that names no file is one nobody
+    // can act on.
+    if let Some(path) = changed.iter().find(|path| {
+        path.starts_with(root.join(SOURCE_TREE)) && !is_under_a_known_root(&roots, path)
+    }) {
+        return Selection::Everything {
+            epoch,
+            reasons: vec![format!(
+                "{} is under no source root jails knows, so what depends on it is unknown",
+                path.display()
+            )],
+        };
+    }
+    if let Some(path) = changed.iter().find(|path| !is_java_source(&roots, path)) {
+        if resource_output_is_current(&roots, layout, path) {
             return Selection::Everything {
                 epoch,
                 reasons: vec![format!(
@@ -138,7 +158,7 @@ pub(crate) fn select(
 
     if let Some(path) = changed
         .iter()
-        .find(|path| !java_output_is_current(layout, &graph, path))
+        .find(|path| !java_output_is_current(&roots, layout, &graph, path))
     {
         return Selection::Stale {
             epoch,
@@ -151,7 +171,7 @@ pub(crate) fn select(
 
     let mut seeds = BTreeSet::new();
     for source in &changed {
-        match seed_classes(&graph, source) {
+        match seed_classes(&roots, &graph, source) {
             Some(classes) => seeds.extend(classes),
             // A changed source with no class of its own is the case that must
             // widen rather than narrow: a brand new file, or one whose class
@@ -174,11 +194,12 @@ pub(crate) fn select(
 }
 
 fn java_output_is_current(
+    roots: &[InputRoot],
     layout: &crate::launcher::OutputLayout,
     graph: &Graph,
     source: &Path,
 ) -> bool {
-    let Some(classes) = seed_classes(graph, source) else {
+    let Some(classes) = seed_classes(roots, graph, source) else {
         return false;
     };
     let Ok(source_time) = source.metadata().and_then(|metadata| metadata.modified()) else {
@@ -199,13 +220,16 @@ fn java_output_is_current(
 }
 
 fn resource_output_is_current(
-    project: &Path,
+    roots: &[InputRoot],
     layout: &crate::launcher::OutputLayout,
     source: &Path,
 ) -> bool {
-    for (input, is_test) in [("src/main/resources", false), ("src/test/resources", true)] {
-        let input = project.join(input);
-        if let Ok(relative) = source.strip_prefix(&input) {
+    for input in roots
+        .iter()
+        .filter(|input| input.kind == RootKind::Resources)
+    {
+        let is_test = input.set == SourceSet::Test;
+        if let Ok(relative) = source.strip_prefix(&input.path) {
             let expected = std::fs::read(source).ok();
             return layout
                 .resources(is_test)
@@ -303,11 +327,16 @@ impl Graph {
 
 /// `src/main/java/com/example/Money.java` -> `com/example/Money` and its
 /// inner classes, or `None` when none of them is compiled.
-fn seed_classes(graph: &Graph, source: &Path) -> Option<Vec<String>> {
-    let text = source.to_string_lossy().replace('\\', "/");
-    let stem = ["src/main/java/", "src/test/java/"]
+///
+/// The roots come from the one answer to "where is the source", so a file
+/// this cannot place is one no scanner in the tool could have placed either.
+fn seed_classes(roots: &[InputRoot], graph: &Graph, source: &Path) -> Option<Vec<String>> {
+    let stem = roots
         .iter()
-        .find_map(|prefix| text.split_once(prefix).map(|(_, rest)| rest))?
+        .filter(|input| input.kind == RootKind::Java)
+        .find_map(|input| source.strip_prefix(&input.path).ok())?
+        .to_string_lossy()
+        .replace('\\', "/")
         .strip_suffix(".java")?
         .to_string();
     let classes: Vec<String> = graph
@@ -420,7 +449,7 @@ fn changed_paths(root: &Path, debug: bool) -> Result<Vec<PathBuf>> {
             "--untracked-files=all",
             "--",
         ])
-        .args(INPUT_PATHS)
+        .args(watched_paths())
         .current_dir(root)
         .output(OutputMode::Capture);
     let done = crate::process::run(&spec, Diagnostics::from_flag(debug))
@@ -434,11 +463,16 @@ fn changed_paths(root: &Path, debug: bool) -> Result<Vec<PathBuf>> {
         .collect())
 }
 
-const INPUT_PATHS: &[&str] = &[
-    "src/main/java",
-    "src/test/java",
-    "src/main/resources",
-    "src/test/resources",
+/// The whole source tree, watched rather than the four roots inside it.
+///
+/// Asking git only about the roots jails knows makes a change under any other
+/// one *invisible*, and invisible reads as "nothing changed" -- which is the
+/// selection running no tests and reporting green. Watching the tree turns the
+/// same edit into an unknown, and an unknown widens.
+const SOURCE_TREE: &str = "src";
+
+/// Everything watched that is not a source root: the build's own inputs.
+const BUILD_INPUTS: &[&str] = &[
     "pom.xml",
     "build.gradle",
     "build.gradle.kts",
@@ -455,9 +489,28 @@ const INPUT_PATHS: &[&str] = &[
     ".jails/app.toml",
 ];
 
+/// What the epoch is computed over and what git is asked about: one list, so
+/// a file that can change the selection cannot be missing from the digest
+/// that says the selection is still the same one.
+fn watched_paths() -> Vec<&'static str> {
+    std::iter::once(SOURCE_TREE)
+        .chain(BUILD_INPUTS.iter().copied())
+        .collect()
+}
+
+/// Whether a changed path is under a source root this jails knows.
+///
+/// Only paths inside the source tree are asked: a build input has already
+/// been matched by name, and a `README.md` beside it is neither a source root
+/// nor a compiled input, so widening on one would make `--affected` mean
+/// "everything" on every project that keeps notes.
+fn is_under_a_known_root(roots: &[InputRoot], path: &Path) -> bool {
+    roots.iter().any(|input| path.starts_with(&input.path))
+}
+
 fn input_snapshot(project: &Path) -> Result<[u8; 32]> {
     let mut files = Vec::new();
-    for relative in INPUT_PATHS {
+    for relative in watched_paths() {
         collect_input_files(project, &project.join(relative), &mut files)?;
     }
     files.sort_by(|left, right| left.0.cmp(&right.0));
@@ -535,9 +588,11 @@ fn collect_input_files(
     Ok(())
 }
 
-fn is_java_source(path: &Path) -> bool {
-    let normalized = path.to_string_lossy().replace('\\', "/");
-    (normalized.contains("/src/main/java/") || normalized.contains("/src/test/java/"))
+fn is_java_source(roots: &[InputRoot], path: &Path) -> bool {
+    roots
+        .iter()
+        .filter(|input| input.kind == RootKind::Java)
+        .any(|input| path.starts_with(&input.path))
         && path
             .extension()
             .is_some_and(|extension| extension == "java")
@@ -629,13 +684,42 @@ mod tests {
     #[test]
     fn a_source_with_no_compiled_class_yields_no_seed() {
         let graph = graph_of(&[("com/example/Money", false, &[])]);
-        assert!(seed_classes(&graph, Path::new("src/main/java/com/example/New.java")).is_none());
+        let roots = input_roots(Path::new("/tmp/p"));
+        assert!(
+            seed_classes(
+                &roots,
+                &graph,
+                Path::new("/tmp/p/src/main/java/com/example/New.java")
+            )
+            .is_none()
+        );
         assert_eq!(
             seed_classes(
+                &roots,
                 &graph,
                 Path::new("/tmp/p/src/main/java/com/example/Money.java")
             ),
             Some(vec!["com/example/Money".to_string()])
+        );
+    }
+
+    /// A file under no source root has no stem to seed from, which is what
+    /// makes it an unknown rather than an empty selection.
+    #[test]
+    fn a_source_outside_every_known_root_has_no_seed() {
+        let graph = graph_of(&[("com/example/Money", false, &[])]);
+        let roots = input_roots(Path::new("/tmp/p"));
+        assert!(!is_under_a_known_root(
+            &roots,
+            Path::new("/tmp/p/src/integrationTest/java/com/example/Money.java")
+        ));
+        assert!(
+            seed_classes(
+                &roots,
+                &graph,
+                Path::new("/tmp/p/src/integrationTest/java/com/example/Money.java")
+            )
+            .is_none()
         );
     }
 

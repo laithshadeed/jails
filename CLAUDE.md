@@ -721,8 +721,15 @@ this phase, and their refusals are worded by the caller that reports them.
 - **`crates/jails-drive/src/affected.rs`** -- `testd --affected`: a reverse
   dependency index over the constant pools in the build's output directories
   (an `OutputLayout`, handed in by the caller). **Unknown widens**: no
-  git, a source with no compiled class, nothing compiled -- each returns
-  `Everything` with the reason printed. "Changed" is what git reports, not a
+  git, a source with no compiled class, nothing compiled, a change under a
+  source root jails does not know -- each returns
+  `Everything` with the reason printed and the path that caused it named.
+  **git is asked about `src` whole, not about the four roots**: a pathspec of
+  the known roots makes a change under any other one *invisible*, and
+  invisible reads as "nothing changed", which is the selector running nothing
+  and reporting green. A path outside `src` that is not a named build input
+  -- a `README.md` -- is neither a source root nor a compiled input and does
+  not widen. "Changed" is what git reports, not a
   marker jails writes, because a marker makes the same command select
   differently on two consecutive runs with no edit between.
 - **`crates/jails-drive/src/migrate.rs`** -- `jails migrate --check`: applies

@@ -2375,6 +2375,34 @@ fn testd_affected_selects_transitively_and_widens_when_it_cannot_know() {
         report.contains("1 tests successful"),
         "and it must actually run: {report}"
     );
+
+    // And the other half of the same property: a change under a source root
+    // jails does not know is an *unknown*, not an empty selection. Asking git
+    // only about the four roots hid the file, and a hidden change reads as
+    // "nothing changed" -- the selector running nothing and reporting green,
+    // which is the outcome `--affected` exists to avoid. `src/test/http` is
+    // the one every jails project has.
+    let stray = root.join("src/test/http/api.http");
+    fs::create_dir_all(stray.parent().unwrap()).unwrap();
+    fs::write(&stray, "GET http://localhost:8080/orders\n").unwrap();
+    let widened = jails_cmd_with_path(&root, &path)
+        .args(["testd", "--affected"])
+        .output()
+        .unwrap();
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&widened.stdout),
+        String::from_utf8_lossy(&widened.stderr)
+    );
+    let _ = jails_cmd_with_path(&root, &path)
+        .args(["testd", "--stop"])
+        .output();
+    assert!(
+        report.contains("running everything")
+            && report.contains("src/test/http/api.http")
+            && report.contains("no source root jails knows"),
+        "an edit under an unknown root must widen and name the path that did it: {report}"
+    );
 }
 
 /// k6 is not installed here, so what is checked is the two refusals and the

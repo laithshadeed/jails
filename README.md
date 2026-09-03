@@ -979,9 +979,10 @@ there the unit is a whole service block rather than a setting.)
   pools already sitting in `target/` — no configuration, nothing to keep in
   step. Reachability is transitive, so a change to a domain record selects the
   controller test three hops away. **Every unknown widens it**: no git, a
-  source with no compiled class, nothing compiled yet — each prints the reason
-  and runs everything, because a selector that silently drops a test is a green
-  build proving nothing. It cannot see reflection, a component scan or a
+  source with no compiled class, nothing compiled yet, a change under a source
+  root jails does not know — each prints the reason, names the path that caused
+  it, and runs everything, because a selector that silently drops a test is a
+  green build proving nothing. It cannot see reflection, a component scan or a
   resource file, which is one more reason `jails check` stays `mvn clean
   verify`.
 

@@ -64,7 +64,7 @@ reopening a contract:
 | ~~3~~ | ~~I71.35, I70.19, I70.20~~ | ~~consent is `--yes`, nothing else, and JSON has no shortcut past it~~ |
 | 4 | I70.13, I71.47, I71.16 | the model file reads like the specification's, and editing it by hand is the first path |
 | 5 | I70.22, I71.3, I71.4, I71.5 | the lock is 1× the tree, a scaffold is a 20-line diff, a mutation at a hundred entities is under 100 ms |
-| 6 | I71.40, I71.41, I71.24 | every scanner sees every source root; `test --affected` never selects nothing and passes |
+| ~~6~~ | ~~I71.40, I71.41, I71.24~~ | ~~every scanner sees every source root; `test --affected` never selects nothing and passes~~ |
 | 7 | I70.2 | one JSON encoding, carrying the same value as the human report |
 | 8 | I70.8, I70.9, I71.18 | a one-screen `--help`, global flags printed once, `g <kind> --help` about the kind |
 | 9 | I71.29, I71.26, I71.28 | README, the specification and the binary agree |
@@ -104,10 +104,10 @@ an affected-index file, the daemon's socket) when a daemon has run, and
 **The scanners now ask one question.** `inspect::roots::input_roots` is the
 one answer to "where is the source", and the affected index, the watch
 fingerprint, the Kafka topic scan, `jails lint` and the editor handshake all
-read it; a caller resolves the roots once and passes the slice down. What is
-left of the table is I71.40's row: a change under a root jails does not know
-is still hidden by the affected index's pathspec, and reads as *no affected
-tests* (2026-09-03).
+read it; a caller resolves the roots once and passes the slice down. A change
+under a root jails does not know widens `--affected` to everything and names
+the path, rather than being hidden by a pathspec and reading as "nothing
+changed" (2026-09-03).
 
 ### After
 
@@ -156,12 +156,6 @@ array of integers, 15× the tree it describes. *Change* the lock becomes a
 manifest of path, artifact id and digest, with the merge base beside it as
 a tree of files — which is I70.22 in §2, and is the whole of what remains
 here. *Done when* I70.22 is done.
-
-**I71.40 — a change with no known root widens to everything.** *Today* a
-changed path under no known root selects nothing. *Change* it is
-*unknown*, and unknown widens, as README says; the epoch report names the
-path that widened it. *Done when* the `--affected` run above executes
-every test and prints the path as its reason.
 
 ---
 
