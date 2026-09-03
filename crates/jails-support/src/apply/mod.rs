@@ -343,6 +343,41 @@ pub fn ensure_directory_outside_project(path: impl AsRef<Path>) -> Result<()> {
     ensure_directory(path)
 }
 
+/// What jails' own state directory keeps out of the reader's commits.
+///
+/// `.jails/` is the input: the model, and the lock that reproduces a merge
+/// base. `apply.lock` is a mutex and `run/` is a daemon socket beside two
+/// caches, so both are scratch a reader should never see in `git status`, let
+/// alone review. A nested `.gitignore` says so from inside, which is what
+/// makes it true for an adopted repository and for a project created with
+/// `--no-git` as well as for one `jails new` set up.
+const STATE_GITIGNORE: &str = "\
+# Written by jails. `.jails/` is the input jails regenerates from; these two
+# are scratch and safe to delete while nothing is running.
+apply.lock
+run/
+";
+
+/// Mark jails' scratch as scratch, from inside `.jails/`.
+///
+/// Called by the executor, which is the one thing that creates the directory,
+/// so a project adopted by a jails that predates this gets it on its next
+/// mutation rather than never. Idempotent by content, and a reader who edits
+/// the file keeps their edit: it is rewritten only when it differs, so a
+/// project that has already been marked does no write at all.
+///
+/// Not a transaction: there is no accepted state to protect and nothing to
+/// report, the way `.jails/run` is not.
+pub fn mark_state_scratch(project: &Path) -> Result<()> {
+    let path = project.join(".jails/.gitignore");
+    if fs::read_to_string(&path).is_ok_and(|found| found == STATE_GITIGNORE) {
+        return Ok(());
+    }
+    ensure_parent(&path)?;
+    Ok(fs::write(&path, STATE_GITIGNORE)
+        .map_err(|error| format!("failed to write {}: {error}", path.display()))?)
+}
+
 /// Create the user-only directory for disposable daemon process state.
 ///
 /// `.jails/run` is explicitly not project authority: it holds sockets,
@@ -568,6 +603,36 @@ mod tests {
         crate::scratch::ScratchDir::in_temp("jails-apply")
             .unwrap()
             .keep()
+    }
+
+    /// The two names, and nothing else: a `.gitignore` that swallowed
+    /// `model.jdl` or the compiler lock would hide the input jails regenerates
+    /// from, and a reader would find out on the machine that no longer has it.
+    #[test]
+    fn the_state_marker_names_the_scratch_and_only_the_scratch() {
+        let dir = scratch();
+        fs::create_dir_all(dir.join(".jails")).unwrap();
+        mark_state_scratch(&dir).unwrap();
+        let written = fs::read_to_string(dir.join(".jails/.gitignore")).unwrap();
+        let entries: Vec<&str> = written
+            .lines()
+            .filter(|line| !line.starts_with('#') && !line.is_empty())
+            .collect();
+        assert_eq!(entries, ["apply.lock", "run/"]);
+    }
+
+    /// A reader who edits it keeps their edit only until the content differs
+    /// -- the marker converges on jails' text, and writes nothing when it
+    /// already matches.
+    #[test]
+    fn the_state_marker_is_idempotent() {
+        let dir = scratch();
+        fs::create_dir_all(dir.join(".jails")).unwrap();
+        mark_state_scratch(&dir).unwrap();
+        let path = dir.join(".jails/.gitignore");
+        let first = fs::metadata(&path).unwrap().modified().unwrap();
+        mark_state_scratch(&dir).unwrap();
+        assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), first);
     }
 
     #[test]

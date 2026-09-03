@@ -762,18 +762,25 @@ fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
         .is_file()
     );
     // `.jails/` holds the reader's manifest, the one editable model, the lock
-    // sealing the projection it was compiled from, and the executor's own
-    // lock -- and nothing else: no output lives here. Closed rather than counted,
-    // so any other bookkeeping appearing here fails.
+    // sealing the projection it was compiled from, the executor's own lock and
+    // the `.gitignore` that keeps that lock out of a commit -- and nothing
+    // else: no output lives here. Closed rather than counted, so any other
+    // bookkeeping appearing here fails.
     let bookkeeping = fs::read_dir(root.join(".jails"))
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(
         bookkeeping,
-        ["app.toml", "apply.lock", "compiler.lock.json", "model.jdl",]
-            .map(str::to_string)
-            .into(),
+        [
+            ".gitignore",
+            "app.toml",
+            "apply.lock",
+            "compiler.lock.json",
+            "model.jdl",
+        ]
+        .map(str::to_string)
+        .into(),
         "{bookkeeping:?}"
     );
     assert!(root.join("Dockerfile").is_file());

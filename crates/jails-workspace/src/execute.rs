@@ -131,6 +131,20 @@ pub fn execute(root: &Path, bundle: &PlanBundle) -> Result<Execution, Diagnostic
     }
     crate::fault::trip(crate::fault::point::BEFORE_VERIFY)?;
     verify_after(root, bundle)?;
+    // **After the transaction, not before it.** A reader who commits `.jails/`
+    // is committing the model and the lock; `apply.lock` and `run/` are a mutex
+    // and a daemon's scratch, and neither belongs in a diff. Writing it here
+    // rather than beside `create_dir_all` above keeps the property that a
+    // refused plan writes nothing -- the marker appears on the first apply that
+    // actually wrote something, and every later one leaves it alone.
+    jails_support::apply::mark_state_scratch(root).map_err(|error| {
+        Diagnostic::new(
+            "workspace-state-not-marked-scratch",
+            ".jails/.gitignore",
+            error.to_string(),
+            "make `.jails` writable, or write the file by hand with `apply.lock` and `run/` in it",
+        )
+    })?;
     Ok(Execution {
         schema: "jails.execution.v1".to_string(),
         plan_digest: bundle.plan.digest.clone(),

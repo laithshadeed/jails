@@ -69,7 +69,7 @@ const SNAPSHOTTED_PROJECT_FILES: [&str; 3] = ["model.jdl", "ledger.toml", "app.t
 /// The locks are excluded for a different reason: they are empty files whose
 /// presence depends on whether a run was interrupted, so they are not output
 /// at all.
-const EXECUTOR_STATE: [&str; 7] = [
+const EXECUTOR_STATE: [&str; 8] = [
     ".jails/objects/",
     ".jails/transactions/",
     ".jails/receipts/",
@@ -86,6 +86,12 @@ const EXECUTOR_STATE: [&str; 7] = [
     // same tree, changing whenever any template does and saying nothing the
     // files beside it do not.
     ".jails/compiler.lock.json",
+    // The executor's marker saying which of its own files are scratch. Fixed
+    // bytes, identical in every scenario, and about `.jails/` rather than
+    // about anything a scenario generated -- 63 copies of four lines would
+    // say only that the constant is still the constant, which a unit test
+    // beside it says once.
+    ".jails/.gitignore",
 ];
 
 /// Whether this path is the executor's bookkeeping rather than jails' output.

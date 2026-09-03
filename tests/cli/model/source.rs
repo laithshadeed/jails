@@ -1504,3 +1504,57 @@ fn a_model_that_is_not_jdl_1_is_refused_by_name() {
     assert!(!root.join(".jails/model.jdl").exists());
     fs::remove_dir_all(&root).ok();
 }
+
+/// **A deleted `.jails/` is a lost input, not a lost application** -- and the
+/// difference has to be said, because jails' answer to "no model" is to seed
+/// one.
+///
+/// The generated tree is under `src/` now, so it survives `rm -rf .jails`
+/// whole. Seeding a fresh model beside it reads every generated file as the
+/// reader's own: `model status` reports nothing managed, and the first
+/// regeneration refuses over a path it wrote itself, several commands after
+/// the mistake. The evidence that tells the two apart is the provenance
+/// header the compiler writes into every managed file.
+#[test]
+fn a_project_whose_model_is_gone_is_refused_rather_than_seeded_afresh() {
+    let root = temp_dir("model-gone");
+    write_spring_fixture(&root);
+    let scaffolded = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Note", "id:uuid@pk", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(
+        scaffolded.status.success(),
+        "{}",
+        String::from_utf8_lossy(&scaffolded.stderr)
+    );
+    let entity = root.join("src/main/java/com/example/demo/domain/Note.java");
+    assert!(entity.is_file());
+
+    fs::remove_dir_all(root.join(".jails")).unwrap();
+    for command in [
+        ["g", "record", "Task", "id:uuid"].as_slice(),
+        ["model", "init"].as_slice(),
+        ["sync"].as_slice(),
+    ] {
+        let refused = jails_cmd(&root, None).args(command).output().unwrap();
+        assert!(!refused.status.success(), "{command:?}: {refused:?}");
+        let told = String::from_utf8_lossy(&refused.stderr);
+        assert!(
+            told.contains("no model at `.jails/model.jdl`") && told.contains("its model is gone"),
+            "{command:?}: {told}"
+        );
+        // The fix is a git restore, and the evidence is a file the reader can
+        // look at: a refusal that only says "no model" is one they cannot act
+        // on.
+        assert!(told.contains("git restore .jails/model.jdl"), "{told}");
+        assert!(
+            told.contains("src/main/java/com/example/demo/") && told.contains(".java"),
+            "{told}"
+        );
+    }
+    // Refused means refused: no second model was seeded on the way out.
+    assert!(!root.join(".jails").exists(), "a refusal wrote state");
+    assert!(entity.is_file());
+    fs::remove_dir_all(&root).ok();
+}
