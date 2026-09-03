@@ -1,11 +1,12 @@
 //! Lower semantic facets into deterministic Java source units.
 //!
-//! The one-file facets and the operation ports are [`crate::recipe::Recipe`]
-//! rows over named fragment renderers (`entity` and `operation` hold the
-//! rows, [`fragment`] the entity's renderers); what is still a function here
-//! is several files from one facet (`dto`, `http`, `seed`) and the repository
-//! adapters, which choose their owner and their bean by what the captured
-//! build has on its classpath.
+//! The one-file facets, the operation ports and the three storage adapters
+//! are [`crate::recipe::Recipe`] rows over named fragment renderers
+//! (`entity`, `operation` and [`storage`] hold the rows, [`fragment`] the
+//! entity's renderers); what is still a function here is several files from
+//! one facet (`dto`, `http`, `seed`), the units, and the repository contract
+//! and the two proofs that call it, each of which reaches across nodes for a
+//! sample.
 
 mod entity;
 mod execution_context;
@@ -115,7 +116,7 @@ pub(crate) fn emit(
     // of type ...Repository" -- a project that compiles and cannot boot, which
     // is exactly the failure `jails beans` exists to report.
     //
-    // The bean is still unique: `lower_db_repository` carries `@Repository`
+    // The bean is still unique: the JDBC adapter carries `@Repository`
     // when `db` is declared and this one drops the annotation, so the two
     // never both qualify for one injection point.
     let fake = model

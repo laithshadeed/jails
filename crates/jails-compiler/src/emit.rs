@@ -74,17 +74,19 @@ const RECIPE_WALKS: &[Pass] = &[
 /// comes off this list, and `docs/60-abstraction.md` S60.3 keeps the count;
 /// the test below holds the two together.
 const FUNCTIONS: &[Pass] = &[
-    // The one-file entity facets are `Recipe<Entity>` rows inside this pass
-    // (`emit_java::entity`); what keeps it a function is the rest: the
-    // multi-file facets (dto, http, seed), the units (class, interface,
-    // service, sealed, strategy, controller, test), the operation ports and
-    // the repository adapters.
+    // The one-file entity facets, the operation ports and the three storage
+    // adapters are `Recipe` rows inside this pass (`emit_java::entity`,
+    // `emit_java::operation`, `emit_java::storage`); what keeps it a function
+    // is the rest: the multi-file facets (dto, http, seed), the units (class,
+    // interface, service, sealed, strategy, controller, test), and the
+    // repository contract and the two proofs that call it.
     emit_java::emit,
-    // command, query and transition.
+    // The SQL lowering: command, query and transition adapters.
     emit_operation::emit,
-    // association.
+    // One integration proof per relation, that the foreign key is there and
+    // that the database enforces it.
     crate::emit_relation::emit,
-    // The HTTP proofs of every routed operation.
+    // The controller of every routed operation and its HTTP proof.
     emit_http::emit,
     // The architecture test.
     crate::emit_architecture::emit,

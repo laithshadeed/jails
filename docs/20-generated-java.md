@@ -57,20 +57,34 @@ emitters assemble Java and SQL with `format!`:
 ```
 all=$(grep -rho 'format!(' crates/jails-compiler/src | wc -l)
 refusals=$(grep -rhoE 'Diagnostic::new\(|refuse::' crates/jails-compiler/src | wc -l)
-echo $((all - refusals))     # 659: the Java and SQL, not the refusal prose
+echo $((all - refusals))     # 657: the Java and SQL, not the refusal prose
 ```
+
+**Read that number as a ratchet, not as progress.** A class body is one
+`format!` site however long it is, so moving the three storage adapters --
+about 120 lines of Java that lived in Rust strings with every brace doubled
+-- into real `.java` templates moved it by two. It only ever falls, which is
+worth keeping; the thing it stands for is Java assembled in Rust, and it
+stands for it loosely.
 
 **Exit:** the IR exists and the emitters build it instead of strings. It is a
 phase, not a fix. Three rungs are landed: one `JavaUnit` for the package
 line, the import block and the class shell; one `emit_mockmvc` for the MockMvc
 dialect; and `Recipe<N>` (`docs/60-abstraction.md` S60.3), the declarative
 shape every capability pack, twelve component kinds, the entity's one-file
-facets, the operation ports, the event's Kafka slice and the outbox are rows
-of, with the structural Java a row cannot spell -- a record's components and
-compact constructor, an enum's constants, a port's `Input` record -- as named
-fragment renderers (`emit_java/fragment.rs`, `emit_java/operation.rs`). What
-is still `format!` is the repository adapters' column and bind lists, the
-operation adapters' SQL and the proofs; S60.3 names them and keeps the count.
+facets, the operation ports, the three storage adapters, the event's Kafka
+slice and the outbox are rows of, with the structural Java a row cannot spell
+-- a record's components and compact constructor, an enum's constants, a
+port's `Input` record, a table's column and bind lists -- as named fragment
+renderers (`emit_java/fragment.rs`, `emit_java/operation.rs`,
+`emit_java/storage.rs`). What is still `format!` is the multi-file facets
+(`dto`, `http`, `seed`), the units, the operation adapters' SQL and the
+proofs; S60.3 names them, keeps the count, and states the criterion that
+decides which side an emitter falls on -- a `Fragment::Rendered` is one
+function of the model and the node, so an emitter is a row when its
+structural blocks are independent answers and a function when they are
+several outputs of one pass over the fields.
+
 Output names are the boundary registry's (`jails_model::boundary`): a row's
 role is a registry entry and the function emitters name their artifacts
 through `Boundary::owned_by`, so §20.2's "emitters MUST NOT concatenate"

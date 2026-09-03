@@ -164,8 +164,8 @@ and 25 of 25**, held by `canonical_support::registry_classifies_every_advertised
 **The declarative ones are `Recipe` rows and `emit.rs` walks two tables.**
 `crates/jails-compiler/src/recipe.rs` is the shape -- files, dependencies,
 properties, compose services, build features, placement -- over a `Node`
-(capability, component, operation, entity), and `recipe::render` is the one
-loop; `emit.rs` holds `RECIPE_WALKS` and `FUNCTIONS`, and the second is the
+(capability, component, operation, stored entity), and `recipe::render` is
+the one loop; `emit.rs` holds `RECIPE_WALKS` and `FUNCTIONS`, and the second is the
 list of emitters that still build Java from the model's structure, which
 `docs/60-abstraction.md` S60.3 counts. A new kind that is substitution over a
 template is a row, not a module; a role appears in exactly one recipe and
@@ -173,14 +173,36 @@ template is a row, not a module; a role appears in exactly one recipe and
 named fragment renderer**, rendered once per node and only when a selected
 file spells its key: `emit_java/fragment.rs` (a record's components and
 compact constructor, an enum's constants and wire members, a primary key's
-type, a builder's four lists) and `emit_java/operation.rs` (a port's route,
-answer, context, row selector, expected version and `Input` record). A
-fragment carries the imports its text needs and may spell `{{class}}`,
+type, a builder's four lists), `emit_java/operation.rs` (a port's route,
+answer, context, row selector, expected version and `Input` record) and
+`emit_java/storage.rs` (a table's column list, an insert's columns, values,
+`on conflict` clause and bind chain). A fragment carries the imports its text needs and may spell `{{class}}`,
 because fragments are substituted before the file's keys. The entity's
 one-file facets are three `Recipe<Entity>` (`emit_java/entity.rs`, one per
-compiler pass) and the operation ports one `Recipe<Operation>`; `dto`,
-`http`, `seed` and the repository adapters stay functions, the adapters
-because their owner and their bean come from `emit::jdbc_on_classpath`.
+compiler pass), the operation ports one `Recipe<Operation>`, and the
+in-memory, JDBC and search adapters three `Recipe<Stored>`
+(`emit_java/storage.rs`); `dto`, `http`, `seed`, the units, the operation
+adapters and the proofs stay functions.
+
+**Whether an emitter can be a row is decided by the fragment's signature.**
+A `Fragment::Rendered` is one named function of `(&AppModel, &Node)`,
+independent of every other fragment, so an emitter is a row when its
+structural blocks are *independent* answers about one node and a function
+when they are several outputs of one pass over the fields -- a command's
+insert columns, bind chain, answer type and collaborator all come off one
+ladder, and four fragments walking it separately would agree by luck. The
+second gate is a fact the signature does not carry: `dto`'s validation
+annotations need the captured Boot major (`jakarta` vs `javax`), which is a
+package *prefix* and so is not an `Import::Moved` row either.
+
+**`Stored` is why the storage adapters became rows.** Which owner an adapter
+belongs to and which one is the project's bean come from
+`emit::jdbc_on_classpath`, a fact of the captured build; a storage-scoped
+artifact id is `art_<storage>_<entity>_<role>`, which the loop's
+`art_<node>_<role>` does not spell. Both are facts about a *stored entity*
+rather than an entity, so they ride on the node -- and `Node::provenance` is
+the node's, which is what lets one struct carry the three different
+provenances the three adapters have.
 
 **Every emitted artifact is named from the boundary registry.**
 `jails_model::boundary` is one table of `(owner, path, role, scope)` rows:
@@ -1001,8 +1023,9 @@ the companion test is emitted whole and `@Disabled`, naming the component.
 - **`Map<long, Note>` is not a type.** `int` and `long` are the only builtins
   with a Java primitive, and a required one is spelled with it everywhere
   except a *type argument*, where it has to be boxed;
-  `emit_java::boxed_java_type` is that spelling and
-  `emit_java/repository.rs` is the only place in the compiler that needs it.
+  `emit_java::boxed_java_type` is that spelling and the in-memory adapter's
+  `boxed_key_type` fragment (`emit_java/storage.rs`) is the only place in
+  the compiler that needs it.
   Goldens cannot catch this -- they compare bytes -- so the tier-3 kind sweep
   keys a `g repo` on `long` beside the `uuid` one.
 - **The Boot floor is in the generated *code*, not its tests.** `add api`
