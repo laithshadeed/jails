@@ -108,8 +108,44 @@ pub(super) fn seed(
     debug: bool,
 ) -> Result<crate::app::Applied> {
     match app {
+        // A model was already seeded as the project's own
+        // `.jails/model.jdl` and compiled by `seed_canonical_model`, which
+        // is the whole of "a copy and one sync". Only a manifest has a
+        // second phase, because its rows are commands rather than a model.
+        Some(supplied) if Supplied::of(supplied)? == Supplied::Model => {
+            Ok(crate::app::Applied::Clean)
+        }
         Some(manifest) => seed_manifest(&publication.tree(), manifest, no_start, debug),
         None => Ok(crate::app::Applied::Clean),
+    }
+}
+
+/// Which of the two things `--app`/`--model` was pointed at.
+///
+/// **Decided by name, and refused by name.** A manifest is replayed as
+/// commands and a model is copied and compiled; they are not
+/// interchangeable, and a file read as the wrong one fails somewhere deep
+/// with a parse error about a syntax the reader never wrote.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(super) enum Supplied {
+    /// `.jdl`: the one editable source, copied in and compiled.
+    Model,
+    /// `.toml`: a manifest of `[[generate]]` rows, replayed as commands.
+    Manifest,
+}
+
+impl Supplied {
+    pub(super) fn of(path: &Path) -> Result<Self> {
+        match path.extension().and_then(|extension| extension.to_str()) {
+            Some("jdl") => Ok(Self::Model),
+            Some("toml") => Ok(Self::Manifest),
+            _ => Err(jails_support::Failure::Told(format!(
+                "`{}` is neither a model nor a manifest\n       fix: point `--model` at a \
+                 `.jdl` file, which is copied in and compiled, or `--app` at a `.toml` \
+                 manifest, whose rows are replayed as commands",
+                path.display()
+            ))),
+        }
     }
 }
 
@@ -212,13 +248,97 @@ pub(super) fn seed_canonical_model(
     app: Option<&Path>,
     source: String,
 ) -> Result<()> {
-    // `--app` is seeded like any other project: a manifest replays into the
-    // model rather than being refused beside it, and `seed_manifest` runs that
-    // replay against this tree's root.
-    let _ = app;
+    // A manifest is seeded like any other project: it replays into the model
+    // rather than being refused beside it, and `seed_manifest` runs that
+    // replay against this tree's root once the project exists. A model needs
+    // no second phase -- it *is* the model, and the compile below is the
+    // "one sync".
+    let source = match app {
+        Some(supplied) if Supplied::of(supplied)? == Supplied::Model => {
+            println!("  model    {}", supplied.display());
+            adopted(&source, supplied)?
+        }
+        _ => source,
+    };
     tree.put_named(".jails/model.jdl", source, ".jails/model.jdl")?;
     crate::model_command::materialize_seed(tree.root())
 }
+
+/// The supplied model, under this project's own identity.
+///
+/// **A model file declares an application, and `jails new` just created a
+/// different one.** Copying `crawler.jdl` into a project called `spider`
+/// verbatim would leave a model naming a package no directory holds and a
+/// build the command line did not choose -- and `--gradle` beside
+/// `build maven` is not a disagreement to resolve silently in the file's
+/// favour, because the reader typed the flag a second ago and wrote the file
+/// last year.
+///
+/// So the identity lines come from the seed and everything else from the
+/// file: `pkg`, `java`, `platform` and `build` are facts of the project that
+/// was just written, and `storage` is a declaration the file is entitled to
+/// make. Nothing else in the file is touched, which is what keeps this a
+/// copy.
+fn adopted(seeded: &str, supplied: &Path) -> Result<String> {
+    let text = std::fs::read_to_string(supplied).map_err(|error| {
+        jails_support::Failure::Told(format!(
+            "could not read the model {}: {error}\n       fix: pass `--model <path>` \
+             pointing at a readable `.jdl` file",
+            supplied.display()
+        ))
+    })?;
+    let identity = |source: &str, key: &str| -> Option<String> {
+        source
+            .lines()
+            .take_while(|line| !line.starts_with('}'))
+            .find(|line| line.trim_start().starts_with(&format!("{key} ")))
+            .map(str::to_string)
+    };
+    let mut inside_app = false;
+    let mut seen_app = false;
+    let mut out: Vec<String> = Vec::new();
+    for line in text.lines() {
+        if !seen_app && line.starts_with("app ") {
+            inside_app = true;
+            seen_app = true;
+            // The `app` line carries the application's name and may carry a
+            // pinned `@id`; both belong to the project being created.
+            out.push(
+                identity(seeded, "app")
+                    .ok_or_else(|| jails_support::Failure::Told(SEED_HAS_NO_APP.to_string()))?,
+            );
+            continue;
+        }
+        if inside_app {
+            if line.starts_with('}') {
+                inside_app = false;
+                out.push(line.to_string());
+                continue;
+            }
+            let key = line.trim_start().split(' ').next().unwrap_or("");
+            if matches!(key, "pkg" | "java" | "platform" | "build") {
+                if let Some(replacement) = identity(seeded, key) {
+                    out.push(replacement);
+                }
+                continue;
+            }
+        }
+        out.push(line.to_string());
+    }
+    if !seen_app {
+        return Err(jails_support::Failure::Told(format!(
+            "the model {} declares no `app` block\n       fix: give it one, or start from \
+             what `jails new` writes -- every JDL source names the application it is about",
+            supplied.display()
+        )));
+    }
+    let mut source = out.join("\n");
+    source.push('\n');
+    Ok(source)
+}
+
+const SEED_HAS_NO_APP: &str = "the seeded model has no `app` line, which is a jails bug rather than anything \
+     about your project\n       fix: report it with the `jails new` command you ran";
 
 /// One `app` node, with whatever declarations the caller appends after it.
 ///

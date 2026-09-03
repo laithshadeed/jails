@@ -69,13 +69,17 @@ pub(crate) struct NewArgs {
     /// `bootJar` archive version. Gradle only, and only with `--jar-name`
     #[arg(long, value_name = "VERSION")]
     pub(crate) jar_version: Option<String>,
-    /// Apply this application manifest to the new project immediately
+    /// Start the new project from this model or manifest
     ///
-    /// Equivalent to `new`, then `mkdir .jails`, then copying the manifest
-    /// in, then `jails app apply` -- four steps that only ever appear
-    /// together. The path is read relative to where you are standing.
-    #[arg(long, value_name = "MANIFEST")]
-    pub(crate) app: Option<std::path::PathBuf>,
+    /// A `.jdl` is copied in as the project's own `.jails/model.jdl` and
+    /// compiled, under the identity `new` just wrote: the file's `pkg`,
+    /// `java`, `platform` and `build` give way to the ones this command
+    /// chose, and every declaration in it is kept. A `.toml` is an
+    /// application manifest whose rows are replayed as commands. The path is
+    /// read relative to where you are standing, and the extension decides
+    /// which it is.
+    #[arg(long, visible_alias = "app", value_name = "FILE")]
+    pub(crate) model: Option<std::path::PathBuf>,
     /// Write Compose services but do not start them
     ///
     /// `--app` is `jails app apply` inside the publication, so it takes
@@ -108,13 +112,17 @@ pub(crate) struct NewCliArgs {
     /// Skip `git init` and the .gitignore it normally sets up
     #[arg(long)]
     pub(crate) no_git: bool,
-    /// Apply this application manifest to the new project immediately
+    /// Start the new project from this model or manifest
     ///
-    /// Equivalent to `new`, then `mkdir .jails`, then copying the manifest
-    /// in, then `jails app apply` -- four steps that only ever appear
-    /// together. The path is read relative to where you are standing.
-    #[arg(long, value_name = "MANIFEST")]
-    pub(crate) app: Option<std::path::PathBuf>,
+    /// A `.jdl` is copied in as the project's own `.jails/model.jdl` and
+    /// compiled, under the identity `new` just wrote: the file's `pkg`,
+    /// `java`, `platform` and `build` give way to the ones this command
+    /// chose, and every declaration in it is kept. A `.toml` is an
+    /// application manifest whose rows are replayed as commands. The path is
+    /// read relative to where you are standing, and the extension decides
+    /// which it is.
+    #[arg(long, visible_alias = "app", value_name = "FILE")]
+    pub(crate) model: Option<std::path::PathBuf>,
     /// Write Compose services but do not start them
     ///
     /// `--app` is `jails app apply` inside the publication, so it takes

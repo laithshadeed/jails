@@ -916,3 +916,103 @@ fn a_gradle_project_is_not_created_with_a_jdk_its_gradle_cannot_run() {
         String::from_utf8_lossy(&modern.stderr)
     );
 }
+
+/// `--model <file.jdl>` is a copy and one compile.
+///
+/// The whole of I71.21's first half: a model file is the one editable source,
+/// so starting a project from one is copying it in and compiling it. The two
+/// halves worth proving are that every declaration survives, and that the
+/// project's own identity wins over the file's -- a model written for
+/// `crawler` used to start `spider` must not leave a package no directory
+/// holds.
+#[test]
+fn new_from_a_model_file_keeps_its_declarations_and_this_project_identity() {
+    let parent = temp_dir("new-from-model");
+    let model = parent.join("crawler.jdl");
+    fs::write(
+        &model,
+        "jdl 1\n\n\
+         app Crawler {\n  pkg com.example.crawler\n  java 26\n  platform spring\n  \
+         build gradle\n  storage postgres\n}\n\n\
+         cap json\n\n\
+         enum CrawlStatus {\n  QUEUED\n  RUNNING\n}\n\n\
+         entity CrawlRun {\n  use scaffold\n\n  id:     uuid @pk\n  \
+         status: CrawlStatus @default(QUEUED)\n}\n",
+    )
+    .unwrap();
+
+    let output = jails_cmd(&parent, None)
+        .args(["new", "spider", "--offline", "--no-git", "--no-start"])
+        .arg("--model")
+        .arg(&model)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let root = parent.join("spider");
+    let written = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+
+    // The identity is this project's. `build gradle` in the file loses to the
+    // Maven project the command line asked for, which is the point: the flag
+    // was typed a second ago and the file was written last year.
+    assert!(written.contains("app Spider {"), "{written}");
+    assert!(written.contains("pkg com.example.spider"), "{written}");
+    assert!(written.contains("build maven"), "{written}");
+    assert!(!written.contains("com.example.crawler"), "{written}");
+    // `storage` is a declaration the file is entitled to make, and every
+    // other declaration is kept verbatim.
+    assert!(written.contains("storage postgres"), "{written}");
+    assert!(written.contains("cap json"), "{written}");
+    assert!(written.contains("enum CrawlStatus"), "{written}");
+    assert!(written.contains("entity CrawlRun"), "{written}");
+
+    // Compiled, not merely copied: the scaffold's own files are on disk.
+    for relative in [
+        "src/main/java/com/example/spider/domain/CrawlRun.java",
+        "src/main/java/com/example/spider/domain/CrawlStatus.java",
+    ] {
+        assert!(
+            common::generated(&root, relative).exists(),
+            "{relative} is missing from the project the model declared"
+        );
+    }
+
+    // And the model is what a later command reads, so a second run is a no-op
+    // rather than a second application of the same declarations.
+    let synced = jails_cmd(&root, None).arg("sync").output().unwrap();
+    let rendered = String::from_utf8_lossy(&synced.stdout);
+    assert!(synced.status.success(), "{rendered}");
+    assert!(!rendered.contains("  create  src/"), "{rendered}");
+}
+
+/// Neither file is read as the other, and the refusal says which is which.
+#[test]
+fn a_file_that_is_neither_a_model_nor_a_manifest_is_refused_by_name() {
+    let parent = temp_dir("new-from-neither");
+    let file = parent.join("crawler.yaml");
+    fs::write(&file, "nothing: here\n").unwrap();
+    let output = jails_cmd(&parent, None)
+        .args(["new", "spider", "--offline", "--no-git"])
+        .arg("--model")
+        .arg(&file)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let rendered = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        rendered.contains("neither a model nor a manifest"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains(".jdl") && rendered.contains(".toml"),
+        "{rendered}"
+    );
+}

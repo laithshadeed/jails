@@ -30,7 +30,8 @@ own sources under `src/`, and `.jails/compiler.lock.json` is what says which
 files are jails': on the next generation, disjoint hand edits survive and
 overlapping edits refuse before anything is written.
 
-`jails new`, `jails new-cli` and `jails new --app` all seed the model. A project
+`jails new`, `jails new-cli`, `jails new --app` and `jails new --model` all seed
+the model. A project
 jails did not create reaches it through `jails model init`, and `jails adopt`
 first records the project's layout in `jails.toml`.
 
@@ -1216,6 +1217,15 @@ one statement.
   apply it — one command from an empty directory to a project that passes
   `mvn clean verify`. The manifest path is read relative to where you are
   standing, not to the project being created.
+- `jails new <name> --model <file.jdl>` is the same one command over the one
+  editable source: the file is copied in as the project's own
+  `.jails/model.jdl` and compiled, which is a copy and one `sync`. The
+  extension decides which of the two you get, and anything else is refused by
+  name. The project's own identity wins over the file's — its `pkg`, `java`,
+  `platform` and `build` are the ones this command just wrote, so a model
+  written for one project starts another without leaving a package no
+  directory holds. Every other declaration, `storage` included, is kept
+  verbatim.
 
 `apply` replays the manifest row by row into the model through the same
 frontends `jails g` and `jails add` use. Every frontend is idempotent, so an
