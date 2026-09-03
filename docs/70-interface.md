@@ -698,9 +698,6 @@ scope bar refuses. Expose I70.8's twenty words plus `commands` and
   limited to 108 bytes) with *fix: inspect the daemon diagnostic above*;
   the same project under `/tmp/jc` starts the daemon in 1.8 s and answers
   in about 100 ms after that.
-- **Two path styles in one application.** The crawler serves `POST
-  /crawl_runs` beside `POST /actions/queue-crawl`: table names become
-  paths with an underscore, actions with a hyphen.
 - **README's testd numbers** (0.06 to 0.10 s per method) do not say they
   exclude every generated test.
 - What is right: property collisions and hand-edit removals refuse well
@@ -748,12 +745,12 @@ The runtime-directory fallback is declined for now: the socket lives beside
 three somewhere keyed by a digest makes "where is my daemon" two answers
 instead of one. The fix line names the two commands that need no socket.
 
-**I71.31 — one path style.** *Change* resource paths derive from the same
-plural as the table and spell it with hyphens (`/crawl-runs`), through a
-second `DerivedValue` role so `model explain` shows it; an existing
-project keeps its paths through `use scaffold(path: …)`, which `rename`
-already writes. *Done when*
-`jails routes` on the crawler prints no path with `_`.
+**I71.31 — one path style.** *Landed.* `naming::route_segment` is the one
+place the hyphen is applied, to the same plural the table uses, and
+`DerivedRole::HttpPath` puts the answer in `jails model explain` -- so a
+project that pinned a path with `use scaffold(path: …)` reads as pinned
+rather than as a convention that moved. No golden changed: every golden
+entity is one word, which is why the underscore survived this long.
 
 
 **I71.3 — the executor's work is proportional to the change.** *Change*

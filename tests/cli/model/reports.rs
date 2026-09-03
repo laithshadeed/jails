@@ -14,6 +14,51 @@ use super::*;
 /// receipt -- four counts and a digest -- so a caller could not learn from it
 /// what a reader learns from the screen, and a preview printed the whole
 /// bundle, a third shape again. The bundle is what `--plan-out` writes.
+/// **One path style, and one plural behind it.**
+///
+/// A REST path is spelled with hyphens -- `/crawl-runs`, not `/crawl_runs` --
+/// and it derives from the same plural as the table, so the route and the
+/// table it reads cannot drift. `model explain` carries the row, so a project
+/// that pinned a path with `use scaffold(path: …)` reads as pinned rather
+/// than as a convention that moved.
+#[test]
+fn a_multi_word_entity_is_served_at_a_hyphenated_path() {
+    let root = jdl_project("http-path-style", NOTES_JDL);
+    write_spring_fixture(&root);
+    let generated = jails_cmd(&root, None)
+        .args(["g", "scaffold", "CrawlRun", "id:uuid@pk", "title:string"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+
+    let routes = jails_cmd(&root, None).arg("routes").output().unwrap();
+    let printed = String::from_utf8_lossy(&routes.stdout);
+    assert!(printed.contains("/crawl-runs"), "{printed}");
+    assert!(
+        !printed.contains("/crawl_runs"),
+        "an underscore in a URL is a word break nobody outside SQL writes: {printed}"
+    );
+
+    // The same plural as the table, and said out loud.
+    let explained = jails_cmd(&root, None)
+        .args(["model", "explain"])
+        .output()
+        .unwrap();
+    let explained = String::from_utf8_lossy(&explained.stdout);
+    assert!(
+        explained.contains("http-path") && explained.contains("/crawl-runs"),
+        "{explained}"
+    );
+    assert!(
+        explained.contains("crawl_runs"),
+        "the table keeps its underscore: {explained}"
+    );
+}
+
 #[test]
 fn the_json_encoding_carries_the_same_report_as_the_screen() {
     let root = model_project("model-one-json", EMPTY_MODEL);

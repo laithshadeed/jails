@@ -1274,7 +1274,10 @@ stop.
   `DocumentIntent::SetMavenMainClass` retargets `<mainClass>` only off a stub
   jails wrote with no command registered.
 - **`naming::plural_snake_case` is the only pluraliser**, and every table
-  and resource path derives from it. Irregulars are a short list matched on
+  and REST path derives from it -- the path through `naming::route_segment`,
+  which is the one place `_` becomes `-`, so `/crawl-runs` and `crawl_runs`
+  are one plural in two spellings. `DerivedRole::HttpPath` carries the answer
+  into `jails model explain`. Irregulars are a short list matched on
   the last word plus a short uncountable list; no `jails.toml` override,
   because derivability is what lets `destroy` find what `generate` wrote.
 - **Commons CSV's `Builder.build()` is `Builder.get()` from 1.13**; a unit

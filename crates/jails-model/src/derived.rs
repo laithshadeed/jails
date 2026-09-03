@@ -43,16 +43,18 @@ pub enum DerivedRole {
     SqlTable,
     SqlColumn,
     HttpRoute,
+    HttpPath,
 }
 
 impl DerivedRole {
     /// Declaration order, so [`Self::ALL`] and the match below cannot drift.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::JavaPackage,
         Self::JavaType,
         Self::SqlTable,
         Self::SqlColumn,
         Self::HttpRoute,
+        Self::HttpPath,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -62,6 +64,7 @@ impl DerivedRole {
             Self::SqlTable => "sql-table",
             Self::SqlColumn => "sql-column",
             Self::HttpRoute => "http-route",
+            Self::HttpPath => "http-path",
         }
     }
 
@@ -286,6 +289,17 @@ fn segments(head: &str, tail: &str) -> String {
 /// the two places that matter. Being a pure function of the model is also what
 /// makes the digest honest: two models that agree cannot carry different
 /// derived records.
+/// The path a `use scaffold(path: …)` or `use http(path: …)` pins, if any.
+fn http_path(model: &crate::AppModel, entity: &crate::Entity) -> Option<String> {
+    model
+        .projections
+        .values()
+        .find_map(|projection| match &projection.kind {
+            crate::ProjectionKind::Http { path } if projection.entity == entity.id => path.clone(),
+            _ => None,
+        })
+}
+
 pub fn records(model: &crate::AppModel) -> BTreeMap<DerivedRoleKey, DerivedValue> {
     let mut into = BTreeMap::new();
     package_conventions(&model.project, &mut into);
@@ -308,6 +322,23 @@ pub fn records(model: &crate::AppModel) -> BTreeMap<DerivedRoleKey, DerivedValue
                     &entity.names.sql_table,
                     "convention.sql-table.pluralize",
                     crate::naming::plural_snake_case(&entity.label),
+                ),
+            );
+        }
+        // **The collection path a served entity answers at.** It is derived
+        // from the same plural as the table, so the two cannot drift, and
+        // spelled with hyphens because that is what a URL path segment is:
+        // `/crawl-runs`, not `/crawl_runs`. Recorded so `jails model explain`
+        // shows it and a project that pinned one with `use scaffold(path:)`
+        // reads as pinned.
+        if entity.facets.contains(&crate::Facet::Http) {
+            let convention = crate::naming::route_segment(&entity.names.sql_table);
+            into.insert(
+                DerivedRoleKey::new(entity.id.as_str(), DerivedRole::HttpPath),
+                DerivedValue::named(
+                    http_path(model, entity).unwrap_or_else(|| convention.clone()),
+                    "convention.http-path.hyphenate",
+                    convention,
                 ),
             );
         }

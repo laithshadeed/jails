@@ -33,7 +33,7 @@ pub mod topic;
 /// Exported so an integration test in `tests/` can compare this crate's
 /// JDL v1 §9.7 pluralization with `jails-protocol`'s copy, which this crate
 /// cannot depend on.
-pub use naming::{lower_camel_case, plural_snake_case, snake_case};
+pub use naming::{lower_camel_case, plural_snake_case, route_segment, snake_case};
 mod operation;
 mod projection;
 mod relation;

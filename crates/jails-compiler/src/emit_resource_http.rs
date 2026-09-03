@@ -166,9 +166,13 @@ fn port(model: &AppModel, entity: &Entity) -> Result<Unit, Diagnostic> {
 
 /// The collection path this entity is served at.
 ///
-/// The declared `http /path` wins; otherwise the table name. `sql_table`
-/// rather than a second pluraliser: a second one does not stay in step, and
-/// the divergence shows up as a route that does not match the table it reads.
+/// The declared `http /path` wins; otherwise the table name, hyphenated.
+/// `sql_table` rather than a second pluraliser: a second one does not stay in
+/// step, and the divergence shows up as a route that does not match the table
+/// it reads. The hyphen is the one difference between the two spellings, and
+/// `jails_model::naming::route_segment` is where it is applied, so
+/// `model explain`'s `http-path` row and the emitted `@RequestMapping` cannot
+/// disagree.
 fn resource_path(model: &AppModel, entity: &Entity) -> String {
     // **Both halves of the predicate belong in the same closure.** Finding the
     // entity's *first* projection and then asking whether it happens to be the
@@ -185,7 +189,7 @@ fn resource_path(model: &AppModel, entity: &Entity) -> String {
             }
             _ => None,
         })
-        .unwrap_or_else(|| format!("/{}", entity.names.sql_table))
+        .unwrap_or_else(|| jails_model::route_segment(&entity.names.sql_table))
 }
 
 /// The JSON a caller sends to create one of these, as the `.http` collection

@@ -236,6 +236,17 @@ pub(crate) fn route_problem(route: &str) -> Option<String> {
 ///
 /// The suffix rules read the whole string rather than the last word, which is
 /// equivalent: the last word *is* the suffix.
+/// A URL path segment for a table name: the same plural, hyphenated.
+///
+/// **One plural, two spellings.** A second pluraliser does not stay in step,
+/// and the divergence shows up as a route that does not match the table it
+/// reads -- so the path is the table with `_` replaced, and nothing else.
+/// `/crawl-runs` rather than `/crawl_runs`, because an underscore in a URL is
+/// a word break nobody outside SQL writes.
+pub fn route_segment(sql_table: &str) -> String {
+    format!("/{}", sql_table.replace('_', "-"))
+}
+
 pub fn plural_snake_case(label: &str) -> String {
     let base = snake_case(label);
     let (prefix, last) = match base.rfind('_') {
