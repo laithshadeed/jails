@@ -7,6 +7,49 @@ use super::*;
 /// every authority it names. This drives all four -- declaration, generated,
 /// migration history, and the SQL table -- and the two states that are not
 /// `consistent`.
+/// No report line begins with an identifier and a colon.
+///
+/// `Note: nothing to do…` reads as a label, and a reader scanning output for
+/// `jails:` — the refusal prefix — finds a sentence that is not one. The
+/// entity's name stays in the line; it just stops leading it.
+#[test]
+fn no_report_line_reads_as_a_label() {
+    let root = model_project("model-no-label-lines", EMPTY_MODEL);
+    let mut printed = String::new();
+    for arguments in [
+        vec!["g", "record", "Note", "title:string!"],
+        vec!["g", "record", "Note", "title:string!"],
+        vec!["set", "server.port=9090"],
+        vec!["sync"],
+    ] {
+        let output = jails_cmd(&root, None).args(&arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "`jails {}`: {}",
+            arguments.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        printed.push_str(&String::from_utf8_lossy(&output.stdout));
+    }
+    let labels: Vec<&str> = printed
+        .lines()
+        .filter(|line| {
+            let Some((head, _)) = line.split_once(':') else {
+                return false;
+            };
+            !head.is_empty()
+                && !line.starts_with(' ')
+                && head
+                    .chars()
+                    .all(|character| character.is_alphanumeric() || character == '_')
+        })
+        .collect();
+    assert!(
+        labels.is_empty(),
+        "these report lines begin with an identifier and a colon: {labels:?}"
+    );
+}
+
 #[test]
 fn resource_status_answers_from_the_model_when_the_project_is_canonical() {
     let root = jdl_project(

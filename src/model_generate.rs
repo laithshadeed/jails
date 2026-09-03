@@ -71,7 +71,7 @@ pub(crate) struct PreparedMutation {
 pub(crate) fn report_already_declared(name: &str, invocation: &Invocation) {
     let line = format!("  {name:<22}  nothing to do");
     if !invocation.file_row(line) {
-        println!("{name}: nothing to do, the project already matches the model");
+        println!("nothing to do: the project already matches the model ({name})");
     }
 }
 
@@ -328,7 +328,7 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
                 eprintln!("{line}");
             }
             if idle {
-                println!("{name}: nothing to do, the project already matches the model");
+                println!("nothing to do: the project already matches the model ({name})");
             } else {
                 // **The count is the length of the list.** Both come off the
                 // same walk, so a summary that says three and a list that

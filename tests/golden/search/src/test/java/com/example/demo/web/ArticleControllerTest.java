@@ -43,7 +43,7 @@ class ArticleControllerTest {
             """
             {
               "title": "sample-title",
-              "body": "sample-bodie"
+              "body": "sample-body"
             }""";
 
     private final MockMvcTester mvc = MockMvcTester.of(new ArticleController(new ArticleService(REPOSITORY)));

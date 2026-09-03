@@ -42,7 +42,7 @@ class TicketControllerTest {
             """
             {
               "subject": "sample-subject",
-              "status": "sample-statu"
+              "status": "sample-status"
             }""";
 
     private final MockMvcTester mvc = MockMvcTester.of(new TicketController(new TicketService(REPOSITORY)));

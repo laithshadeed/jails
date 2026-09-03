@@ -7,7 +7,7 @@ Content-Type: application/json
 
 {
   "authorId": 1,
-  "body": "sample-bodie",
+  "body": "sample-body",
   "senderType": "CUSTOMER"
 }
 

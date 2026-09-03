@@ -43,7 +43,7 @@ class NoteControllerTest {
             """
             {
               "authorId": 1,
-              "body": "sample-bodie",
+              "body": "sample-body",
               "senderType": "CUSTOMER"
             }""";
 

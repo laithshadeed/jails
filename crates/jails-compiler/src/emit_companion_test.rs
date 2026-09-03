@@ -389,10 +389,10 @@ pub(crate) fn json_sample(model: &AppModel, ty: &TypeRef) -> Option<String> {
 pub(crate) fn named_json_sample(model: &AppModel, ty: &TypeRef, name: &str) -> Option<String> {
     let sample = json_sample(model, ty)?;
     match sample.as_str() {
-        "\"sample\"" => Some(format!(
-            "\"sample-{}\"",
-            jails_model::plural_snake_case(name).trim_end_matches('s')
-        )),
+        // **The name, snake-cased, and nothing else.** Pluralising it and
+        // stripping the plural again is not the identity: `body` became
+        // `bodie`, which reads as a typo in every generated request body.
+        "\"sample\"" => Some(format!("\"sample-{}\"", jails_model::snake_case(name))),
         _ => Some(sample),
     }
 }

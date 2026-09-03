@@ -526,13 +526,7 @@ writes; the per-command `--json` is a hidden alias for one release. *Done
 when* no row carries `--json` and `jails --output json g record X a:long |
 jq '.files | length'` equals the human list length.
 
-**I70.6 — an entity called `Note` must not read as a label.** *Change*
-print `nothing to do: the project already matches the model` and keep the
-entity name in the plan line, where it already is. *Done when*
-no report line begins with an identifier followed by a colon.
 
-**I70.7 — `"sample-bodie"`.** *Change* snake-case the name and stop. *Done
-when* the golden for a `body:string?` scaffold reads `"sample-body"`.
 
 **I70.10 — `model explain` leads with what the reader pinned.** *Change*
 rows whose owner is in the model first, grouped by owner; empty layer

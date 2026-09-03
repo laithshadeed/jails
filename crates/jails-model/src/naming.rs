@@ -166,7 +166,13 @@ pub fn lower_camel_case(label: &str) -> String {
     })
 }
 
-pub(crate) fn snake_case(label: &str) -> String {
+/// A label as one snake_case word.
+///
+/// Public because a sample value carries a component's own name and had been
+/// reaching it through [`plural_snake_case`] with the plural stripped again,
+/// which is not the inverse: `body` pluralises to `bodies` and came back as
+/// `bodie`.
+pub fn snake_case(label: &str) -> String {
     label.replace('-', "_")
 }
 

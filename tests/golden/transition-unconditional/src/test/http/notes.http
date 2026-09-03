@@ -6,7 +6,7 @@ POST {{baseUrl}}/notes
 Content-Type: application/json
 
 {
-  "body": "sample-bodie",
+  "body": "sample-body",
   "seen": false
 }
 

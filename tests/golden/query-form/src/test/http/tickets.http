@@ -7,7 +7,7 @@ Content-Type: application/json
 
 {
   "subject": "sample-subject",
-  "status": "sample-statu"
+  "status": "sample-status"
 }
 
 ### List Ticket

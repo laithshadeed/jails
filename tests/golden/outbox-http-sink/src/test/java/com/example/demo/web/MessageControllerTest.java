@@ -43,7 +43,7 @@ class MessageControllerTest {
     private static final String CREATE_REQUEST =
             """
             {
-              "body": "sample-bodie"
+              "body": "sample-body"
             }""";
 
     private final MockMvcTester mvc = MockMvcTester.of(new MessageController(new MessageService(REPOSITORY)));

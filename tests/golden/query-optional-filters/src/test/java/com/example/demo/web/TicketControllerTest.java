@@ -41,8 +41,8 @@ class TicketControllerTest {
     private static final String CREATE_REQUEST =
             """
             {
-              "status": "sample-statu",
-              "category": "sample-categorie"
+              "status": "sample-status",
+              "category": "sample-category"
             }""";
 
     private final MockMvcTester mvc = MockMvcTester.of(new TicketController(new TicketService(REPOSITORY)));

@@ -41,7 +41,7 @@ class NoteControllerTest {
     private static final String CREATE_REQUEST =
             """
             {
-              "body": "sample-bodie",
+              "body": "sample-body",
               "seen": false
             }""";
 
