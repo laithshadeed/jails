@@ -1713,6 +1713,94 @@ fn options_in(page: &str) -> Vec<String> {
         .collect()
 }
 
+/// **Bare `jails` is what `git status` is**, and it costs what reflex costs.
+///
+/// The five facts are ones other commands already compute -- the model, what
+/// the lock accepted, the managed tree, the declared services -- so the whole
+/// command is one parse and one capture. Nothing here starts a process,
+/// probes a version or asks a container engine, which is what keeps it under
+/// the budget a command typed by reflex has to meet.
+///
+/// Outside a project it is the usage clap printed before there was a status,
+/// on stderr and with the same exit status, because a script that tested for
+/// either still sees it.
+#[test]
+fn bare_jails_is_the_status_inside_a_project_and_the_usage_outside_one() {
+    let root = temp_dir("bare-jails-status");
+    write_project_skeleton(&root);
+
+    // Outside a project first: no model, so nothing to report.
+    let outside = jails_cmd(&root, None).output().unwrap();
+    assert_eq!(outside.status.code(), Some(2), "the exit status moved");
+    assert!(
+        outside.stdout.is_empty(),
+        "the usage went to stdout: {}",
+        String::from_utf8_lossy(&outside.stdout)
+    );
+    let usage = String::from_utf8_lossy(&outside.stderr);
+    assert!(usage.contains("Usage: jails"), "{usage}");
+    assert!(usage.contains("generate"), "{usage}");
+
+    let generated = jails_cmd(&root, None)
+        .args(["g", "record", "Note", "title:string"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+
+    let started = std::time::Instant::now();
+    let inside = jails_cmd(&root, None).output().unwrap();
+    let elapsed = started.elapsed();
+    assert!(inside.status.success());
+    let printed = String::from_utf8_lossy(&inside.stdout).to_string();
+    assert!(printed.contains("maven"), "{printed}");
+    assert!(printed.contains("1 entity, 0 operations"), "{printed}");
+    assert!(printed.contains("lock     accepted"), "{printed}");
+    assert!(printed.contains("managed  "), "{printed}");
+    assert!(
+        printed.lines().count() <= 8,
+        "a status a reader takes in at once: {printed}"
+    );
+    // Generous against a loaded machine, and still an order of magnitude
+    // under what starting anything costs.
+    assert!(
+        elapsed < std::time::Duration::from_millis(400),
+        "bare `jails` took {elapsed:?}, so it started something"
+    );
+
+    // A hand edit to a managed file is what the third line is for.
+    let note = root.join("src/main/java/com/example/demo/domain/Note.java");
+    let edited = format!("{}\n// mine\n", fs::read_to_string(&note).unwrap());
+    fs::write(&note, edited).unwrap();
+    let after = jails_cmd(&root, None).output().unwrap();
+    let printed = String::from_utf8_lossy(&after.stdout).to_string();
+    assert!(printed.contains("1 edited"), "{printed}");
+
+    // And a model the lock has not seen is the second.
+    let model = root.join(".jails/model.jdl");
+    let source = fs::read_to_string(&model).unwrap();
+    fs::write(
+        &model,
+        format!("{source}\nentity Memo {{\n  title: string\n}}\n"),
+    )
+    .unwrap();
+    let after = jails_cmd(&root, None).output().unwrap();
+    let printed = String::from_utf8_lossy(&after.stdout).to_string();
+    assert!(printed.contains("has not accepted"), "{printed}");
+
+    // The same facts, for an editor.
+    let json = jails_cmd(&root, None)
+        .args(["--output", "json"])
+        .output()
+        .unwrap();
+    let json = String::from_utf8_lossy(&json.stdout);
+    assert!(json.contains("\"schema\": \"jails.status.v1\""), "{json}");
+    assert!(json.contains("\"lock\": \"pending\""), "{json}");
+}
+
 /// **A broker exception is a refusal, not twenty lines of Java.**
 ///
 /// Asking for the lag of a group that has never committed is the first thing

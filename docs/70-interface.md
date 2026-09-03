@@ -70,10 +70,12 @@ reopening a contract:
 | ~~9~~ | ~~I71.29~~, ~~I71.26~~, ~~I71.28~~ | ~~README, the specification and the binary agree~~ |
 | ~~10~~ | ~~I71.14~~ | ~~every mutation prints the JDL it wrote~~ |
 
-**Worth a prototype before a decision:** `jails undo` (I71.15), bare `jails`
-as status (I71.17), an LSP for the model (I71.19), an MCP server (I71.20),
-the manifest folded into the model (I71.21). `sync --watch` was prototyped
-and declined; §9 says why.
+**Worth a prototype before a decision:** `jails undo` (I71.15), an LSP for
+the model (I71.19), an MCP server (I71.20), the manifest folded into the
+model (I71.21). Bare `jails` as status (I71.17) was built rather than
+prototyped: every fact in it was already computed somewhere, so the
+prototype and the implementation were the same work. `sync --watch` was
+prototyped and declined; §9 says why.
 
 ---
 
@@ -753,12 +755,29 @@ in the middle of typing the thing that would fix it.
 they had; a hook written for a shell nobody has run it in would be worse
 than none.
 
-**I71.17 — bare `jails` is `status` (prototype).** *Change* what `git
-status` prints for a repository: the model in one line, what the lock has
-not accepted, managed files edited by hand, services declared and not
-running, the JDK row; every fact already computed, assembled without the
-version probes. *Done when* bare `jails` inside a project prints it in
-under 20 ms and outside one prints the usage.
+**I71.17 — bare `jails` is `status`.** *Landed, minus the one line that
+would have cost eight times the budget.* Bare `jails` inside a project
+prints five lines: the platform, build and Java release; the model's
+counts and its path; whether the lock has accepted that model; the
+managed file count with edited and missing beside it; and which
+capabilities declare a compose service. Measured on the crawler -- 99
+managed files, 11 capabilities -- it is **10 ms**, against the item's 20.
+Outside a project it is the usage clap printed before, on stderr, exit 2,
+so a script that tested for either still sees it. `--output json` carries
+the same facts as `jails.status.v1`.
+
+Every fact is one another command already computes, from one model parse
+and one capture; the classifier the managed counts come from is
+`model_ownership`'s own, so the summary and `jails model status`'s list
+cannot disagree about the same tree.
+
+*Deviation:* the item asked for services declared *and not running*, and
+the running half is not there. `docker info` is 165 ms on this machine
+and must never be cached -- a remembered engine reports as up ten minutes
+after it stopped -- so one line would have been eight times the whole
+budget. The line says what is declared and which command runs it;
+`jails doctor` is where the machine gets asked.
+
 
 **I71.20 — agents are readers too: `jails mcp` (prototype).** *Change* add
 `jails mcp`, a Model Context Protocol server over stdio. `AGENTS.md`

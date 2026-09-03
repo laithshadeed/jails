@@ -179,6 +179,14 @@ source: the next change can be made by hand in the file and applied with
   aliases, the `use` projections, and the `cap` kinds a source may spell.
   Every row is walked out of the registries the parser refuses against, so
   it cannot describe a language the binary does not have.
+- `jails` — with no subcommand, inside a project: what `git status` prints for
+  a repository. The project's platform, build and Java release; the model's
+  counts and path; whether the lock has accepted it; how many managed files
+  are there, edited or missing; which capabilities declare a compose service.
+  Every fact comes from one model parse and one capture, so it starts no
+  process and probes no version and answers in about ten milliseconds.
+  Outside a project it is the usage, on stderr, as before. `--output json`
+  carries the same facts as `jails.status.v1`.
 - `jails commands [--json]` — every subcommand, generator kind, capability and
   flag jails accepts, derived from the same definition that parses the
   arguments, so it cannot drift from the binary. `--json` is what the Neovim

@@ -35,6 +35,9 @@ fn owns_terminal_output(path: &Path) -> bool {
         || relative == "src/contract_command.rs"
         || relative == "src/tool_command.rs"
         || relative == "src/model_command.rs"
+        // Bare `jails`: the status is a report, and printing it is the whole
+        // of what the module does.
+        || relative == "src/status.rs"
         || relative == "src/model_generate.rs"
         // The two halves `model_generate` was split into, and both are here for
         // its reason rather than a new one. `report` is the preview, the
@@ -499,6 +502,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails", "model_resource", 9),
     ("jails", "model_setting", 9),
     ("jails", "model_status", 9),
+    ("jails", "status", 9),
     ("jails", "model_ownership", 9),
     ("jails", "model_relocate", 9),
     ("jails", "model_migration", 9),

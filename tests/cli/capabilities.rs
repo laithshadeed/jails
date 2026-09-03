@@ -54,7 +54,7 @@ fn an_effect_that_failed_names_the_flag_that_avoids_it() {
     assert!(stdout.contains("(failed)"), "{stdout}");
     // The project is complete: the status is about the effect and says so.
     assert!(root.join("compose.yaml").is_file());
-    assert!(stdout.contains("are written and durable"), "{stdout}");
+    assert!(stdout.contains("is on disk and durable"), "{stdout}");
     assert!(stdout.contains("fix: "), "{stdout}");
     assert!(stdout.contains("`--no-start`"), "{stdout}");
 

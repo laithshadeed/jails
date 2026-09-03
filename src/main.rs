@@ -50,6 +50,7 @@ mod parse_error;
 mod plan_command;
 mod plan_delta;
 mod rename_source;
+mod status;
 mod template_macro;
 mod tool_command;
 
@@ -155,7 +156,7 @@ fn main() -> std::process::ExitCode {
     };
     let debug = cli.debug;
     let pretend = cli.pretend;
-    if let Some(word) = starts_something(&cli.command)
+    if let Some(word) = cli.command.as_ref().and_then(starts_something)
         && pretend
     {
         return dispatch::finish(Err(jails_support::Failure::Told(format!(
@@ -193,7 +194,17 @@ fn main() -> std::process::ExitCode {
     };
     let failure_output = invocation.output;
     let failure_path = invocation.command_path.clone();
-    let result = match cli.command {
+    // **Bare `jails` is the status, and only inside a project.** Outside one
+    // there is nothing to report and the twenty commands are the answer, so
+    // the usage clap printed before this existed is printed still, on the
+    // same stream and with the same exit status.
+    let Some(command) = cli.command else {
+        if !status::in_a_project(&invocation) {
+            return status::usage();
+        }
+        return dispatch::finish_invocation(status::run(invocation), failure_output, &failure_path);
+    };
+    let result = match command {
         Command::About { json } => project::about(json),
         Command::New(args) => new::new(new::request(&args, debug, pretend)),
         Command::NewCli(args) => new::new_cli(&new::cli_request(&args, debug, pretend)),

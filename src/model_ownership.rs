@@ -42,6 +42,52 @@ impl State {
     }
 }
 
+/// How many managed files there are, and how many are not what jails wrote.
+///
+/// **One classifier, two commands.** `jails model status` lists every file
+/// with its state and bare `jails` prints the three numbers; deciding
+/// `edited` twice is how the list and the summary come to disagree about the
+/// same tree.
+pub(crate) struct ManagedCounts {
+    pub(crate) total: usize,
+    pub(crate) edited: usize,
+    pub(crate) missing: usize,
+}
+
+pub(crate) fn managed_counts(snapshot: &jails_contracts::WorkspaceSnapshot) -> ManagedCounts {
+    let mut counts = ManagedCounts {
+        total: 0,
+        edited: 0,
+        missing: 0,
+    };
+    for (path, accepted) in snapshot
+        .accepted_projection
+        .as_ref()
+        .into_iter()
+        .flat_map(|projection| projection.files.iter())
+    {
+        counts.total += 1;
+        match state_of(snapshot, path, accepted) {
+            State::Managed => {}
+            State::Edited => counts.edited += 1,
+            State::Missing => counts.missing += 1,
+        }
+    }
+    counts
+}
+
+fn state_of(
+    snapshot: &jails_contracts::WorkspaceSnapshot,
+    path: &jails_contracts::ProjectPath,
+    accepted: &jails_contracts::RenderedFile,
+) -> State {
+    match snapshot.files.get(path) {
+        None => State::Missing,
+        Some(live) if live.bytes == accepted.bytes => State::Managed,
+        Some(_) => State::Edited,
+    }
+}
+
 pub(crate) fn run(invocation: Invocation) -> Result<()> {
     let manifest = crate::model_command::resolve_manifest(None)?;
     let root = invocation.root()?;
@@ -64,11 +110,7 @@ pub(crate) fn run(invocation: Invocation) -> Result<()> {
         .into_iter()
         .flat_map(|projection| projection.files.iter())
         .map(|(path, accepted)| {
-            let state = match snapshot.files.get(path) {
-                None => State::Missing,
-                Some(live) if live.bytes == accepted.bytes => State::Managed,
-                Some(_) => State::Edited,
-            };
+            let state = state_of(&snapshot, path, accepted);
             (
                 path.as_str().to_string(),
                 accepted.provenance.artifact_id.clone(),

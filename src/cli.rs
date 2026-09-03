@@ -97,8 +97,12 @@ pub(crate) enum RunServicesArg {
 says why each exists, and `jails commands` lists everything."
 )]
 pub(crate) struct Cli {
+    /// **Optional, so bare `jails` is a status rather than a usage error.**
+    /// Inside a project it prints what the model, the lock and the managed
+    /// tree say; outside one it prints the same usage clap printed before,
+    /// on the same stream and with the same exit status.
     #[command(subcommand)]
-    pub(crate) command: Command,
+    pub(crate) command: Option<Command>,
 
     /// Print the mvnw/mvnd/mvn/java/git/curl commands jails executes
     #[arg(long, global = true)]

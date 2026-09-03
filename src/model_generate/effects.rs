@@ -220,7 +220,7 @@ pub(crate) fn run_follow_up_effects(
     if invocation.output == Output::Human {
         println!("  {:<8}{}", "(failed)", services.join(", "));
         println!(
-            "Every file this command wrote are written and durable; only the services are not up."
+            "Every file this command wrote is on disk and durable; only the services are not up."
         );
         println!(
             "       fix: start the container engine and run `jails start`, or repeat with `--no-start`"
