@@ -755,6 +755,21 @@ fn restore_sealed_migrations(
     Ok(())
 }
 
+/// How many bytes a lock or plan field holds, whichever spelling it is in.
+///
+/// A blob is an array of integers; a managed file in the lock is the text it
+/// is (`jails_contracts::lock_bytes`). Counting only the array reported zero
+/// for every file the moment the lock started storing text, which is a golden
+/// that stopped saying anything.
+#[cfg(test)]
+fn elided_length(bytes: &serde_json::Value) -> usize {
+    match bytes {
+        serde_json::Value::Array(items) => items.len(),
+        serde_json::Value::String(text) => text.len(),
+        _ => 0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -834,7 +849,7 @@ mod tests {
             .and_then(serde_json::Value::as_object_mut)
         {
             for bytes in blobs.values_mut() {
-                let length = bytes.as_array().map_or(0, Vec::len);
+                let length = super::elided_length(bytes);
                 *bytes = serde_json::json!(format!("<{length} bytes elided>"));
             }
         }
@@ -954,9 +969,11 @@ mod tests {
             .and_then(serde_json::Value::as_object_mut)
         {
             for file in files.values_mut() {
-                if let Some(bytes) = file.get_mut("bytes") {
-                    let length = bytes.as_array().map_or(0, Vec::len);
-                    *bytes = serde_json::json!(format!("<{length} bytes elided>"));
+                for key in ["bytes", "text"] {
+                    if let Some(bytes) = file.get_mut(key) {
+                        let length = super::elided_length(bytes);
+                        *bytes = serde_json::json!(format!("<{length} bytes elided>"));
+                    }
                 }
             }
         }
@@ -967,7 +984,7 @@ mod tests {
             .and_then(serde_json::Value::as_object_mut)
         {
             for bytes in sealed.values_mut() {
-                let length = bytes.as_array().map_or(0, Vec::len);
+                let length = super::elided_length(bytes);
                 *bytes = serde_json::json!(format!("<{length} bytes elided>"));
             }
         }

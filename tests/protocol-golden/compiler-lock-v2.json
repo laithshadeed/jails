@@ -634,7 +634,6 @@
   "projection": {
     "files": {
       "src/main/java/com/example/notes/adapters/Json.java": {
-        "bytes": "<4356 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
         "provenance": {
@@ -645,10 +644,10 @@
           "semantic_ids": [
             "cap_json"
           ]
-        }
+        },
+        "text": "<4356 bytes elided>"
       },
       "src/main/java/com/example/notes/adapters/jdbc/JdbcCreateCommand.java": {
-        "bytes": "<1395 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
         "provenance": {
@@ -660,10 +659,10 @@
             "ent_note",
             "op_note_create"
           ]
-        }
+        },
+        "text": "<1395 bytes elided>"
       },
       "src/main/java/com/example/notes/adapters/jdbc/JdbcNoteRepository.java": {
-        "bytes": "<1684 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
         "provenance": {
@@ -674,10 +673,10 @@
             "cap_db",
             "ent_note"
           ]
-        }
+        },
+        "text": "<1684 bytes elided>"
       },
       "src/main/java/com/example/notes/adapters/jdbc/JdbcOpenQuery.java": {
-        "bytes": "<1144 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
         "provenance": {
@@ -689,10 +688,10 @@
             "ent_note",
             "op_note_open"
           ]
-        }
+        },
+        "text": "<1144 bytes elided>"
       },
       "src/main/java/com/example/notes/adapters/jdbc/JdbcRenameTransition.java": {
-        "bytes": "<1218 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
         "provenance": {
@@ -704,10 +703,10 @@
             "ent_note",
             "op_note_rename"
           ]
-        }
+        },
+        "text": "<1218 bytes elided>"
       },
       "src/main/java/com/example/notes/application/commands/CreateCommand.java": {
-        "bytes": "<661 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
         "provenance": {
@@ -717,10 +716,10 @@
           "semantic_ids": [
             "op_note_create"
           ]
-        }
+        },
+        "text": "<661 bytes elided>"
       },
       "src/main/java/com/example/notes/application/queries/OpenQuery.java": {
-        "bytes": "<473 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
         "provenance": {
@@ -730,10 +729,10 @@
           "semantic_ids": [
             "op_note_open"
           ]
-        }
+        },
+        "text": "<473 bytes elided>"
       },
       "src/main/java/com/example/notes/application/transitions/RenameTransition.java": {
-        "bytes": "<625 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
         "provenance": {
@@ -743,10 +742,10 @@
           "semantic_ids": [
             "op_note_rename"
           ]
-        }
+        },
+        "text": "<625 bytes elided>"
       },
       "src/main/java/com/example/notes/domain/Note.java": {
-        "bytes": "<558 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
         "provenance": {
@@ -756,10 +755,10 @@
           "semantic_ids": [
             "ent_note"
           ]
-        }
+        },
+        "text": "<558 bytes elided>"
       },
       "src/main/java/com/example/notes/domain/Outcome.java": {
-        "bytes": "<408 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
         "provenance": {
@@ -769,10 +768,10 @@
           "semantic_ids": [
             "cmp_outcome"
           ]
-        }
+        },
+        "text": "<408 bytes elided>"
       },
       "src/main/java/com/example/notes/domain/TimeOrderedUuid.java": {
-        "bytes": "<1199 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
         "provenance": {
@@ -782,10 +781,10 @@
           "semantic_ids": [
             "project_notes"
           ]
-        }
+        },
+        "text": "<1199 bytes elided>"
       },
       "src/main/java/com/example/notes/domain/events/CreatedEvent.java": {
-        "bytes": "<518 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
         "provenance": {
@@ -795,10 +794,10 @@
           "semantic_ids": [
             "op_note_created"
           ]
-        }
+        },
+        "text": "<518 bytes elided>"
       },
       "src/main/java/com/example/notes/repository/NoteRepository.java": {
-        "bytes": "<466 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
         "provenance": {
@@ -808,10 +807,10 @@
           "semantic_ids": [
             "ent_note"
           ]
-        }
+        },
+        "text": "<466 bytes elided>"
       },
       "src/main/java/com/example/notes/service/NotifierService.java": {
-        "bytes": "<212 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
         "provenance": {
@@ -821,10 +820,10 @@
           "semantic_ids": [
             "cmp_notifier"
           ]
-        }
+        },
+        "text": "<212 bytes elided>"
       },
       "src/test/java/com/example/notes/TestcontainersConfig.java": {
-        "bytes": "<3825 bytes elided>",
         "kind": "java-test",
         "mode": "regular",
         "provenance": {
@@ -835,10 +834,10 @@
           "semantic_ids": [
             "cap_db"
           ]
-        }
+        },
+        "text": "<3825 bytes elided>"
       },
       "src/test/java/com/example/notes/adapters/JsonTest.java": {
-        "bytes": "<3651 bytes elided>",
         "kind": "java-test",
         "mode": "regular",
         "provenance": {
@@ -849,10 +848,10 @@
           "semantic_ids": [
             "cap_json"
           ]
-        }
+        },
+        "text": "<3651 bytes elided>"
       },
       "src/test/java/com/example/notes/adapters/jdbc/JdbcCreateCommandIT.java": {
-        "bytes": "<1196 bytes elided>",
         "kind": "java-test",
         "mode": "regular",
         "provenance": {
@@ -864,10 +863,10 @@
             "ent_note",
             "op_note_create"
           ]
-        }
+        },
+        "text": "<1196 bytes elided>"
       },
       "src/test/java/com/example/notes/adapters/jdbc/JdbcNoteRepositoryIT.java": {
-        "bytes": "<1113 bytes elided>",
         "kind": "java-test",
         "mode": "regular",
         "provenance": {
@@ -879,10 +878,10 @@
             "cap_db",
             "ent_note"
           ]
-        }
+        },
+        "text": "<1113 bytes elided>"
       },
       "src/test/java/com/example/notes/adapters/jdbc/JdbcOpenQueryIT.java": {
-        "bytes": "<1385 bytes elided>",
         "kind": "java-test",
         "mode": "regular",
         "provenance": {
@@ -894,10 +893,10 @@
             "ent_note",
             "op_note_open"
           ]
-        }
+        },
+        "text": "<1385 bytes elided>"
       },
       "src/test/java/com/example/notes/adapters/jdbc/JdbcRenameTransitionIT.java": {
-        "bytes": "<1470 bytes elided>",
         "kind": "java-test",
         "mode": "regular",
         "provenance": {
@@ -909,10 +908,10 @@
             "ent_note",
             "op_note_rename"
           ]
-        }
+        },
+        "text": "<1470 bytes elided>"
       },
       "src/test/java/com/example/notes/domain/NoteTest.java": {
-        "bytes": "<542 bytes elided>",
         "kind": "java-test",
         "mode": "regular",
         "provenance": {
@@ -922,10 +921,10 @@
           "semantic_ids": [
             "ent_note"
           ]
-        }
+        },
+        "text": "<542 bytes elided>"
       },
       "src/test/java/com/example/notes/domain/OutcomeTest.java": {
-        "bytes": "<684 bytes elided>",
         "kind": "java-test",
         "mode": "regular",
         "provenance": {
@@ -935,10 +934,10 @@
           "semantic_ids": [
             "cmp_outcome"
           ]
-        }
+        },
+        "text": "<684 bytes elided>"
       },
       "src/test/java/com/example/notes/repository/NoteRepositoryContract.java": {
-        "bytes": "<1753 bytes elided>",
         "kind": "java-test",
         "mode": "regular",
         "provenance": {
@@ -948,10 +947,10 @@
           "semantic_ids": [
             "ent_note"
           ]
-        }
+        },
+        "text": "<1753 bytes elided>"
       },
       "src/test/java/com/example/notes/service/NotifierServiceTest.java": {
-        "bytes": "<343 bytes elided>",
         "kind": "java-test",
         "mode": "regular",
         "provenance": {
@@ -961,10 +960,10 @@
           "semantic_ids": [
             "cmp_notifier"
           ]
-        }
+        },
+        "text": "<343 bytes elided>"
       },
       "src/test/java/com/example/notes/testkit/NoteFactory.java": {
-        "bytes": "<1064 bytes elided>",
         "kind": "java-test",
         "mode": "regular",
         "provenance": {
@@ -974,333 +973,12 @@
           "semantic_ids": [
             "ent_note"
           ]
-        }
+        },
+        "text": "<1064 bytes elided>"
       }
     },
     "reader_facets": {
       "doc_cap_db_compose_db": {
-        "bytes": [
-          32,
-          32,
-          35,
-          32,
-          106,
-          97,
-          105,
-          108,
-          115,
-          58,
-          100,
-          98,
-          10,
-          32,
-          32,
-          112,
-          111,
-          115,
-          116,
-          103,
-          114,
-          101,
-          115,
-          58,
-          10,
-          32,
-          32,
-          32,
-          32,
-          105,
-          109,
-          97,
-          103,
-          101,
-          58,
-          32,
-          112,
-          111,
-          115,
-          116,
-          103,
-          114,
-          101,
-          115,
-          58,
-          49,
-          55,
-          45,
-          97,
-          108,
-          112,
-          105,
-          110,
-          101,
-          10,
-          32,
-          32,
-          32,
-          32,
-          101,
-          110,
-          118,
-          105,
-          114,
-          111,
-          110,
-          109,
-          101,
-          110,
-          116,
-          58,
-          10,
-          32,
-          32,
-          32,
-          32,
-          32,
-          32,
-          80,
-          79,
-          83,
-          84,
-          71,
-          82,
-          69,
-          83,
-          95,
-          68,
-          66,
-          58,
-          32,
-          97,
-          112,
-          112,
-          10,
-          32,
-          32,
-          32,
-          32,
-          32,
-          32,
-          80,
-          79,
-          83,
-          84,
-          71,
-          82,
-          69,
-          83,
-          95,
-          85,
-          83,
-          69,
-          82,
-          58,
-          32,
-          97,
-          112,
-          112,
-          10,
-          32,
-          32,
-          32,
-          32,
-          32,
-          32,
-          80,
-          79,
-          83,
-          84,
-          71,
-          82,
-          69,
-          83,
-          95,
-          80,
-          65,
-          83,
-          83,
-          87,
-          79,
-          82,
-          68,
-          58,
-          32,
-          97,
-          112,
-          112,
-          10,
-          32,
-          32,
-          32,
-          32,
-          112,
-          111,
-          114,
-          116,
-          115,
-          58,
-          10,
-          32,
-          32,
-          32,
-          32,
-          32,
-          32,
-          45,
-          32,
-          34,
-          53,
-          52,
-          51,
-          50,
-          58,
-          53,
-          52,
-          51,
-          50,
-          34,
-          10,
-          32,
-          32,
-          32,
-          32,
-          104,
-          101,
-          97,
-          108,
-          116,
-          104,
-          99,
-          104,
-          101,
-          99,
-          107,
-          58,
-          10,
-          32,
-          32,
-          32,
-          32,
-          32,
-          32,
-          116,
-          101,
-          115,
-          116,
-          58,
-          32,
-          91,
-          34,
-          67,
-          77,
-          68,
-          45,
-          83,
-          72,
-          69,
-          76,
-          76,
-          34,
-          44,
-          32,
-          34,
-          112,
-          103,
-          95,
-          105,
-          115,
-          114,
-          101,
-          97,
-          100,
-          121,
-          32,
-          45,
-          85,
-          32,
-          97,
-          112,
-          112,
-          32,
-          45,
-          100,
-          32,
-          97,
-          112,
-          112,
-          34,
-          93,
-          10,
-          32,
-          32,
-          32,
-          32,
-          32,
-          32,
-          105,
-          110,
-          116,
-          101,
-          114,
-          118,
-          97,
-          108,
-          58,
-          32,
-          50,
-          115,
-          10,
-          32,
-          32,
-          32,
-          32,
-          32,
-          32,
-          116,
-          105,
-          109,
-          101,
-          111,
-          117,
-          116,
-          58,
-          32,
-          53,
-          115,
-          10,
-          32,
-          32,
-          32,
-          32,
-          32,
-          32,
-          114,
-          101,
-          116,
-          114,
-          105,
-          101,
-          115,
-          58,
-          32,
-          49,
-          48,
-          10,
-          32,
-          32,
-          35,
-          32,
-          47,
-          106,
-          97,
-          105,
-          108,
-          115,
-          58,
-          100,
-          98,
-          10
-        ],
         "kind": {
           "kind": "compose-service",
           "marker": "db",
@@ -1315,10 +993,10 @@
           "semantic_ids": [
             "cap_db"
           ]
-        }
+        },
+        "text": "  # jails:db\n  postgres:\n    image: postgres:17-alpine\n    environment:\n      POSTGRES_DB: app\n      POSTGRES_USER: app\n      POSTGRES_PASSWORD: app\n    ports:\n      - \"5432:5432\"\n    healthcheck:\n      test: [\"CMD-SHELL\", \"pg_isready -U app -d app\"]\n      interval: 2s\n      timeout: 5s\n      retries: 10\n  # /jails:db\n"
       },
       "doc_cap_db_file_migration-directory": {
-        "bytes": [],
         "kind": {
           "kind": "managed-file",
           "mode": "regular"
@@ -1332,10 +1010,11 @@
           "semantic_ids": [
             "cap_db"
           ]
-        }
+        },
+        "text": ""
       }
     }
   },
   "projection_digest": "sha256:5b30adcab211551bfcd8f92c529a376f45daf34f5485ffe8533817ea2da65ec0",
-  "schema": "jails.compiler-lock.v3"
+  "schema": "jails.compiler-lock.v4"
 }

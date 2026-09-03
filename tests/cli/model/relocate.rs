@@ -9,6 +9,10 @@ fn age(root: &Path) -> Vec<(String, String)> {
     let lock_path = root.join(".jails/compiler.lock.json");
     let mut lock: serde_json::Value =
         serde_json::from_slice(&fs::read(&lock_path).unwrap()).unwrap();
+    // The file records a managed file's bytes as the text they are; the type
+    // decodes from the form `serde` derives, which the reader expands to on
+    // the way in and which is the digest's preimage below.
+    jails_contracts::lock_bytes::expand(&mut lock);
     let projection: jails_contracts::RenderedTree =
         serde_json::from_value(lock["projection"].clone()).unwrap();
     let mut moved = Vec::new();
