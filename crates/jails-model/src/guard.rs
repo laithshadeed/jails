@@ -161,10 +161,16 @@ impl AppModel {
     }
 
     /// Refuse to touch a semantic target an ejection declaration names.
+    ///
+    /// An adopted boundary is not in the way: the reader's file was theirs
+    /// before the declaration existed, so removing the declaration deletes
+    /// nothing, and the frontend takes the `eject ... @adopted` line out with
+    /// the owner it names.
     pub fn refuse_ejected_target(&self, target: &str) -> Result<(), String> {
         if self
             .ejections
             .values()
+            .filter(|ejection| !ejection.adopted)
             .any(|ejection| artifact_mentions(&ejection.target, target))
         {
             return Err(format!(
@@ -172,6 +178,22 @@ impl AppModel {
             ));
         }
         Ok(())
+    }
+
+    /// Whether the reader wrote this artifact before the model knew it.
+    pub fn is_adopted(&self, artifact_id: &str) -> bool {
+        self.ejections
+            .values()
+            .any(|ejection| ejection.adopted && ejection.target == artifact_id)
+    }
+
+    /// The adopted boundaries of one owner: the `eject ... @adopted` lines
+    /// that go when the owner goes.
+    pub fn adopted_ejections_of(&self, target: &str) -> Vec<&crate::model::Ejection> {
+        self.ejections
+            .values()
+            .filter(|ejection| ejection.adopted && artifact_mentions(&ejection.target, target))
+            .collect()
     }
 
     /// Whether an ejection may name this target at all.

@@ -172,6 +172,19 @@ impl Compiler {
             .difference(&previous_ejections)
             .copied()
             .collect::<BTreeSet<_>>();
+        // **An adopted boundary was never jails' to transfer.** `jails adopt
+        // resource` registers a type the reader wrote, and the line it
+        // writes says so with `@adopted`: the artifact leaves the managed
+        // tree exactly as an ejected one does, but nothing is created at the
+        // reader's path -- the file is there already, captured as an exact
+        // input -- and the managed-ABI rule does not apply, because the
+        // record *is* the reader's ABI rather than a copy of jails'.
+        let adopted_ejections = next_model
+            .ejections
+            .values()
+            .filter(|ejection| ejection.adopted)
+            .map(|ejection| ejection.target.as_str())
+            .collect::<BTreeSet<_>>();
         let mut matched_ejections = BTreeSet::new();
         let mut non_ejectable = BTreeSet::new();
         let mut ejection_intents = Vec::new();
@@ -181,6 +194,9 @@ impl Compiler {
                 return true;
             }
             matched_ejections.insert(boundary.to_string());
+            if adopted_ejections.contains(boundary) {
+                return false;
+            }
             if !file.provenance.ejectable {
                 non_ejectable.insert(boundary.to_string());
                 return true;
@@ -3015,6 +3031,7 @@ entity Task {
             id: jails_model::EjectionId::parse("eject_ent_note").unwrap(),
             label: "note".to_string(),
             target: "art_ent_note_repository_memory".to_string(),
+            adopted: false,
         };
         let mut next = snapshot.model.model.clone();
         next.ejections.insert(ejection.id.clone(), ejection);
@@ -3040,6 +3057,56 @@ entity Task {
             file.provenance.artifact_id == "art_cap_fake_script"
                 && file.provenance.ejection_id.as_deref() == Some("cap_fake")
         }));
+    }
+
+    /// An adopted record leaves the tree without a transfer: the managed-ABI
+    /// refusal a plain `eject Note.record` meets does not apply, no
+    /// `EjectFile` is planned, and the companion test that would pin jails'
+    /// compact constructor is not rendered either.
+    #[test]
+    fn an_adopted_record_is_excluded_without_a_transfer_or_a_companion_test() {
+        let model = jails_model::parse_jdl(MODEL).unwrap();
+        let snapshot = WorkspaceSnapshot::detached(model);
+        let mut transferred = snapshot.model.model.clone();
+        let ejection = jails_model::Ejection {
+            id: jails_model::EjectionId::parse("eject_record").unwrap(),
+            label: "note_record".to_string(),
+            target: "art_ent_note_record".to_string(),
+            adopted: false,
+        };
+        transferred
+            .ejections
+            .insert(ejection.id.clone(), ejection.clone());
+        let refused = Compiler::compile(&snapshot, &transferred, &Evolution::none()).unwrap_err();
+        assert!(refused.to_string().contains("managed ABI"), "{refused}");
+
+        let mut adopted = snapshot.model.model.clone();
+        adopted.ejections.insert(
+            ejection.id.clone(),
+            jails_model::Ejection {
+                adopted: true,
+                ..ejection
+            },
+        );
+        let draft = Compiler::compile(&snapshot, &adopted, &Evolution::none()).unwrap();
+        let artifacts = draft
+            .generated
+            .files
+            .values()
+            .map(|file| file.provenance.artifact_id.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(!artifacts.contains("art_ent_note_record"), "{artifacts:?}");
+        assert!(!artifacts.contains("art_ent_note_test"), "{artifacts:?}");
+        assert!(
+            artifacts.contains("art_ent_note_repository"),
+            "{artifacts:?}"
+        );
+        assert!(
+            !draft
+                .reader_document_intents
+                .iter()
+                .any(|intent| matches!(intent, DocumentIntent::EjectFile { .. }))
+        );
     }
 
     #[test]

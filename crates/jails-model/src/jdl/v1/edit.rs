@@ -187,6 +187,42 @@ pub fn rename_declaration(
     Ok(edited)
 }
 
+/// Re-point every `eject <Owner>.<path>` line at a renamed owner.
+///
+/// A readable boundary path names its owner by Java type and the linker
+/// resolves it on every read, so renaming the entity without touching the
+/// line leaves `eject Note.record` naming an entity that no longer exists.
+/// The `@id(...)` is the ejection's identity and stays; an `id(...)` target
+/// names an artifact id and does not carry the type name, so it is left alone.
+pub fn rename_ejection_owner(
+    source: &str,
+    current_owner: &str,
+    next_owner: &str,
+) -> Result<String, Diagnostics> {
+    let cst = parse_cst(source)?;
+    let prefix = format!("{current_owner}.");
+    let mut targets = Vec::new();
+    for declaration in cst
+        .declarations
+        .iter()
+        .filter(|declaration| declaration.kind == "eject")
+    {
+        let text = &cst.source()[declaration.span.start..declaration.span.end];
+        let Some(rest) = text.strip_prefix("eject") else {
+            continue;
+        };
+        let target = rest.trim_start();
+        if target.starts_with(&prefix) {
+            targets.push(declaration.span.start + text.len() - target.len());
+        }
+    }
+    let mut edited = source.to_string();
+    for at in targets.into_iter().rev() {
+        edited.replace_range(at..at + current_owner.len(), next_owner);
+    }
+    Ok(edited)
+}
+
 /// Add or remove one flag attribute on an entity header.
 pub fn set_entity_attribute(
     source: &str,
@@ -566,5 +602,19 @@ mod tests {
         );
         let active = set_entity_attribute(&retired, "Task", "retired", false).unwrap();
         assert_eq!(active, SOURCE);
+    }
+
+    /// A boundary path follows its owner's rename; an `id(...)` target, an
+    /// owner that merely shares a prefix, and the `@id` all stay.
+    #[test]
+    fn renaming_an_ejection_owner_moves_only_the_paths_that_name_it() {
+        let source = format!(
+            "{SOURCE}\r\neject Task.record @id(eject_one) @adopted\r\neject Tasks.repo.fake @id(eject_two)\r\neject id(art_ent_task_repository_memory) @id(eject_three)\r\n"
+        );
+        let edited = rename_ejection_owner(&source, "Task", "Todo").unwrap();
+        assert!(edited.contains("eject Todo.record @id(eject_one) @adopted\r\n"));
+        assert!(edited.contains("eject Tasks.repo.fake @id(eject_two)\r\n"));
+        assert!(edited.contains("eject id(art_ent_task_repository_memory) @id(eject_three)\r\n"));
+        assert!(edited.contains("entity Task {"));
     }
 }

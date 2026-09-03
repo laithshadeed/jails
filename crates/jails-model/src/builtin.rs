@@ -506,6 +506,33 @@ impl BuiltinType {
             .map(|(builtin, _)| *builtin)
     }
 
+    /// The builtin a Java spelling names: its boxed type, its primitive, or
+    /// its fully qualified import.
+    ///
+    /// **The table read backwards, which is what `jails adopt resource` needs
+    /// and nothing else may guess at.** A reader's `UUID id` component maps to
+    /// `uuid` because this row says `UUID` is what `uuid` renders to; a
+    /// spelling no row renders to is `None`, and the caller refuses by name
+    /// rather than passing a `LocalTime` through as a project type.
+    pub fn from_java(spelling: &str) -> Option<Self> {
+        ALL.iter()
+            .find(|(_, row)| {
+                row.java_boxed == spelling
+                    || row.java_primitive == Some(spelling)
+                    || row.java_import == Some(spelling)
+            })
+            .map(|(builtin, _)| *builtin)
+    }
+
+    /// Every Java spelling [`Self::from_java`] accepts, in table order, for
+    /// a refusal that has to name them.
+    pub fn java_spellings() -> Vec<&'static str> {
+        ALL.iter()
+            .flat_map(|(_, row)| [row.java_primitive, Some(row.java_boxed)])
+            .flatten()
+            .collect()
+    }
+
     /// The builtin an *alias* names, and only an alias.
     ///
     /// **`canonicalize` cannot answer this**, because it returns the token
@@ -587,6 +614,27 @@ mod tests {
             for alias in row.aliases {
                 assert_eq!(BuiltinType::canonicalize(alias), row.token);
             }
+        }
+    }
+
+    /// The table read backwards: every Java spelling a row renders to names
+    /// that row, a spelling no row renders to names nothing, and the list a
+    /// refusal prints is exactly the spellings accepted.
+    #[test]
+    fn a_java_spelling_names_the_builtin_that_renders_to_it_and_nothing_else() {
+        for (builtin, row) in ALL {
+            assert_eq!(BuiltinType::from_java(row.java_boxed), Some(*builtin));
+            if let Some(primitive) = row.java_primitive {
+                assert_eq!(BuiltinType::from_java(primitive), Some(*builtin));
+            }
+            if let Some(import) = row.java_import {
+                assert_eq!(BuiltinType::from_java(import), Some(*builtin));
+            }
+        }
+        assert_eq!(BuiltinType::from_java("LocalTime"), None);
+        assert_eq!(BuiltinType::from_java("string"), None);
+        for spelling in BuiltinType::java_spellings() {
+            assert!(BuiltinType::from_java(spelling).is_some(), "{spelling}");
         }
     }
 

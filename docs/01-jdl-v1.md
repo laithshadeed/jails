@@ -2054,6 +2054,22 @@ After ejection, the compiler:
 Ejecting a broad entity or package is forbidden; each implementation boundary
 is explicit so unrelated generated units remain refreshable.
 
+An ejection may carry `@adopted`:
+
+```jdl
+eject Message.record @id(eject_ca48573a411aefbe) @adopted
+```
+
+It means the reader wrote the implementation before the model declared its
+owner, and jails registered it (`jails adopt resource`) rather than
+transferring it. The boundary is excluded from managed output exactly as an
+ejected one is, but no transfer is planned -- the reader's file is an exact
+input of the plan, never an output -- and the managed-ABI rule does not
+apply, because the reader's record *is* the ABI. An adopted line is removed
+together with its owner's declaration, which is the one case removing an
+`eject` line is not an error: the file it names was the reader's before the
+line existed.
+
 ## 17. Exhaustive Jails coverage
 
 This section is the conformance inventory. A registry change that makes either

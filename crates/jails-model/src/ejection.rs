@@ -59,7 +59,15 @@ pub(crate) fn link(
             );
         }
         if let Some(id) = id {
-            linked.insert(id.clone(), Ejection { id, label, target });
+            linked.insert(
+                id.clone(),
+                Ejection {
+                    id,
+                    label,
+                    target,
+                    adopted: declaration.adopted,
+                },
+            );
         }
     }
     linked

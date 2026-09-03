@@ -578,4 +578,25 @@ entity Note @id(ent_note) {
         assert!(error.contains("reader-owned"), "{error}");
         assert!(!model.is_ejectable_target("missing"));
     }
+
+    /// `@adopted` links to the same resolved boundary, and is the one
+    /// ejection that does not hold its owner in place: the reader's file was
+    /// theirs before the line, so removing the owner deletes nothing.
+    #[test]
+    fn an_adopted_ejection_marks_the_boundary_and_lets_its_owner_go() {
+        let source = format!(
+            "{VALID}\neject Note.record @id(eject_record) @adopted\neject Note.repo.fake @id(eject_fake)\n"
+        );
+        let model = crate::parse_jdl(&source).unwrap();
+        assert!(model.is_adopted("art_ent_note_record"));
+        assert!(!model.is_adopted("art_ent_note_repository_memory"));
+        let adopted = model.adopted_ejections_of("ent_note");
+        assert_eq!(adopted.len(), 1);
+        assert_eq!(adopted[0].label, "note_record");
+        // The transferred fake still refuses; without it the owner may go.
+        assert!(model.refuse_ejected_target("ent_note").is_err());
+        let source = format!("{VALID}\neject Note.record @id(eject_record) @adopted\n");
+        let model = crate::parse_jdl(&source).unwrap();
+        assert!(model.refuse_ejected_target("ent_note").is_ok());
+    }
 }

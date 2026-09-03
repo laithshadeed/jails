@@ -536,10 +536,20 @@ impl Parser<'_> {
             self.take_word("implementation boundary")?
         };
         let label = stable_fragment(&target);
-        let (_, id) = self.declared(&["id"], || format!("eject_{label}"))?;
+        // `@adopted` says the reader wrote this boundary before the model
+        // knew it: `jails adopt resource` writes the line, and the compiler
+        // excludes the boundary without transferring anything (§16.4).
+        let (attributes, id) = self.declared(&["id", "adopted"], || format!("eject_{label}"))?;
+        let adopted = flag_attribute(&attributes, "adopted")?;
         self.end_line()?;
-        self.ejections
-            .insert(label.clone(), source::Ejection { id, target });
+        self.ejections.insert(
+            label.clone(),
+            source::Ejection {
+                id,
+                target,
+                adopted,
+            },
+        );
         self.declaration("eject", Some(label), start, self.previous_end());
         Ok(())
     }

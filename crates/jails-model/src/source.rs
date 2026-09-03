@@ -68,6 +68,9 @@ pub(crate) struct Setting {
 pub(crate) struct Ejection {
     pub(crate) id: String,
     pub(crate) target: String,
+    /// `@adopted`: the reader wrote the implementation and jails registered
+    /// it, so there was never a transfer.
+    pub(crate) adopted: bool,
 }
 
 pub(crate) struct Unit {

@@ -174,6 +174,13 @@ pub struct Ejection {
     pub id: EjectionId,
     pub label: String,
     pub target: String,
+    /// The reader wrote the implementation and `jails adopt resource`
+    /// registered it, so nothing was transferred: the compiler excludes the
+    /// boundary from the managed tree and plans no creation for it, and the
+    /// removal guards let the owner go, because taking the declaration away
+    /// deletes nothing the reader has.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub adopted: bool,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]

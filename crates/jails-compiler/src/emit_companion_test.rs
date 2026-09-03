@@ -30,11 +30,23 @@ pub(crate) fn lower(
     entity: &Entity,
     facet: jails_model::Facet,
 ) -> Result<Option<emit_java::Unit>, CompileError> {
-    let mut imports = BTreeSet::new();
-    let body = match facet {
-        jails_model::Facet::Enum => enum_body(entity, &mut imports),
-        jails_model::Facet::Record => record_body(model, entity, &mut imports),
+    let own = match facet {
+        jails_model::Facet::Enum => boundary::ENUM,
+        jails_model::Facet::Record => boundary::RECORD,
         _ => return Ok(None),
+    };
+    // **A type jails did not write has nothing for this test to prove.** The
+    // null rejection it pins is the compact constructor jails renders, and a
+    // record `jails adopt resource` registered may reject nothing; a test
+    // failing over a file jails will not touch is not coverage of anything.
+    if model.is_adopted(&own.owned_by(entity.id.as_str())) {
+        return Ok(None);
+    }
+    let mut imports = BTreeSet::new();
+    let body = if own == boundary::ENUM {
+        enum_body(entity, &mut imports)
+    } else {
+        record_body(model, entity, &mut imports)
     };
     let package = crate::emit_java::entity_package(model, entity, Package::Domain);
     let type_name = format!("{}Test", entity.names.java_type);
