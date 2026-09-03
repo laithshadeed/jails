@@ -333,7 +333,10 @@ fn reader_build_file_precondition_blocks_all_writes_from_a_stale_plan() {
         .unwrap();
     assert!(!applied.status.success());
     let stderr = String::from_utf8(applied.stderr).unwrap();
-    assert!(stderr.contains("stale exact plan"), "{stderr}");
+    assert!(
+        stderr.contains("no longer matches what this plan was reviewed against"),
+        "{stderr}"
+    );
     assert!(stderr.contains("pom.xml"), "{stderr}");
     assert!(!root.join(".jails/compiler.lock.json").exists());
     assert_eq!(

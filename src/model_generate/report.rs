@@ -457,12 +457,15 @@ fn unified_diff(bundle: &jails_contracts::PlanBundle) -> Vec<String> {
                     );
                 }
             }
+            // **Derived state has no hunk.** The compiler lock is the
+            // accepted projection written out again -- one exact copy of
+            // every managed file this plan just showed, plus digests -- so
+            // diffing it prints the whole change a second time in a form
+            // nobody reviews, and it is recomputed rather than edited. It
+            // stays in the file list, because a reader should see that it
+            // was written; it has nothing to read.
+            Op::ReplaceStateFile { .. } => {}
             Op::ReplaceModelFile {
-                path,
-                before,
-                after,
-            }
-            | Op::ReplaceStateFile {
                 path,
                 before,
                 after,

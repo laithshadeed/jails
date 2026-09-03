@@ -1662,6 +1662,17 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
     );
     assert!(shown.contains("@@ -"), "{shown}");
     assert!(shown.contains("+import java.time.Instant;"), "{shown}");
+    // **Derived state has no hunk.** The compiler lock is the accepted
+    // projection written out again, so diffing it prints the change a
+    // second time in a form nobody reviews. It stays in the file list.
+    assert!(
+        shown.contains("  write   .jails/compiler.lock.json"),
+        "the lock is still named as written: {shown}"
+    );
+    assert!(
+        !shown.contains("diff --jails replace .jails/compiler.lock.json"),
+        "the lock has no hunk: {shown}"
+    );
     // **The three-way merge, asserted by its result rather than by a label.**
     // The reader's line is in the file's BASE and not in the compiler's
     // THEIRS, so a diff that removed it would be a merge that dropped it --

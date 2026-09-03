@@ -266,6 +266,21 @@ fn remove_staged(path: &Path) -> Result<(), Diagnostic> {
     }
 }
 
+/// The one fix for every stale precondition.
+///
+/// **A plan is a transition out of a project state that no longer exists**,
+/// and there is nothing to repair: the answer is to plan again against the
+/// tree as it is now. The three refusals below used to say "stale exact plan"
+/// and name no next step, which reads as corruption rather than as the race
+/// it usually is. Three things produce this condition -- another `jails` run
+/// finishing first, an editor saving between planning and applying, and a
+/// plan imported with `--plan-in` that was reviewed somewhere else -- and all
+/// three take the same action, so the line names them together.
+const RUN_IT_AGAIN: &str = "run the command again so it plans against the project as it is now; \
+                            another jails run or an editor may have changed it, and a plan \
+                            imported with `--plan-in` has to have been exported from this \
+                            project";
+
 fn verify_preconditions(root: &Path, bundle: &PlanBundle) -> Result<(), Diagnostic> {
     let desired = desired_files(bundle)?;
     let removed = removed_files(bundle)?;
@@ -290,12 +305,14 @@ fn verify_preconditions(root: &Path, bundle: &PlanBundle) -> Result<(), Diagnost
             (Some(_), FilePrecondition::Missing) => "it was created after the plan",
             _ => "its bytes changed after the plan",
         };
-        return Err(Diagnostic::without_a_fix(
+        return Err(Diagnostic::new(
             "workspace-precondition-stale",
             path.to_string(),
             format!(
-                "stale exact plan: `{path}` no longer matches its captured precondition -- {observed}"
+                "`{path}` no longer matches what this plan was reviewed against -- {observed}. \
+                 Nothing was written."
             ),
+            RUN_IT_AGAIN,
         ));
     }
     for (path, expected) in &desired {
@@ -306,10 +323,14 @@ fn verify_preconditions(root: &Path, bundle: &PlanBundle) -> Result<(), Diagnost
         if actual.is_none() || actual_matches_desired(actual.as_ref(), Some(expected)) {
             continue;
         }
-        return Err(Diagnostic::without_a_fix(
+        return Err(Diagnostic::new(
             "workspace-precondition-path-appeared",
             path.to_string(),
-            format!("stale exact plan: new managed path `{path}` appeared after planning"),
+            format!(
+                "the managed path `{path}` appeared after this plan was reviewed. Nothing was \
+                 written."
+            ),
+            RUN_IT_AGAIN,
         ));
     }
     for (path, expected) in &bundle.plan.base.directories {
@@ -317,12 +338,14 @@ fn verify_preconditions(root: &Path, bundle: &PlanBundle) -> Result<(), Diagnost
         if actual == *expected || directory_is_plan_prefix(root, path, bundle)? {
             continue;
         }
-        return Err(Diagnostic::without_a_fix(
+        return Err(Diagnostic::new(
             "workspace-precondition-directory-stale",
             path.to_string(),
             format!(
-                "stale exact plan: directory `{path}` no longer matches its captured precondition"
+                "the directory `{path}` no longer matches what this plan was reviewed against. \
+                 Nothing was written."
             ),
+            RUN_IT_AGAIN,
         ));
     }
     Ok(())

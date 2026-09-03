@@ -195,11 +195,6 @@ repair`, which takes no selector and writes it back. `resource repair Tag`
 refuses because repair takes no selector, on a command family whose every
 other verb takes one.
 
-**Two commands at once:** a `g record` started 5 ms after a `g scaffold`
-refuses with *stale exact plan: `compiler.lock.json` no longer matches its
-captured precondition*. Correct, and it never says another jails was
-running or that rerunning is the fix.
-
 **What works.** A fresh clone passes `model check --frozen`. `git status`
 after `rename resource Task Todo --strategy preserve-table` shows `R
 Task.java -> Todo.java` for seven files, and the model diff is three
@@ -293,15 +288,6 @@ restores a deleted managed file (BASE is in the base tree, the render is
 the model's) and says `restore <path> deleted by hand`; `resource repair`
 is an alias for one release. *Done when* the
 deletion above is healed by `jails sync` and the report names the file.
-
-**I71.37 — a concurrent run is named.** *Change* *another jails run
-changed this project while this one was planning; run the command again*.
-*Done when* the race prints that line.
-
-**I70.3 — `--diff` diffs managed files, never the lock.** *Change* the
-lock and the base tree are derived from the plan and are skipped by
-`--diff`, which prints the model hunk and the managed files. *Done when*
-the lock has no hunk in a `--diff`.
 
 **I71.15 — `jails undo` (prototype).** *Change* add `jails undo`, built
 on what exists: every planned operation carries a before-image (`before: Option<FileImageRef>` in `plan.rs`; blobs in the

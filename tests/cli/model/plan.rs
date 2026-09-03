@@ -35,7 +35,8 @@ fn reviewed_model_format_refuses_a_concurrent_source_edit() {
         .unwrap();
     assert!(!applied.status.success());
     assert!(
-        String::from_utf8_lossy(&applied.stderr).contains("stale exact plan"),
+        String::from_utf8_lossy(&applied.stderr)
+            .contains("no longer matches what this plan was reviewed against"),
         "{}",
         String::from_utf8_lossy(&applied.stderr)
     );
@@ -90,7 +91,8 @@ app Notes {
         .unwrap();
     assert!(!applied.status.success());
     assert!(
-        String::from_utf8_lossy(&applied.stderr).contains("stale exact plan"),
+        String::from_utf8_lossy(&applied.stderr)
+            .contains("no longer matches what this plan was reviewed against"),
         "{}",
         String::from_utf8_lossy(&applied.stderr)
     );
@@ -225,7 +227,10 @@ fn model_apply_rejects_a_stale_plan_before_writing() {
         .unwrap();
     assert!(!applied.status.success());
     let stderr = String::from_utf8(applied.stderr).unwrap();
-    assert!(stderr.contains("stale exact plan"), "{stderr}");
+    assert!(
+        stderr.contains("no longer matches what this plan was reviewed against"),
+        "{stderr}"
+    );
     assert!(!root.join(".jails/compiler.lock.json").exists());
 }
 

@@ -107,7 +107,8 @@ fn imported_plan_refuses_another_root_without_writing() {
         .unwrap();
     assert!(!refused.status.success(), "{refused:?}");
     assert!(
-        String::from_utf8_lossy(&refused.stderr).contains("captured precondition"),
+        String::from_utf8_lossy(&refused.stderr)
+            .contains("no longer matches what this plan was reviewed against"),
         "{refused:?}"
     );
     assert_eq!(snapshot_tree(&second), before);
