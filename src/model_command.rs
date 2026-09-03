@@ -7,7 +7,7 @@ use serde_json::json;
 use std::path::{Path, PathBuf};
 
 const CHECK_SCHEMA: &str = "jails.model-check.v1";
-pub(crate) const JDL_PATH: &str = ".jails/model.jdl";
+pub(crate) const JDL_PATH: &str = jails_model::MODEL_FILE;
 /// The file a project wrote before `jdl 1`. Nothing reads it; a project that
 /// still has one is refused by name so a model is never seeded beside it.
 const TOML_PATH: &str = ".jails/model.toml";

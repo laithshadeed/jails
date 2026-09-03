@@ -298,3 +298,114 @@ fn the_generated_bash_completion_asks_the_binary_what_this_project_declares() {
         "bash completed `st` to {reply:?}"
     );
 }
+
+/// **The protocol carries the language's diagnostics, not a summary of
+/// them.**
+///
+/// An adapter that has to run `model check` and scrape its prose breaks the
+/// first time a message is reworded. `editor diagnostics` runs the same parse
+/// and link that command runs and reports each one in the schema's shape:
+/// the code an adapter can branch on, the model path as the subject, and the
+/// line and column an editor jumps to. Both halves of the language are here,
+/// because they come from different places: a syntax error is the parser's
+/// and a `model-*` code is the linker's.
+#[test]
+fn editor_diagnostics_return_the_model_check_codes_with_a_line() {
+    let root = editor_fixture("editor-diagnostics-model");
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    let model = "jdl 1\n\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  \
+                 platform spring\n  build maven\n  storage none\n}\n\n\
+                 entity Loan @id(ent_loan) {\n  use repo\n\n  id: uuid @id(fld_loan_id) @pk\n  \
+                 status: strin @id(fld_loan_status)\n}\n";
+    fs::write(root.join(".jails/model.jdl"), model).unwrap();
+
+    let checked = jails_cmd(&root, None)
+        .args(["--output", "json", "model", "check"])
+        .output()
+        .unwrap();
+    let checked: serde_json::Value = serde_json::from_slice(&checked.stdout).unwrap();
+    let expected = checked["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|diagnostic| diagnostic["code"].as_str().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(expected, ["model-field-type"]);
+
+    let reported = jails_cmd(&root, None)
+        .args([
+            "--output",
+            "json",
+            "editor",
+            "diagnostics",
+            "--scope",
+            "project",
+        ])
+        .output()
+        .unwrap();
+    assert!(reported.status.success());
+    let reported: serde_json::Value = serde_json::from_slice(&reported.stdout).unwrap();
+    let rows = reported["diagnostics"].as_array().unwrap();
+    assert_eq!(
+        rows.iter()
+            .map(|row| row["code"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>(),
+        expected
+    );
+    assert_eq!(rows[0]["subject"], "$.entities.loan.fields.status.type");
+    assert_eq!(rows[0]["primary"]["path"], ".jails/model.jdl");
+    // Zero-based, as everything else in this protocol is: the fifteenth line
+    // of the file.
+    assert_eq!(rows[0]["primary"]["range"]["start"]["line"], 14);
+    assert_eq!(rows[0]["primary"]["range"]["start"]["byte_column"], 2);
+    assert!(!rows[0]["fixes"].as_array().unwrap().is_empty());
+
+    // A syntax error is the parser's, and it reaches the same surface.
+    fs::write(
+        root.join(".jails/model.jdl"),
+        model.replace("jdl 1", "jdl 9"),
+    )
+    .unwrap();
+    let reported = jails_cmd(&root, None)
+        .args([
+            "--output",
+            "json",
+            "editor",
+            "diagnostics",
+            "--scope",
+            "project",
+        ])
+        .output()
+        .unwrap();
+    let reported: serde_json::Value = serde_json::from_slice(&reported.stdout).unwrap();
+    let rows = reported["diagnostics"].as_array().unwrap();
+    assert!(!rows.is_empty(), "a syntax error reported nothing");
+    assert!(
+        rows[0]["primary"]["range"]["start"]["line"]
+            .as_u64()
+            .is_some(),
+        "{:#?}",
+        rows[0]
+    );
+
+    // A buffer that is not the model has none of them, and does not pay for
+    // a link to find that out.
+    let elsewhere = jails_cmd(&root, None)
+        .args([
+            "--output",
+            "json",
+            "editor",
+            "diagnostics",
+            "--scope",
+            "buffer",
+            "--file",
+            "src/main/java/com/example/demo/web/NoteController.java",
+        ])
+        .output()
+        .unwrap();
+    let elsewhere: serde_json::Value = serde_json::from_slice(&elsewhere.stdout).unwrap();
+    assert!(
+        elsewhere["diagnostics"].as_array().unwrap().is_empty(),
+        "{elsewhere}"
+    );
+}

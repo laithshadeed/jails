@@ -319,6 +319,28 @@ fn diagnostics(
             ));
         }
     }
+    // **The language's own diagnostics, from the same parse `model check`
+    // runs.** An adapter that has to shell out to `model check` and scrape
+    // its prose is an adapter that breaks when a message is reworded; the
+    // protocol carries the code, the model path, the line and the column
+    // that command already computes.
+    //
+    // The model file is the whole scope of them: a buffer that is not
+    // `.jails/model.jdl` has no model diagnostics to report, and running the
+    // linker to say so would be the slowest possible way to return nothing.
+    let model_file = Path::new(jails_model::MODEL_FILE);
+    let asked_about_the_model = match file {
+        Some(file) => checked_relative(file)? == model_file,
+        None => true,
+    };
+    if asked_about_the_model
+        && let Ok(source) = std::fs::read_to_string(project.root().join(model_file))
+        && let Err(diagnostics) = jails_model::parse_jdl(&source)
+    {
+        for diagnostic in &diagnostics.diagnostics {
+            rows.push(model_diagnostic_json(diagnostic, model_file));
+        }
+    }
     let scope_json = match (scope, file) {
         (EditorDiagnosticScopeArg::Buffer, Some(file)) => format!(
             "{{\"buffer\":{}}}",
@@ -338,6 +360,45 @@ fn diagnostics(
         rows.join(",")
     );
     Ok(())
+}
+
+/// One linker or parser diagnostic in the protocol's shape.
+///
+/// The line is one-based in the model and zero-based here, which is the
+/// convention the rest of this protocol already uses (`symbol_json` does the
+/// same). A diagnostic with no location -- a collision between two
+/// declarations, which is about neither line alone -- carries a null
+/// `primary` rather than pointing at the top of the file.
+fn model_diagnostic_json(diagnostic: &jails_model::Diagnostic, file: &Path) -> String {
+    let severity = match diagnostic.severity {
+        jails_model::Severity::Warning => "warning",
+        jails_model::Severity::Error => "error",
+    };
+    let primary = diagnostic.line.map_or_else(
+        || "null".to_string(),
+        |line| {
+            let line = line.saturating_sub(1);
+            let column = diagnostic.column.unwrap_or(1).saturating_sub(1);
+            format!(
+                "{{\"path\":{},\"range\":{{\"start\":{{\"line\":{line},\"byte_column\":{column}}},\"end\":{{\"line\":{line},\"byte_column\":{column}}}}}}}",
+                js(&file.to_string_lossy())
+            )
+        },
+    );
+    let fixes = if diagnostic.fix.is_empty() {
+        String::new()
+    } else {
+        js(&diagnostic.fix)
+    };
+    format!(
+        "{{\"code\":{},\"severity\":{},\"message\":{},\"subject\":{},\"primary\":{},\"related\":[],\"evidence\":[\"parsed\"],\"fixes\":[{}]}}",
+        js(diagnostic.code),
+        js(severity),
+        js(&diagnostic.message),
+        js(&diagnostic.path),
+        primary,
+        fixes
+    )
 }
 
 fn diagnostic_json(

@@ -282,12 +282,21 @@ pub(super) fn problem(
     fix: impl Into<String>,
 ) -> Diagnostics {
     let (line, column) = line_column(source, offset);
-    Diagnostics::from_vec(vec![Diagnostic::new(
-        code,
-        format!("line {line}, column {column}, byte {offset}"),
-        message,
-        fix,
-    )])
+    // The path keeps the prose spelling it has always had, and the same two
+    // numbers go into the fields an editor reads. One is the sentence, the
+    // other is the jump.
+    Diagnostics::from_vec(vec![
+        Diagnostic::new(
+            code,
+            format!("line {line}, column {column}, byte {offset}"),
+            message,
+            fix,
+        )
+        .at(
+            u32::try_from(line).unwrap_or(u32::MAX),
+            u32::try_from(column).unwrap_or(u32::MAX),
+        ),
+    ])
 }
 
 fn line_column(source: &str, offset: usize) -> (usize, usize) {

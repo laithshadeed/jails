@@ -62,6 +62,14 @@ pub use id::{
     EntityId, FieldId, IndexId, OperationId, ProjectId, ProjectionId, RelationId, SettingId,
     StableId, UnitId,
 };
+/// The one file this language is written in.
+///
+/// **The language owns the name of its own file.** Every diagnostic that
+/// carries a line is a line in this file, and a second spelling of the path
+/// beside the renderer is how a rename would move one and not the other. The
+/// binary's `model_command::JDL_PATH` is this constant.
+pub const MODEL_FILE: &str = ".jails/model.jdl";
+
 pub use jdl::parse as parse_jdl;
 pub use jdl::v1::grammar as jdl_grammar;
 pub use jdl::v1::identity as jdl_identity;

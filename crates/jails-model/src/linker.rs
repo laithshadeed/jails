@@ -34,8 +34,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 const SCHEMA: &str = "jails.model.v1";
 
-pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> {
-    let mut linker = Linker::default();
+pub(crate) fn link(
+    document: source::Document,
+    spans: &crate::jdl::v1::SpanIndex,
+) -> Result<AppModel, Diagnostics> {
+    let mut linker = Linker::with_spans(spans);
 
     if document.schema != SCHEMA {
         linker.problem(
@@ -117,6 +120,7 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
         linker.label(&label, &path);
         linker.register_id(&entity.id, &format!("{path}.id"));
         let id = linker.stable_id::<EntityId>(&entity.id, &format!("{path}.id"));
+        linker.note_entity_path(&entity.id, &path);
 
         // **Resolved against the base, and validated once.** A capability's
         // `@package` reads the same way, so a reader who has seen one has
@@ -234,6 +238,10 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
                         message,
                         "use one of jails' lowercase types, or name a capitalised type this project declares",
                     );
+                    // The field is declared and will not be in `fields`, so
+                    // every reference to it is about to report that it does
+                    // not exist. It does; its type does not.
+                    linker.field_did_not_link(&field_path);
                     None
                 }
             };

@@ -372,16 +372,38 @@ a relation's parent is `--to`.
 ### Change
 
 **I71.11 — linker diagnostics carry a line, and the cascade collapses.**
-*Change* the CST keeps spans (`jdl/v1/cst.rs`), so a `model-*` diagnostic
-prints `.jails/model.jdl:36:9` beside its path; a field whose type is
-unknown suppresses the diagnostics that depend on it. *Done when* the
-`strin` typo prints one diagnostic with a line and column.
+*Landed.* `jdl::v1::spans` turns the CST's declaration and member spans
+into one table from the path the linker writes to the line it was written
+on, and `Linker::problem` resolves it for all 145 diagnostic sites at
+once -- longest prefix first, so `$.entities.loan.fields.status.type`
+lands on the field's own line without a table of which suffixes a linker
+may append. `Diagnostic` carries `line` and `column`; the human renderer
+adds `at .jails/model.jdl:17:3` as its own line, so every message gate,
+golden and reader that knows the first line is unmoved. Syntax
+diagnostics, which computed the two numbers already and put them in
+prose, now carry them as fields too.
+
+The cascade is the other half. A field whose type is misspelled does not
+link, so an index on it reported that the column does not name a field --
+false, and it sends the reader to delete a correct line. `Linker` records
+the fields that did not link and the five sites that would report a
+consequence stay quiet: index columns, constraint columns, an
+operation's field references (through the entity id), the type-dependent
+half of `@notBlank`, `@positive`, `@scope`, `@version` and the length
+bounds. The fixture typo went from four diagnostics to one, and fixing it
+leaves the model valid -- nothing was hiding behind the noise.
 
 **I71.48 — the editor protocol carries the language's diagnostics.**
-*Change* `editor diagnostics` runs the same parse and link as `model
-check` and maps each code to the schema's diagnostic shape with the span.
-*Done when* it returns what `model check` returns, JDL and model codes
-alike, with line and column.
+*Landed*, on I71.11's spans. `editor diagnostics` runs the same
+`parse_jdl` that `model check` runs and reports each diagnostic in the
+schema's shape: the code an adapter branches on, the model path as
+`subject`, the fix as `fixes`, and a zero-based `primary` range from the
+diagnostic's own line and column. An adapter no longer has to shell out
+to `model check` and scrape prose that a reword would break. A buffer
+that is not `.jails/model.jdl` reports none of them and does not pay for
+a link to find that out; a diagnostic with no location -- a collision
+between two declarations, which is about neither line alone -- carries a
+null `primary` rather than pointing at the top of the file.
 
 **I71.26 — collections exist.** *Change* the model accepts `list<T>` and
 `map<K,V>` on non-stored records and component payloads, as the

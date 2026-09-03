@@ -49,12 +49,16 @@ pub(crate) fn link(
         for (field_position, label) in declaration.fields.iter().enumerate() {
             let field_path = format!("{path}.fields[{field_position}]");
             let Some(field) = field_labels.get(label).cloned() else {
-                linker.problem(
-                    "model-constraint-field-reference",
-                    field_path,
-                    format!("`{label}` does not name a field on this entity"),
-                    "name an entity field",
-                );
+                // The same cascade `index::link` collapses: a constraint on a
+                // field whose type is misspelled is not a second mistake.
+                if linker.field_did_link(entity_path, label) {
+                    linker.problem(
+                        "model-constraint-field-reference",
+                        field_path,
+                        format!("`{label}` does not name a field on this entity"),
+                        "name an entity field",
+                    );
+                }
                 continue;
             };
             if !seen.insert(field.clone()) {

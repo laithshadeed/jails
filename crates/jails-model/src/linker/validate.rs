@@ -150,6 +150,23 @@ const OBJECT_METHODS: &[&str] = &[
 pub(crate) struct Linker {
     pub(crate) diagnostics: Vec<Diagnostic>,
     ids: BTreeMap<String, String>,
+    /// Where the document declared each path, so a diagnostic can say which
+    /// line to go to. Empty when the caller had no document -- the tests that
+    /// link a hand-built `source::Document` -- and a diagnostic with no
+    /// location is what it was before.
+    spans: crate::jdl::v1::SpanIndex,
+    /// The fields that were declared and did not link, keyed by field path.
+    ///
+    /// **A cascade is one mistake reported as several, and the later ones are
+    /// wrong.** A field whose type is misspelled is dropped, so an index on
+    /// it reports that the column does not name a field -- which sends the
+    /// reader to delete a line that is correct. The first diagnostic is the
+    /// true one; the rest are suppressed and reappear the moment it is fixed.
+    unlinked_fields: std::collections::BTreeSet<String>,
+    /// Each linked entity's model path, by the stable id a later declaration
+    /// refers to it with. An operation names an entity by id; the cascade is
+    /// recorded by path, and this is the one hop between them.
+    entity_paths: BTreeMap<String, String>,
 }
 
 /// Which SQL name is being checked, and whether it will be written at all.
@@ -202,6 +219,15 @@ impl SqlName {
 }
 
 impl Linker {
+    /// The document's own span index, which every diagnostic is located
+    /// through.
+    pub(crate) fn with_spans(spans: &crate::jdl::v1::SpanIndex) -> Self {
+        Self {
+            spans: spans.clone(),
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn problem(
         &mut self,
         code: &'static str,
@@ -209,8 +235,40 @@ impl Linker {
         message: impl Into<String>,
         fix: impl Into<String>,
     ) {
-        self.diagnostics
-            .push(Diagnostic::new(code, path, message, fix));
+        let path = path.into();
+        let located = self.spans.locate(&path);
+        let mut diagnostic = Diagnostic::new(code, path, message, fix);
+        if let Some(location) = located {
+            diagnostic = diagnostic.at(location.line, location.column);
+        }
+        self.diagnostics.push(diagnostic);
+    }
+
+    /// Record that a declared field did not link, so the references to it
+    /// stay quiet.
+    pub(crate) fn field_did_not_link(&mut self, field_path: &str) {
+        self.unlinked_fields.insert(field_path.to_string());
+    }
+
+    /// Whether this field is one whose own diagnostic has already been
+    /// reported. A reference to it is a consequence, not a second mistake.
+    pub(crate) fn field_did_link(&self, entity_path: &str, label: &str) -> bool {
+        !self
+            .unlinked_fields
+            .contains(&format!("{entity_path}.fields.{label}"))
+    }
+
+    /// Where an entity with this stable id was declared.
+    pub(crate) fn note_entity_path(&mut self, id: &str, path: &str) {
+        self.entity_paths.insert(id.to_string(), path.to_string());
+    }
+
+    /// [`Self::field_did_link`], for a caller holding the entity's id rather
+    /// than its path.
+    fn field_of_entity_did_link(&self, entity: &EntityId, label: &str) -> bool {
+        self.entity_paths
+            .get(entity.as_str())
+            .is_none_or(|path| self.field_did_link(path, label))
     }
 
     pub(crate) fn register_id(&mut self, id: &str, path: &str) {
@@ -483,12 +541,17 @@ impl Linker {
                     .and_then(|fields| fields.get(label))
                     .cloned()
                     .or_else(|| {
-                        self.problem(
-                            "model-field-reference",
-                            path,
-                            format!("`{label}` is not a field on entity id `{entity}`"),
-                            "use a field label declared on the referenced entity",
-                        );
+                        // Silent when the field is declared on that entity
+                        // and failed to link: the operation is right and the
+                        // field's own diagnostic is the one to fix.
+                        if self.field_of_entity_did_link(entity, label) {
+                            self.problem(
+                                "model-field-reference",
+                                path,
+                                format!("`{label}` is not a field on entity id `{entity}`"),
+                                "use a field label declared on the referenced entity",
+                            );
+                        }
                         None
                     })
             })

@@ -19,6 +19,7 @@ mod format;
 pub mod grammar;
 pub mod identity;
 mod parser;
+mod spans;
 mod token;
 
 pub use cst::{DeclarationCst, DocumentCst, MemberCst};
@@ -32,6 +33,7 @@ pub use edit::{
     set_projection_path as set_jdl_projection_path,
 };
 pub use format::format;
+pub use spans::SpanIndex;
 pub use token::{Span, Token, TokenKind};
 
 use crate::{AppModel, Diagnostics};
@@ -44,7 +46,11 @@ pub fn parse_cst(input: &str) -> Result<DocumentCst, Diagnostics> {
 pub fn parse(input: &str) -> Result<AppModel, Diagnostics> {
     let tokens = token::lex(input)?;
     let parsed = parser::parse(input, tokens)?;
-    crate::linker::link(parsed.source)
+    // The CST is the only thing that knows where a declaration was written,
+    // and the linker is the only thing that knows what is wrong with it. The
+    // index is how the second says the first's answer.
+    let spans = SpanIndex::from_cst(&parsed.cst);
+    crate::linker::link(parsed.source, &spans)
 }
 
 #[cfg(test)]

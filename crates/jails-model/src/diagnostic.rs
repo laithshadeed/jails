@@ -83,6 +83,20 @@ pub struct Diagnostic {
     pub fix: String,
     #[serde(default, skip_serializing_if = "is_error")]
     pub severity: Severity,
+    /// Where in [`crate::MODEL_FILE`] the declaration this is about was
+    /// written, one-based, when the document that produced it recorded one.
+    ///
+    /// **The path says what is wrong and the line says where to go.** A
+    /// reader given `$.entities.loan.fields.status.type` and a file of
+    /// eighty declarations is being asked to do the search the parser
+    /// already did. `None` is honest rather than approximate: a diagnostic
+    /// raised about a node no declaration owns -- a collision between two, a
+    /// model built without a document -- has no line to point at, and a
+    /// guessed one is worse than none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column: Option<u32>,
 }
 
 fn is_error(severity: &Severity) -> bool {
@@ -103,6 +117,8 @@ impl Diagnostic {
             message: message.into(),
             fix: fix.into(),
             severity: Severity::Error,
+            line: None,
+            column: None,
         }
     }
 
@@ -122,6 +138,16 @@ impl Diagnostic {
         message: impl Into<String>,
     ) -> Self {
         Self::new(code, path, message, String::new())
+    }
+
+    /// The same diagnostic, told where it came from.
+    #[must_use]
+    pub fn at(self, line: u32, column: u32) -> Self {
+        Self {
+            line: Some(line),
+            column: Some(column),
+            ..self
+        }
     }
 
     /// A report a reader may act on or ignore without changing what is emitted.
@@ -182,12 +208,14 @@ impl Diagnostics {
         fix: impl Into<String>,
     ) -> Self {
         Self {
-            diagnostics: vec![Diagnostic::new(
-                "jdl-syntax",
-                format!("line {line}"),
-                message,
-                fix,
-            )],
+            diagnostics: vec![
+                Diagnostic::new("jdl-syntax", format!("line {line}"), message, fix)
+                    // Column one: the caller knows which line the shape is
+                    // wrong on and nothing narrower, and a column it made up
+                    // would put the reader's cursor in the wrong place with
+                    // the confidence of a measurement.
+                    .at(u32::try_from(line).unwrap_or(u32::MAX), 1),
+            ],
         }
     }
 
@@ -206,9 +234,18 @@ impl Display for Diagnostics {
         for diagnostic in &self.diagnostics {
             writeln!(
                 formatter,
-                "  [{}] {}: {}\n       fix: {}",
-                diagnostic.code, diagnostic.path, diagnostic.message, diagnostic.fix
+                "  [{}] {}: {}",
+                diagnostic.code, diagnostic.path, diagnostic.message
             )?;
+            // **Its own line, so nothing that reads the first one moves.**
+            // The code, the path and the message are what every message
+            // gate, every golden and every reader already knows; the
+            // location is new information and goes where an editor's
+            // `file:line:column` jump finds it.
+            if let (Some(line), Some(column)) = (diagnostic.line, diagnostic.column) {
+                writeln!(formatter, "       at {}:{line}:{column}", crate::MODEL_FILE)?;
+            }
+            writeln!(formatter, "       fix: {}", diagnostic.fix)?;
         }
         Ok(())
     }

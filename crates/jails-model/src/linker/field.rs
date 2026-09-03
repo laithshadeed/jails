@@ -16,7 +16,14 @@ pub(super) fn constraints(
     path: &str,
     linker: &mut Linker,
 ) -> Option<LengthRange> {
-    if non_blank && !matches!(ty, Some(TypeRef::Builtin(BuiltinType::String))) {
+    // **A check about the type has nothing to check when the type did not
+    // parse.** The reader has one diagnostic naming the misspelling;
+    // `non_blank is valid only for string fields` beside it describes a
+    // field whose type nobody knows and reads as a second thing to fix.
+    // `non_blank && !required` is not one of those: it is true of the
+    // declaration whatever the type turns out to be.
+    let known = ty.is_some();
+    if known && non_blank && !matches!(ty, Some(TypeRef::Builtin(BuiltinType::String))) {
         linker.problem(
             "model-non-blank-type",
             format!("{path}.non_blank"),
@@ -32,7 +39,11 @@ pub(super) fn constraints(
             "remove `?` or remove `@notBlank`",
         );
     }
-    length_range(min, max, ty, path, linker)
+    if known {
+        length_range(min, max, ty, path, linker)
+    } else {
+        None
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -45,8 +56,12 @@ pub(super) fn semantics(
     path: &str,
     linker: &mut Linker,
 ) -> FieldSemantics {
+    // The same rule `constraints` follows: a type that did not parse has
+    // already been reported, and every check that reads it would be
+    // describing a type nobody knows.
+    let known = ty.is_some();
     if source.positive || source.nonnegative {
-        if !is_numeric(ty) {
+        if known && !is_numeric(ty) {
             linker.problem(
                 "model-numeric-constraint-type",
                 format!("{path}.semantics"),
@@ -73,7 +88,8 @@ pub(super) fn semantics(
                 "remove `?` from the scope field",
             );
         }
-        if !matches!(ty, Some(TypeRef::Builtin(builtin)) if builtin.semantics().scopeable) {
+        if known && !matches!(ty, Some(TypeRef::Builtin(builtin)) if builtin.semantics().scopeable)
+        {
             linker.problem(
                 "model-scope-type",
                 format!("{path}.type"),
@@ -89,7 +105,7 @@ pub(super) fn semantics(
     });
 
     if source.version {
-        if !required || !matches!(ty, Some(TypeRef::Builtin(BuiltinType::Long))) {
+        if known && (!required || !matches!(ty, Some(TypeRef::Builtin(BuiltinType::Long)))) {
             linker.problem(
                 "model-version-type",
                 format!("{path}.semantics.version"),

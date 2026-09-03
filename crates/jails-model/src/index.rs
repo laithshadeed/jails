@@ -93,12 +93,17 @@ pub(crate) fn link(
                 }
             };
             let Some(field) = field_labels.get(field_label).cloned() else {
-                linker.problem(
-                    "model-index-field-reference",
-                    column_path,
-                    format!("`{field_label}` does not name a field on `{entity_label}`"),
-                    "name an entity field label",
-                );
+                // Silent when the field is declared and failed to link: its
+                // own diagnostic is the one to fix, and "does not name a
+                // field" would send the reader to delete a correct line.
+                if linker.field_did_link(entity_path, field_label) {
+                    linker.problem(
+                        "model-index-field-reference",
+                        column_path,
+                        format!("`{field_label}` does not name a field on `{entity_label}`"),
+                        "name an entity field label",
+                    );
+                }
                 continue;
             };
             if !seen.insert(field.clone()) {

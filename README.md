@@ -82,6 +82,14 @@ jails model fmt [--check]
 jails sync
 ```
 
+Every diagnostic these print names the model node it is about
+(`$.entities.note.fields.title.type`) and, where the document declared one,
+the line it was written on: `at .jails/model.jdl:36:9` on its own line under
+the message. One mistake is one diagnostic -- a field whose type is
+misspelled suppresses the index, constraint, operation and marker
+diagnostics that only fire because it did not link, so the list is the
+mistakes rather than their consequences.
+
 `plan` captures the workspace once and writes a content-addressed exact plan.
 `apply` verifies and executes those reviewed bytes without recompiling; applying
 the same bundle twice converges to zero writes, and a stale precondition fails
@@ -188,9 +196,11 @@ source: the next change can be made by hand in the file and applied with
   [query]` returns project symbols with stable identities (a route's is
   `route:<METHOD>:<path>:<handler>`, which `jails request` accepts as a
   target); `diagnostics --scope project|buffer [--file <path>]` returns
-  structured diagnostics, each tagged with the evidence it rests on. It
-  refuses without `--output json`, because an adapter must never parse
-  human output.
+  structured diagnostics, each tagged with the evidence it rests on --
+  including the language's own, from the same parse and link `model check`
+  runs, with the code, the model path as `subject` and a zero-based range in
+  `.jails/model.jdl`. It refuses without `--output json`, because an adapter
+  must never parse human output.
 - `jails new <name> [--deps web,jdbc] [--java 26] [--no-git] [--no-devtools]`
   — new Spring Boot project via start.spring.io. `git init` + `.gitignore`
   and `spring-boot-devtools` (needed for `run --watch`) are on by default.

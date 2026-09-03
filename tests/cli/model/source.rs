@@ -880,6 +880,69 @@ fn model_check_reports_all_semantic_failures_as_one_json_document() {
     );
 }
 
+/// **A path says what is wrong; a line says where to go.**
+///
+/// `$.entities.note.fields.title.type` is exact and unhelpful on its own: the
+/// reader has the file open and has to find the declaration the linker
+/// already found. The CST holds every declaration's span, so the location is
+/// a lookup rather than a search.
+///
+/// The second half is the cascade. A field whose type is misspelled does not
+/// link, so an index on it used to report that the column does not name a
+/// field -- which is false, and sends the reader to delete a correct line.
+/// One mistake is one diagnostic.
+#[test]
+fn a_misspelled_type_is_one_diagnostic_with_a_line_and_a_column() {
+    let invalid = MODEL.replace(
+        "title: string @id(fld_note_title) @notBlank",
+        "title: strin @id(fld_note_title) @notBlank\n  index [title]",
+    );
+    let expected_line = invalid
+        .lines()
+        .position(|line| line.trim_start().starts_with("title: strin"))
+        .expect("the typo is in the fixture")
+        + 1;
+    let root = model_project("model-located-diagnostic", &invalid);
+
+    let told = jails_cmd(&root, None)
+        .args(["model", "check"])
+        .output()
+        .unwrap();
+    assert!(!told.status.success());
+    let printed = String::from_utf8_lossy(&told.stderr);
+    assert!(
+        printed.contains(&format!("at .jails/model.jdl:{expected_line}:3")),
+        "no location: {printed}"
+    );
+
+    let output = jails_cmd(&root, None)
+        .args(["--output", "json", "model", "check"])
+        .output()
+        .unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let diagnostics = report["diagnostics"].as_array().unwrap();
+    assert_eq!(
+        diagnostics.len(),
+        1,
+        "the index on the unlinked field cascaded: {diagnostics:#?}"
+    );
+    assert_eq!(diagnostics[0]["code"], "model-field-type");
+    assert_eq!(diagnostics[0]["line"], expected_line);
+    assert_eq!(diagnostics[0]["column"], 3);
+    // Fixing the one true mistake is enough: nothing was hiding behind it.
+    let repaired = invalid.replace("title: strin ", "title: string ");
+    fs::write(root.join(".jails/model.jdl"), repaired).unwrap();
+    let output = jails_cmd(&root, None)
+        .args(["model", "check"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[test]
 fn model_check_names_the_fix_when_the_default_model_is_missing() {
     let root = temp_dir("model-missing");
