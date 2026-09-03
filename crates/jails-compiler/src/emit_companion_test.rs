@@ -17,8 +17,8 @@
 //!   compile.
 
 use crate::emit_java::JavaUnit;
-use crate::{CompileError, emit_java};
-use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
+use crate::{Diagnostic, emit_java};
+use jails_contracts::{FileKind, FileMode, Provenance, RenderedFile};
 use jails_model::{AppModel, BuiltinType, Entity, Field, Package, StableId, TypeRef, boundary};
 use std::collections::BTreeSet;
 
@@ -29,7 +29,7 @@ pub(crate) fn lower(
     model: &AppModel,
     entity: &Entity,
     facet: jails_model::Facet,
-) -> Result<Option<emit_java::Unit>, CompileError> {
+) -> Result<Option<emit_java::Unit>, Diagnostic> {
     let own = match facet {
         jails_model::Facet::Enum => boundary::ENUM,
         jails_model::Facet::Record => boundary::RECORD,
@@ -53,8 +53,8 @@ pub(crate) fn lower(
     let artifact_id = boundary::TEST.owned_by(entity.id.as_str());
     let rendered = JavaUnit::new(&package, &imports, &body).render(&artifact_id);
     let package_path = package.replace('.', "/");
-    let path = ProjectPath::parse(format!("{JAVA_TEST_ROOT}/{package_path}/{type_name}.java"))
-        .map_err(CompileError::new)?;
+    let path =
+        crate::refuse::project_path(format!("{JAVA_TEST_ROOT}/{package_path}/{type_name}.java"))?;
     Ok(Some(emit_java::Unit {
         path,
         file: RenderedFile {

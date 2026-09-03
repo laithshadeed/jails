@@ -17,7 +17,7 @@
 //! without it a retry is a second charge rather than a second try.
 
 use super::{Emitted, Package, java, package};
-use crate::CompileError;
+use crate::Diagnostic;
 use crate::emit_java::JavaUnit;
 use jails_contracts::PropertyEntry;
 use jails_model::{
@@ -38,7 +38,7 @@ pub(super) fn files(
     model: &AppModel,
     component: &Component,
     templates: &jails_contracts::TemplateOverrides,
-) -> Result<Vec<Emitted>, CompileError> {
+) -> Result<Vec<Emitted>, Diagnostic> {
     let command = staging_command(model, component)?;
     let event = crate::emit_operation::outbox::relayed(model, command)?;
     if let Some(declared) = component.yields.as_ref() {
@@ -50,10 +50,18 @@ pub(super) fn files(
             ComponentReference::Operation(id) if id == &event.id
         );
         if !agrees {
-            return Err(CompileError::new(format!(
-                "http sink `{}` names an event its outbox does not relay\n       fix: `{}` stages `{}`; drop the `yields` or point it there",
-                component.label, command.label, event.label
-            )));
+            return Err(Diagnostic::new(
+                "compile-http-sink-event-not-relayed",
+                format!("$.components.{}", component.label),
+                format!(
+                    "http sink `{}` names an event its outbox does not relay",
+                    component.label
+                ),
+                format!(
+                    "`{}` stages `{}`; drop the `yields` or point it there",
+                    command.label, event.label
+                ),
+            ));
         }
     }
     if !model
@@ -61,10 +69,15 @@ pub(super) fn files(
         .values()
         .any(|capability| capability.kind == "json")
     {
-        return Err(CompileError::new(format!(
-            "http sink `{}` encodes its payload with `Json`\n       fix: declare `cap json` in the model",
-            component.label
-        )));
+        return Err(Diagnostic::new(
+            "compile-http-sink-needs-json",
+            format!("$.components.{}", component.label),
+            format!(
+                "http sink `{}` encodes its payload with `Json`",
+                component.label
+            ),
+            "declare `cap json` in the model",
+        ));
     }
 
     let name = &component.name;
@@ -157,24 +170,39 @@ pub(super) fn files(
 fn staging_command<'a>(
     model: &'a AppModel,
     component: &Component,
-) -> Result<&'a Operation, CompileError> {
+) -> Result<&'a Operation, Diagnostic> {
     let Some(ComponentReference::Operation(id)) = component.on.as_ref() else {
-        return Err(CompileError::new(format!(
-            "http sink `{}` has no outbox to deliver from\n       fix: point `on` at a command that declares `deliver outbox`",
-            component.label
-        )));
+        return Err(Diagnostic::new(
+            "compile-http-sink-without-outbox",
+            format!("$.components.{}", component.label),
+            format!(
+                "http sink `{}` has no outbox to deliver from",
+                component.label
+            ),
+            "point `on` at a command that declares `deliver outbox`",
+        ));
     };
     let command = model.operations.get(id).ok_or_else(|| {
-        CompileError::new(format!(
-            "http sink `{}` references missing operation `{id}`\n       fix: declare the command it delivers from",
-            component.label
-        ))
+        Diagnostic::new(
+            "compile-http-sink-operation-missing",
+            format!("$.components.{}", component.label),
+            format!(
+                "http sink `{}` references missing operation `{id}`",
+                component.label
+            ),
+            "declare the command it delivers from",
+        )
     })?;
     if crate::emit_operation::outbox::delivery(command) != jails_model::Delivery::Outbox {
-        return Err(CompileError::new(format!(
-            "http sink `{}` delivers from `{}`, which publishes directly\n       fix: add `deliver outbox` to that command, or remove the sink",
-            component.label, command.label
-        )));
+        return Err(Diagnostic::new(
+            "compile-http-sink-command-publishes-directly",
+            format!("$.components.{}", component.label),
+            format!(
+                "http sink `{}` delivers from `{}`, which publishes directly",
+                component.label, command.label
+            ),
+            "add `deliver outbox` to that command, or remove the sink",
+        ));
     }
     Ok(command)
 }
@@ -188,7 +216,7 @@ fn staging_command<'a>(
 pub(crate) fn sample(
     model: &AppModel,
     event: &Operation,
-) -> Result<(String, bool, BTreeSet<String>), CompileError> {
+) -> Result<(String, bool, BTreeSet<String>), Diagnostic> {
     let OperationKind::Event(payload) = &event.kind else {
         unreachable!("`relayed` has already checked the kind");
     };
@@ -201,10 +229,13 @@ pub(crate) fn sample(
             ParameterSource::Field(visible) => {
                 let owner = crate::emit_java::entity(model, &visible.entity)?;
                 let field = owner.field(&visible.field).ok_or_else(|| {
-                    CompileError::new(format!(
-                        "outbox event `{}` references missing field `{}`",
-                        event.label, visible.field
-                    ))
+                    crate::refuse::unlinked(
+                        format!("$.operations.{}", event.label),
+                        format!(
+                            "outbox event `{}` references missing field `{}`",
+                            event.label, visible.field
+                        ),
+                    )
                 })?;
                 if !parameter.required {
                     arguments.push("Optional.empty()".to_string());
@@ -253,7 +284,7 @@ fn property(command: &Operation, component: &Component) -> String {
 pub(super) fn properties(
     model: &AppModel,
     component: &Component,
-) -> Result<Vec<PropertyEntry>, CompileError> {
+) -> Result<Vec<PropertyEntry>, Diagnostic> {
     let command = staging_command(model, component)?;
     Ok(vec![PropertyEntry {
         key: format!("{}.url", property(command, component)),

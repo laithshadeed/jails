@@ -23,7 +23,7 @@
 //! entity -- the worker asks its repository whether the row is already there.
 
 use super::{Emitted, Package, java, package};
-use crate::CompileError;
+use crate::Diagnostic;
 use crate::emit_java::JavaUnit;
 use jails_contracts::RenderedMigration;
 use jails_model::{
@@ -44,24 +44,34 @@ pub(super) fn files(
     model: &AppModel,
     component: &Component,
     templates: &jails_contracts::TemplateOverrides,
-) -> Result<Vec<Emitted>, CompileError> {
+) -> Result<Vec<Emitted>, Diagnostic> {
     let command = queued(model, component)?;
     let target = produced(model, component)?;
     if !super::has_database(model) {
-        return Err(CompileError::new(format!(
-            "durable job `{}` keeps its queue in PostgreSQL\n       fix: declare `storage postgres` in the model",
-            component.label
-        )));
+        return Err(Diagnostic::new(
+            "compile-durable-job-needs-postgres",
+            format!("$.components.{}", component.label),
+            format!(
+                "durable job `{}` keeps its queue in PostgreSQL",
+                component.label
+            ),
+            "declare `storage postgres` in the model",
+        ));
     }
     if !model
         .capabilities
         .values()
         .any(|capability| capability.kind == "json")
     {
-        return Err(CompileError::new(format!(
-            "durable job `{}` stores its payload with `Json`\n       fix: declare `cap json` in the model",
-            component.label
-        )));
+        return Err(Diagnostic::new(
+            "compile-durable-job-needs-json",
+            format!("$.components.{}", component.label),
+            format!(
+                "durable job `{}` stores its payload with `Json`",
+                component.label
+            ),
+            "declare `cap json` in the model",
+        ));
     }
 
     let name = &component.name;
@@ -238,24 +248,36 @@ fn table(component: &Component) -> String {
 }
 
 /// The command this job runs later.
-fn queued<'a>(model: &'a AppModel, component: &Component) -> Result<&'a Operation, CompileError> {
+fn queued<'a>(model: &'a AppModel, component: &Component) -> Result<&'a Operation, Diagnostic> {
     let Some(ComponentReference::Operation(id)) = component.on.as_ref() else {
-        return Err(CompileError::new(format!(
-            "durable job `{}` has no work to do\n       fix: point `on` at the command it runs",
-            component.label
-        )));
+        return Err(Diagnostic::new(
+            "compile-durable-job-without-work",
+            format!("$.components.{}", component.label),
+            format!("durable job `{}` has no work to do", component.label),
+            "point `on` at the command it runs",
+        ));
     };
     let command = model.operations.get(id).ok_or_else(|| {
-        CompileError::new(format!(
-            "durable job `{}` references missing operation `{id}`\n       fix: declare the command it runs",
-            component.label
-        ))
+        Diagnostic::new(
+            "compile-durable-job-operation-missing",
+            format!("$.components.{}", component.label),
+            format!(
+                "durable job `{}` references missing operation `{id}`",
+                component.label
+            ),
+            "declare the command it runs",
+        )
     })?;
     if !matches!(command.kind, OperationKind::Command(_)) {
-        return Err(CompileError::new(format!(
-            "durable job `{}` queues `{}`, which is not a command\n       fix: a queued item is work with an effect; point `on` at a command",
-            component.label, command.label
-        )));
+        return Err(Diagnostic::new(
+            "compile-durable-job-queues-non-command",
+            format!("$.components.{}", component.label),
+            format!(
+                "durable job `{}` queues `{}`, which is not a command",
+                component.label, command.label
+            ),
+            "a queued item is work with an effect; point `on` at a command",
+        ));
     }
     Ok(command)
 }
@@ -266,24 +288,37 @@ fn queued<'a>(model: &'a AppModel, component: &Component) -> Result<&'a Operatio
 /// before executing, which is what keeps at-least-once *delivery* from
 /// becoming at-least-once *effect* across a process that died between the
 /// command's commit and the queue's acknowledgement.
-fn produced<'a>(model: &'a AppModel, component: &Component) -> Result<&'a Entity, CompileError> {
+fn produced<'a>(model: &'a AppModel, component: &Component) -> Result<&'a Entity, Diagnostic> {
     let Some(ComponentReference::Entity(id)) = component.yields.as_ref() else {
-        return Err(CompileError::new(format!(
-            "durable job `{}` has no way to tell a retry from a repeat\n       fix: point `yields` at the entity its command creates",
-            component.label
-        )));
+        return Err(Diagnostic::new(
+            "compile-durable-job-without-yield",
+            format!("$.components.{}", component.label),
+            format!(
+                "durable job `{}` has no way to tell a retry from a repeat",
+                component.label
+            ),
+            "point `yields` at the entity its command creates",
+        ));
     };
     let entity = model.entities.get(id).ok_or_else(|| {
-        CompileError::new(format!(
-            "durable job `{}` references missing entity `{id}`",
-            component.label
-        ))
+        crate::refuse::unlinked(
+            format!("$.components.{}", component.label),
+            format!(
+                "durable job `{}` references missing entity `{id}`",
+                component.label
+            ),
+        )
     })?;
     if !entity.active || !entity.facets.contains(&Facet::Repository) {
-        return Err(CompileError::new(format!(
-            "durable job `{}` proves its recovery through `{}`, which has no repository\n       fix: add `use repo` to that entity -- the worker asks it whether the effect already happened",
-            component.label, entity.label
-        )));
+        return Err(Diagnostic::new(
+            "compile-durable-job-target-without-repository",
+            format!("$.components.{}", component.label),
+            format!(
+                "durable job `{}` proves its recovery through `{}`, which has no repository",
+                component.label, entity.label
+            ),
+            "add `use repo` to that entity -- the worker asks it whether the effect already happened",
+        ));
     }
     Ok(entity)
 }
@@ -298,7 +333,7 @@ fn produced<'a>(model: &'a AppModel, component: &Component) -> Result<&'a Entity
 fn sample(
     model: &AppModel,
     command: &Operation,
-) -> Result<(String, String, BTreeSet<String>), CompileError> {
+) -> Result<(String, String, BTreeSet<String>), Diagnostic> {
     let OperationKind::Command(spec) = &command.kind else {
         unreachable!("`queued` has already checked the kind");
     };
@@ -322,10 +357,13 @@ fn sample(
                 owner
                     .field(&visible.field)
                     .ok_or_else(|| {
-                        CompileError::new(format!(
-                            "durable job queues `{}`, which references missing field `{}`",
-                            command.label, visible.field
-                        ))
+                        crate::refuse::unlinked(
+                            format!("$.operations.{}", command.label),
+                            format!(
+                                "durable job queues `{}`, which references missing field `{}`",
+                                command.label, visible.field
+                            ),
+                        )
                     })?
                     .ty
                     .clone()
@@ -347,18 +385,25 @@ fn sample(
             // constant reference needs no import to compile.
             TypeRef::External(name) => {
                 let constants = enum_constants(model, &name).ok_or_else(|| {
-                    CompileError::new(format!(
-                        "durable job cannot enqueue `{}`: its input carries `{name}`, which jails cannot serialize or sample\n       fix: use builtin-typed or enum command inputs, or write the queue by hand",
-                        command.label
-                    ))
+                    Diagnostic::new(
+"compile-durable-job-input-unsampleable",
+format!("$.operations.{}", command.label),
+format!("durable job cannot enqueue `{}`: its input carries `{name}`, which jails cannot serialize or sample", command.label),
+"use builtin-typed or enum command inputs, or write the queue by hand",
+)
                 })?;
                 let domain = model.project.package_for(Package::Domain);
                 let qualified = |constant: &str| format!("{domain}.{name}.{constant}");
                 let Some(first) = constants.first() else {
-                    return Err(CompileError::new(format!(
-                        "durable job cannot enqueue `{}`: its input carries `{name}`, an enum with no constants\n       fix: declare at least one constant",
-                        command.label
-                    )));
+                    return Err(Diagnostic::new(
+                        "compile-durable-job-input-enum-empty",
+                        format!("$.operations.{}", command.label),
+                        format!(
+                            "durable job cannot enqueue `{}`: its input carries `{name}`, an enum with no constants",
+                            command.label
+                        ),
+                        "declare at least one constant",
+                    ));
                 };
                 arguments.push(qualified(first));
                 // The *different* payload the idempotency-conflict test needs.
@@ -390,7 +435,7 @@ fn worker_context(
     model: &AppModel,
     command: &Operation,
     target: &jails_model::Entity,
-) -> Result<(String, String), CompileError> {
+) -> Result<(String, String), Diagnostic> {
     let scoped = target
         .fields
         .iter()
@@ -400,10 +445,15 @@ fn worker_context(
         return Ok((String::new(), String::new()));
     }
     let _ = model;
-    Err(CompileError::new(format!(
-        "durable job cannot replay `{}`: `{}` is scoped by `{}`, and a worker running out of band has nobody to prove a claim to\n       fix: enqueue an unscoped command, or write the worker by hand and decide there how the proven tenancy is carried",
-        command.label, target.label, scoped[0].label
-    )))
+    Err(Diagnostic::new(
+        "compile-durable-job-command-scoped",
+        format!("$.operations.{}", command.label),
+        format!(
+            "durable job cannot replay `{}`: `{}` is scoped by `{}`, and a worker running out of band has nobody to prove a claim to",
+            command.label, target.label, scoped[0].label
+        ),
+        "enqueue an unscoped command, or write the worker by hand and decide there how the proven tenancy is carried",
+    ))
 }
 
 /// The constants of a declared enum, or `None` when this names something else.

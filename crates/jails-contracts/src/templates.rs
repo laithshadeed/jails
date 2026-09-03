@@ -41,7 +41,16 @@ impl TemplateOverrides {
     /// refused with both halves of the disagreement, because "these
     /// placeholders differ" without saying which sends the reader diffing two
     /// files by eye.
-    pub fn resolve<'a>(&'a self, name: &str, built_in: &'a str) -> Result<&'a str, String> {
+    ///
+    /// The refusal is `(what is wrong, what to do)` rather than one sentence,
+    /// because the caller turns it into a [`jails_model::Diagnostic`] and that
+    /// type keeps the two apart. Rendering them back with `Display` produces
+    /// the sentence this returned before it was split.
+    pub fn resolve<'a>(
+        &'a self,
+        name: &str,
+        built_in: &'a str,
+    ) -> Result<&'a str, (String, String)> {
         let Some(candidate) = self.files.get(name) else {
             return Ok(built_in);
         };
@@ -60,11 +69,16 @@ impl TemplateOverrides {
         if missing.is_empty() && unknown.is_empty() {
             return Ok(&candidate.text);
         }
-        Err(format!(
-            "template override {} does not match the built-in `{name}`\n       missing: [{}]; not supplied by jails: [{}]\n       fix: the placeholders are the contract -- copy jails' own templates/{name} and edit around them",
-            candidate.origin,
-            missing.join(", "),
-            unknown.join(", ")
+        Err((
+            format!(
+                "template override {} does not match the built-in `{name}`\n       missing: [{}]; not supplied by jails: [{}]",
+                candidate.origin,
+                missing.join(", "),
+                unknown.join(", ")
+            ),
+            format!(
+                "the placeholders are the contract -- copy jails' own templates/{name} and edit around them"
+            ),
         ))
     }
 
@@ -134,8 +148,8 @@ mod tests {
         let refusal = overrides
             .resolve("a.java", "class {{name}} {}")
             .expect_err("a dropped placeholder is refused");
-        assert!(refusal.contains(".jails/templates/a.java"), "{refusal}");
-        assert!(refusal.contains("missing: [name]"), "{refusal}");
+        assert!(refusal.0.contains(".jails/templates/a.java"), "{refusal:?}");
+        assert!(refusal.0.contains("missing: [name]"), "{refusal:?}");
     }
 
     #[test]
@@ -145,8 +159,8 @@ mod tests {
             .resolve("a.java", "class {{name}} {}")
             .expect_err("an invented placeholder is refused");
         assert!(
-            refusal.contains("not supplied by jails: [invented]"),
-            "{refusal}"
+            refusal.0.contains("not supplied by jails: [invented]"),
+            "{refusal:?}"
         );
     }
 }

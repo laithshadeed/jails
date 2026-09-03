@@ -7,7 +7,7 @@
 //! event a key means is decided here once: an event names itself, and an
 //! outbox command names the one event it relays.
 
-use crate::CompileError;
+use crate::Diagnostic;
 use crate::recipe::{Node, SourceSet};
 use jails_contracts::Provenance;
 use jails_model::{AppModel, Operation, OperationKind, StableId};
@@ -37,7 +37,7 @@ pub(crate) enum Key {
 }
 
 /// The event a key about "the event" means for this operation.
-fn event<'a>(model: &'a AppModel, operation: &'a Operation) -> Result<&'a Operation, CompileError> {
+fn event<'a>(model: &'a AppModel, operation: &'a Operation) -> Result<&'a Operation, Diagnostic> {
     match &operation.kind {
         OperationKind::Event(_) => Ok(operation),
         _ => super::outbox::relayed(model, operation),
@@ -63,7 +63,7 @@ impl Node for Operation {
         }
     }
 
-    fn key(&self, model: &AppModel, key: Key) -> Result<(&'static str, String), CompileError> {
+    fn key(&self, model: &AppModel, key: Key) -> Result<(&'static str, String), Diagnostic> {
         Ok(match key {
             Key::Topic => ("topic", self.label.replace('_', "-")),
             Key::Event => (

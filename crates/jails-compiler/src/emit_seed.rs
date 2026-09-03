@@ -19,7 +19,7 @@
 //! naming a class the project does not have is a compile error in a file the
 //! reader did not write.
 
-use crate::CompileError;
+use crate::Diagnostic;
 use crate::emit_java::JavaUnit;
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
 use jails_model::{AppModel, Capability, Entity, Package, StableId, TypeRef, boundary};
@@ -36,7 +36,7 @@ pub(crate) fn lower(
     model: &AppModel,
     entity: &Entity,
     templates: &jails_contracts::TemplateOverrides,
-) -> Result<Vec<(ProjectPath, RenderedFile)>, CompileError> {
+) -> Result<Vec<(ProjectPath, RenderedFile)>, Diagnostic> {
     let reader = json_reader(model, entity)?;
     let name = &entity.names.java_type;
     let adapters = crate::emit_java::entity_package(model, entity, Package::Adapters);
@@ -179,7 +179,7 @@ fn enum_sample(model: &AppModel, java_type: &str) -> Option<String> {
 ///
 /// Two of them is refused rather than picked between, on `source.rs`'s rule:
 /// choosing silently points the generated code at the wrong one.
-fn json_reader(model: &AppModel, entity: &Entity) -> Result<String, CompileError> {
+fn json_reader(model: &AppModel, entity: &Entity) -> Result<String, Diagnostic> {
     let readers = model
         .capabilities
         .values()
@@ -187,19 +187,29 @@ fn json_reader(model: &AppModel, entity: &Entity) -> Result<String, CompileError
         .collect::<Vec<_>>();
     match readers.as_slice() {
         [reader] => Ok(class(reader)),
-        [] => Err(CompileError::new(format!(
-            "seeded entity `{}` reads its rows from a JSON file\n       fix: declare `cap json` in the model",
-            entity.label
-        ))),
-        many => Err(CompileError::new(format!(
-            "seeded entity `{}` has {} JSON readers to choose between ({})\n       fix: leave one `cap json`, or write the seeder by hand",
-            entity.label,
-            many.len(),
-            many.iter()
-                .map(|reader| class(reader))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ))),
+        [] => Err(Diagnostic::new(
+            "compile-seed-needs-json",
+            format!("$.entities.{}", entity.label),
+            format!(
+                "seeded entity `{}` reads its rows from a JSON file",
+                entity.label
+            ),
+            "declare `cap json` in the model",
+        )),
+        many => Err(Diagnostic::new(
+            "compile-seed-json-reader-ambiguous",
+            format!("$.entities.{}", entity.label),
+            format!(
+                "seeded entity `{}` has {} JSON readers to choose between ({})",
+                entity.label,
+                many.len(),
+                many.iter()
+                    .map(|reader| class(reader))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            "leave one `cap json`, or write the seeder by hand",
+        )),
     }
 }
 
@@ -221,9 +231,9 @@ fn rendered(
     relative: &str,
     kind: FileKind,
     body: Rendered,
-) -> Result<(ProjectPath, RenderedFile), CompileError> {
+) -> Result<(ProjectPath, RenderedFile), Diagnostic> {
     let artifact = boundary.owned_by(entity.id.as_str());
-    let path = ProjectPath::parse(format!("{root}/{relative}")).map_err(CompileError::new)?;
+    let path = crate::refuse::project_path(format!("{root}/{relative}"))?;
     // A JSON file has nowhere to carry a comment, so only the Java gets the
     // provenance banner every other managed source has.
     let bytes = match body {

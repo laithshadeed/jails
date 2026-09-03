@@ -1,12 +1,12 @@
 //! Managed, framework-neutral ABI for compiler-supplied operation context.
 
 use super::{JAVA_ROOT, JavaUnit, Unit};
-use crate::CompileError;
-use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
+use crate::Diagnostic;
+use jails_contracts::{FileKind, FileMode, Provenance, RenderedFile};
 use jails_model::{AppModel, Package, StableId};
 use std::collections::BTreeSet;
 
-pub(super) fn lower(model: &AppModel) -> Result<Option<Unit>, CompileError> {
+pub(super) fn lower(model: &AppModel) -> Result<Option<Unit>, Diagnostic> {
     if !model.entities.values().any(|entity| {
         entity
             .fields
@@ -35,12 +35,11 @@ pub(super) fn lower(model: &AppModel) -> Result<Option<Unit>, CompileError> {
     }
 }"#;
     let rendered = JavaUnit::new(&package, &imports, body).render(artifact_id);
-    let path = ProjectPath::parse(format!(
+    let path = crate::refuse::project_path(format!(
         "{JAVA_ROOT}/{}/{}.java",
         package.replace('.', "/"),
         type_name
-    ))
-    .map_err(CompileError::new)?;
+    ))?;
     Ok(Some(Unit {
         path,
         file: RenderedFile {

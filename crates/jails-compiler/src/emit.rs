@@ -7,7 +7,7 @@
 //! so a renderer that needs one more fact asks capture for it rather than
 //! widening a second copy kept here.
 
-use crate::{CompileError, emit_capability, emit_component, emit_http, emit_java, emit_operation};
+use crate::{Diagnostic, emit_capability, emit_component, emit_http, emit_java, emit_operation};
 use jails_contracts::{FileKind, ProjectFacts, ProjectPath, RenderedTree, WorkspaceSnapshot};
 
 /// Whether `JdbcClient` can be resolved in this project.
@@ -50,7 +50,7 @@ pub(crate) fn jspecify_on_classpath(project: &ProjectFacts) -> bool {
 
 /// One pass over the model, writing its part of the desired tree.
 type Pass =
-    fn(&jails_model::AppModel, &mut RenderedTree, &WorkspaceSnapshot) -> Result<(), CompileError>;
+    fn(&jails_model::AppModel, &mut RenderedTree, &WorkspaceSnapshot) -> Result<(), Diagnostic>;
 
 /// The passes that walk [`crate::recipe::Recipe`] rows: each looks a node's
 /// recipe up and renders its files through the one loop.
@@ -100,7 +100,7 @@ pub(crate) fn emit(
     model: &jails_model::AppModel,
     output: &mut RenderedTree,
     snapshot: &WorkspaceSnapshot,
-) -> Result<(), CompileError> {
+) -> Result<(), Diagnostic> {
     for pass in RECIPE_WALKS.iter().chain(FUNCTIONS) {
         pass(model, output, snapshot)?;
     }
@@ -119,7 +119,7 @@ pub(crate) fn emit(
 ///
 /// Main sources only. A test package is not part of anyone's API and a
 /// nullness checker configured over `src/test` is a choice the reader makes.
-fn package_infos(output: &mut RenderedTree, jspecify: bool) -> Result<(), CompileError> {
+fn package_infos(output: &mut RenderedTree, jspecify: bool) -> Result<(), Diagnostic> {
     if !jspecify {
         return Ok(());
     }
@@ -135,8 +135,7 @@ fn package_infos(output: &mut RenderedTree, jspecify: bool) -> Result<(), Compil
         })
         .collect();
     for directory in packages {
-        let path = ProjectPath::parse(format!("{root}{directory}/package-info.java"))
-            .map_err(CompileError::new)?;
+        let path = crate::refuse::project_path(format!("{root}{directory}/package-info.java"))?;
         if output.files.contains_key(&path) {
             continue;
         }
@@ -171,7 +170,7 @@ fn package_infos(output: &mut RenderedTree, jspecify: bool) -> Result<(), Compil
                     },
                 },
             )
-            .map_err(CompileError::new)?;
+            .map_err(crate::refuse::duplicate_emission)?;
     }
     Ok(())
 }
@@ -220,7 +219,7 @@ fn tidy_java(output: &mut RenderedTree) {
     }
 }
 
-pub(crate) fn compose_path(snapshot: &WorkspaceSnapshot) -> Result<ProjectPath, CompileError> {
+pub(crate) fn compose_path(snapshot: &WorkspaceSnapshot) -> Result<ProjectPath, Diagnostic> {
     if let Some(path) = snapshot
         .accepted_projection
         .as_ref()
@@ -242,12 +241,12 @@ pub(crate) fn compose_path(snapshot: &WorkspaceSnapshot) -> Result<ProjectPath, 
         "docker-compose.yml",
         "docker-compose.yaml",
     ] {
-        let path = ProjectPath::parse(candidate).map_err(CompileError::new)?;
+        let path = crate::refuse::project_path(candidate)?;
         if snapshot.files.contains_key(&path) {
             return Ok(path);
         }
     }
-    ProjectPath::parse("compose.yaml").map_err(CompileError::new)
+    crate::refuse::project_path("compose.yaml")
 }
 
 #[cfg(test)]

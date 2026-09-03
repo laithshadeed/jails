@@ -1,12 +1,12 @@
 //! Shared application-owned implementation of the closed `uuid7()` default.
 
 use super::{JAVA_ROOT, JavaUnit, Unit};
-use crate::CompileError;
-use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
+use crate::Diagnostic;
+use jails_contracts::{FileKind, FileMode, Provenance, RenderedFile};
 use jails_model::{AppModel, Package, StableId, Value};
 use std::collections::BTreeSet;
 
-pub(super) fn lower(model: &AppModel) -> Result<Option<Unit>, CompileError> {
+pub(super) fn lower(model: &AppModel) -> Result<Option<Unit>, Diagnostic> {
     // An outbox mints its event's own identity, which is the second minter in
     // the model and reaches this class the same way a `uuid7()` field default
     // does. Asking only about defaults would emit the call and not the class.
@@ -61,12 +61,11 @@ pub(super) fn lower(model: &AppModel) -> Result<Option<Unit>, CompileError> {
     }
 }"#;
     let rendered = JavaUnit::new(&package, &imports, body).render(artifact_id);
-    let path = ProjectPath::parse(format!(
+    let path = crate::refuse::project_path(format!(
         "{JAVA_ROOT}/{}/{}.java",
         package.replace('.', "/"),
         type_name
-    ))
-    .map_err(CompileError::new)?;
+    ))?;
     Ok(Some(Unit {
         path,
         file: RenderedFile {

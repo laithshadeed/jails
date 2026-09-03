@@ -5,7 +5,7 @@
 //! it go -- and the answer to the second half is *last*, which is the part a
 //! reader is most likely to get wrong.
 
-use super::{AppModel, BTreeSet, CompileError};
+use super::{AppModel, BTreeSet, Diagnostic};
 use jails_model::StableId as _;
 
 /// Append one `alter table ... add constraint` per newly declared relation.
@@ -22,7 +22,7 @@ pub(super) fn derive_into(
     statements: &mut Vec<String>,
     semantic_ids: &mut BTreeSet<String>,
     descriptions: &mut Vec<String>,
-) -> Result<(), CompileError> {
+) -> Result<(), Diagnostic> {
     for relation in next.relations.values() {
         if previous.relations.contains_key(&relation.id) {
             continue;
@@ -42,20 +42,28 @@ pub(super) fn derive_into(
         // reader says they meant it, and it names the accepted constraint --
         // so the drop below is never inferred, only confirmed.
         let Some(confirmed) = removals.get(old.id.as_str()) else {
-            return Err(CompileError::new(format!(
-                "accepted foreign key `{}` was removed without a retirement policy\n       fix: run `jails destroy association {}`, or drop the constraint in a migration you write",
-                old.sql_name, old.label
-            )));
+            return Err(Diagnostic::new(
+                "compile-foreign-key-removed-without-policy",
+                format!("$.relations.{}", old.label),
+                format!(
+                    "accepted foreign key `{}` was removed without a retirement policy",
+                    old.sql_name
+                ),
+                format!(
+                    "run `jails destroy association {}`, or drop the constraint in a migration you write",
+                    old.label
+                ),
+            ));
         };
         let child = next
             .entities
             .get(&old.child)
             .or_else(|| previous.entities.get(&old.child))
             .ok_or_else(|| {
-                CompileError::new(format!(
-                    "relation `{}` names a missing child entity\n       fix: repair the linked model before compiling",
-                    old.label
-                ))
+                crate::refuse::broken_link(
+                    format!("$.relations.{}", old.label),
+                    format!("relation `{}` names a missing child entity", old.label),
+                )
             })?;
         statements.push(format!(
             "alter table {}\n  drop constraint {confirmed};",
@@ -78,18 +86,21 @@ pub(super) fn derive_into(
 fn add_foreign_key(
     model: &AppModel,
     relation: &jails_model::Relation,
-) -> Result<String, CompileError> {
+) -> Result<String, Diagnostic> {
     let child = model.entities.get(&relation.child).ok_or_else(|| {
-        CompileError::new(format!(
-            "relation `{}` names a missing child entity\n       fix: repair the linked model before compiling",
-            relation.label
-        ))
+        crate::refuse::broken_link(
+            format!("$.relations.{}", relation.label),
+            format!("relation `{}` names a missing child entity", relation.label),
+        )
     })?;
     let parent = model.entities.get(&relation.parent).ok_or_else(|| {
-        CompileError::new(format!(
-            "relation `{}` names a missing parent entity\n       fix: repair the linked model before compiling",
-            relation.label
-        ))
+        crate::refuse::broken_link(
+            format!("$.relations.{}", relation.label),
+            format!(
+                "relation `{}` names a missing parent entity",
+                relation.label
+            ),
+        )
     })?;
     let mut local = Vec::new();
     let mut remote = Vec::new();
@@ -113,16 +124,17 @@ fn column_of(
     entity: &jails_model::Entity,
     field: &jails_model::FieldId,
     relation: &str,
-) -> Result<String, CompileError> {
+) -> Result<String, Diagnostic> {
     entity
         .fields
         .iter()
         .find(|candidate| candidate.id == *field)
         .map(|candidate| candidate.names.sql_column.clone())
         .ok_or_else(|| {
-            CompileError::new(format!(
-                "relation `{relation}` maps missing field `{field}`\n       fix: repair the linked model before compiling"
-            ))
+            crate::refuse::broken_link(
+                format!("$.relations.{relation}"),
+                "relation `{relation}` maps missing field `{field}`",
+            )
         })
 }
 

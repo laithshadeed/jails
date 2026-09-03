@@ -21,7 +21,7 @@
 //! with `include_str!`: two copies of a template drift on exactly the details
 //! nobody re-reads, and neither drift is visible where anyone looks.
 
-use crate::CompileError;
+use crate::Diagnostic;
 use crate::recipe::{
     BootCondition, DependencySpec, Fragment, Import, JavaFile, Naming, Need, Node, Placement,
     PropertySpec, Recipe, SourceSet, Want,
@@ -730,7 +730,7 @@ pub(crate) fn emit(
     model: &AppModel,
     output: &mut RenderedTree,
     snapshot: &jails_contracts::WorkspaceSnapshot,
-) -> Result<(), CompileError> {
+) -> Result<(), Diagnostic> {
     let templates = &snapshot.template_overrides;
     for component in model.components.values() {
         if let Some(recipe) = recipe_for(component.kind) {
@@ -745,7 +745,7 @@ pub(crate) fn emit(
         for file in files {
             output
                 .insert(file.path, file.file)
-                .map_err(CompileError::new)?;
+                .map_err(crate::refuse::duplicate_emission)?;
         }
     }
     // Emitted after the loop and once: `SchedulingConfig` belongs to every job
@@ -754,12 +754,12 @@ pub(crate) fn emit(
     if let Some(shared) = job::scheduling(model, templates)? {
         output
             .insert(shared.path, shared.file)
-            .map_err(CompileError::new)?;
+            .map_err(crate::refuse::duplicate_emission)?;
     }
     for shared in handler::envelope(model, templates)? {
         output
             .insert(shared.path, shared.file)
-            .map_err(CompileError::new)?;
+            .map_err(crate::refuse::duplicate_emission)?;
     }
     Ok(())
 }
@@ -828,7 +828,7 @@ pub(crate) fn dependencies(model: &AppModel) -> Vec<BuildDependency> {
 pub(crate) fn properties(
     model: &AppModel,
     target: SettingTarget,
-) -> Result<Vec<PropertyEntry>, CompileError> {
+) -> Result<Vec<PropertyEntry>, Diagnostic> {
     if target != SettingTarget::Main {
         return Ok(Vec::new());
     }
@@ -860,14 +860,13 @@ fn java(
     test: bool,
     ejectable: bool,
     unit: impl Into<crate::emit_java::JavaUnit>,
-) -> Result<Emitted, CompileError> {
+) -> Result<Emitted, Diagnostic> {
     let artifact = format!("art_{}_{}", component.id.as_str(), suffix);
     let root = if test { TEST_ROOT } else { MAIN_ROOT };
-    let path = ProjectPath::parse(format!(
+    let path = crate::refuse::project_path(format!(
         "{root}/{}/{type_name}.java",
         package.replace('.', "/")
-    ))
-    .map_err(CompileError::new)?;
+    ))?;
     Ok(Emitted {
         path,
         file: RenderedFile {

@@ -397,8 +397,8 @@ fn validate_transition_roles(
     let select = transition.select.iter().collect::<BTreeSet<_>>();
     let update = transition.update.iter().collect::<BTreeSet<_>>();
     if let Some(field) = select.intersection(&update).next() {
-        linker.problem(
-            "model-transition-field-role",
+        refuse_field_role(
+            linker,
             format!("{path}.semantics"),
             format!("field `{field}` appears in both select and update"),
             "give every transition parameter exactly one role",
@@ -406,8 +406,8 @@ fn validate_transition_roles(
     }
     for assignment in &transition.assignments {
         if select.contains(&assignment.field) || update.contains(&assignment.field) {
-            linker.problem(
-                "model-transition-field-role",
+            refuse_field_role(
+                linker,
                 format!("{path}.semantics.assignments"),
                 format!(
                     "constant field `{}` also appears in select or update",
@@ -516,4 +516,13 @@ fn derived_route(kind: RoutedKind, label: &str) -> linked::OperationRoute {
             consumes: None,
         },
     }
+}
+
+/// A transition field carrying more than one role.
+///
+/// One code, so one constructor: a field in both `select` and `update`, and a
+/// constant assignment over a field already in one of them, are the same
+/// refusal asked of two lists.
+fn refuse_field_role(linker: &mut Linker, path: String, message: String, fix: &'static str) {
+    linker.problem("model-transition-field-role", path, message, fix);
 }

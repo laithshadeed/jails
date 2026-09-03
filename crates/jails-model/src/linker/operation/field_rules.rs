@@ -226,8 +226,8 @@ fn validate_precondition(
                 })
                 .count();
             if shorthand != 1 {
-                linker.problem(
-                    "model-transition-version-parameter",
+                refuse_version_parameter(
+                    linker,
                     format!("{path}.semantics.parameters"),
                     format!(
                         "if-match needs one shorthand parameter for version field `{}`, found {shorthand}",
@@ -246,8 +246,8 @@ fn validate_precondition(
                 )
             });
             if exposes_version {
-                linker.problem(
-                    "model-transition-version-parameter",
+                refuse_version_parameter(
+                    linker,
                     format!("{path}.semantics.parameters"),
                     "`if-match none` forbids a version parameter",
                     "remove the version parameter or choose required/optional",
@@ -265,4 +265,18 @@ fn parameter_fields(parameters: &[crate::OperationParameter]) -> impl Iterator<I
             ParameterSource::Field(field) => Some(&field.field),
             ParameterSource::Typed(_) => None,
         })
+}
+
+/// A transition whose version parameter disagrees with its `if-match`.
+///
+/// One code, so one constructor: too few or too many shorthand parameters
+/// under `required`/`optional`, and one present at all under `none`, are the
+/// same refusal seen from the two sides of the precondition.
+fn refuse_version_parameter(
+    linker: &mut Linker,
+    path: String,
+    message: impl Into<String>,
+    fix: &'static str,
+) {
+    linker.problem("model-transition-version-parameter", path, message, fix);
 }

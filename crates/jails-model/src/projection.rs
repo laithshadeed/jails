@@ -251,8 +251,8 @@ fn lower(
             ProjectionKind::Search { fields }
         }
         "search" => {
-            linker.problem(
-                "model-projection-arguments",
+            refuse_arguments(
+                linker,
                 path,
                 "projection `search` requires a non-empty `fields` argument",
                 "write `search(fields: [title])`",
@@ -260,8 +260,8 @@ fn lower(
             return None;
         }
         known @ ("value" | "repo" | "service" | "dto" | "factory" | "seed") => {
-            linker.problem(
-                "model-projection-arguments",
+            refuse_arguments(
+                linker,
                 path,
                 format!("projection `{known}` accepts no arguments"),
                 "remove its argument list",
@@ -400,4 +400,17 @@ fn has_primary_key(entity: &Entity) -> bool {
             .constraints
             .values()
             .any(|constraint| constraint.kind == crate::ConstraintKind::PrimaryKey)
+}
+
+/// A projection whose argument list is not what its kind takes.
+///
+/// One code, so one constructor: `search` wants a `fields` list and the other
+/// six want none, and which way round it went wrong is the sentence's job.
+fn refuse_arguments(
+    linker: &mut Linker,
+    path: &str,
+    message: impl Into<String>,
+    fix: &'static str,
+) {
+    linker.problem("model-projection-arguments", path, message, fix);
 }

@@ -39,7 +39,7 @@ use jails_model::{AppModel, Component, ComponentKind, ComponentReference};
 pub(super) fn registrations(
     model: &AppModel,
     cli: &Component,
-) -> Result<crate::recipe::Rendered, crate::CompileError> {
+) -> Result<crate::recipe::Rendered, crate::Diagnostic> {
     let text: String = model
         .components
         .values()

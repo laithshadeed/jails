@@ -689,7 +689,12 @@ fn compile(
         &snapshot.model.model,
         &jails_model::Evolution::none(),
     )
-    .map_err(|error| Failure::Told(format!("could not compile application model: {error}")))?;
+    .map_err(|error| {
+        Failure::diagnosed(
+            error.code,
+            format!("could not compile application model: {error}"),
+        )
+    })?;
     // After the compile and before materialization, in every pipeline: which
     // paths the render wants is known only now, and whether the reader has a
     // file at one of them is the one observation the capture could not make.

@@ -7,8 +7,8 @@
 
 use crate::emit_companion_test::JAVA_TEST_ROOT;
 use crate::emit_java::JavaUnit;
-use crate::{CompileError, emit_java};
-use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
+use crate::{Diagnostic, emit_java};
+use jails_contracts::{FileKind, FileMode, Provenance, RenderedFile};
 use jails_model::{AppModel, Entity, Field, Package, StableId, boundary};
 use std::collections::BTreeSet;
 
@@ -16,7 +16,7 @@ pub(crate) fn lower(
     model: &AppModel,
     entity: &Entity,
     spring_boot: Option<&str>,
-) -> Vec<Result<emit_java::Unit, CompileError>> {
+) -> Vec<Result<emit_java::Unit, Diagnostic>> {
     vec![
         request(model, entity, spring_boot),
         response(model, entity),
@@ -66,7 +66,7 @@ fn assigned_value(
     model: &AppModel,
     field: &Field,
     imports: &mut BTreeSet<String>,
-) -> Result<String, CompileError> {
+) -> Result<String, Diagnostic> {
     if let Some(jails_model::Value::Function { name, .. }) = field
         .semantics
         .default
@@ -106,10 +106,15 @@ fn assigned_value(
         "OffsetDateTime" => Ok("OffsetDateTime.now()".to_string()),
         "long" | "Long" if field.semantics.version => Ok("0L".to_string()),
         "int" | "Integer" if field.semantics.version => Ok("0".to_string()),
-        _ => Err(CompileError::new(format!(
-            "field `{}` is server-assigned but `{java}` is not a type jails can mint\n       fix: declare it a caller input, or eject the DTO and assign it yourself",
-            field.label
-        ))),
+        _ => Err(Diagnostic::new(
+            "compile-server-assigned-type-unmintable",
+            field.id.to_string(),
+            format!(
+                "field `{}` is server-assigned but `{java}` is not a type jails can mint",
+                field.label
+            ),
+            "declare it a caller input, or eject the DTO and assign it yourself",
+        )),
     }
 }
 
@@ -152,7 +157,7 @@ fn request(
     model: &AppModel,
     entity: &Entity,
     spring_boot: Option<&str>,
-) -> Result<emit_java::Unit, CompileError> {
+) -> Result<emit_java::Unit, Diagnostic> {
     let package = crate::emit_java::entity_package(model, entity, Package::Web);
     let type_name = format!("{}Request", entity.names.java_type);
     let artifact_id = boundary::DTO_REQUEST.owned_by(entity.id.as_str());
@@ -235,7 +240,7 @@ fn request(
     )
 }
 
-fn response(model: &AppModel, entity: &Entity) -> Result<emit_java::Unit, CompileError> {
+fn response(model: &AppModel, entity: &Entity) -> Result<emit_java::Unit, Diagnostic> {
     let package = crate::emit_java::entity_package(model, entity, Package::Web);
     let type_name = format!("{}Response", entity.names.java_type);
     let artifact_id = boundary::DTO_RESPONSE.owned_by(entity.id.as_str());
@@ -271,7 +276,7 @@ fn response(model: &AppModel, entity: &Entity) -> Result<emit_java::Unit, Compil
     )
 }
 
-fn contract_test(model: &AppModel, entity: &Entity) -> Result<emit_java::Unit, CompileError> {
+fn contract_test(model: &AppModel, entity: &Entity) -> Result<emit_java::Unit, Diagnostic> {
     let package = crate::emit_java::entity_package(model, entity, Package::Web);
     let record = &entity.names.java_type;
     let type_name = format!("{record}DtoTest");
@@ -395,19 +400,18 @@ fn unit(
     kind: FileKind,
     compiler_pass: &str,
     entity: &Entity,
-) -> Result<emit_java::Unit, CompileError> {
+) -> Result<emit_java::Unit, Diagnostic> {
     let rendered = JavaUnit::new(&package, &imports, &body).render(&artifact_id);
     let root = match kind {
         FileKind::JavaMain => emit_java::JAVA_ROOT,
         FileKind::JavaTest => JAVA_TEST_ROOT,
         _ => unreachable!("DTOs lower only Java source"),
     };
-    let path = ProjectPath::parse(format!(
+    let path = crate::refuse::project_path(format!(
         "{root}/{}/{}.java",
         package.replace('.', "/"),
         type_name
-    ))
-    .map_err(CompileError::new)?;
+    ))?;
     Ok(emit_java::Unit {
         path,
         file: RenderedFile {

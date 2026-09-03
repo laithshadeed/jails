@@ -1,6 +1,6 @@
 //! Stable-ID index diffing and forward PostgreSQL statements.
 
-use crate::CompileError;
+use crate::Diagnostic;
 use jails_model::{Entity, FieldId, StableId};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -52,20 +52,33 @@ pub(crate) fn derive_changes(
     statements: &mut Vec<String>,
     semantic_ids: &mut BTreeSet<String>,
     descriptions: &mut Vec<String>,
-) -> Result<(), CompileError> {
+) -> Result<(), Diagnostic> {
     for old_index in old.indexes.values() {
         let Some(current_index) = current.indexes.get(&old_index.id) else {
             let Some(confirmed_name) = removals.get(old_index.id.as_str()) else {
-                return Err(CompileError::new(format!(
-                    "accepted index `{}` was removed without a drop policy\n       fix: use `resource index remove {} {} --confirm-index {}`",
-                    old_index.sql_name, old.names.java_type, old_index.label, old_index.sql_name
-                )));
+                return Err(Diagnostic::new(
+                    "compile-index-removed-without-policy",
+                    format!("$.entities.{}.indexes.{}", old.label, old_index.label),
+                    format!(
+                        "accepted index `{}` was removed without a drop policy",
+                        old_index.sql_name
+                    ),
+                    format!(
+                        "use `resource index remove {} {} --confirm-index {}`",
+                        old.names.java_type, old_index.label, old_index.sql_name
+                    ),
+                ));
             };
             if confirmed_name != &old_index.sql_name {
-                return Err(CompileError::new(format!(
-                    "confirmed index `{confirmed_name}` is not accepted index `{}`\n       fix: pass `--confirm-index {}` exactly",
-                    old_index.sql_name, old_index.sql_name
-                )));
+                return Err(Diagnostic::new(
+                    "compile-index-confirmation-mismatch",
+                    format!("$.entities.{}.indexes.{}", old.label, old_index.label),
+                    format!(
+                        "confirmed index `{confirmed_name}` is not accepted index `{}`",
+                        old_index.sql_name
+                    ),
+                    format!("pass `--confirm-index {}` exactly", old_index.sql_name),
+                ));
             }
             statements.push(format!("drop index {};", old_index.sql_name));
             semantic_ids.extend([
@@ -76,10 +89,15 @@ pub(crate) fn derive_changes(
             continue;
         };
         if old_index != current_index {
-            return Err(CompileError::new(format!(
-                "accepted index `{}` changed without an evolution policy\n       fix: add a replacement index before retiring this one",
-                old_index.sql_name
-            )));
+            return Err(Diagnostic::new(
+                "compile-index-changed-without-policy",
+                format!("$.entities.{}.indexes.{}", old.label, old_index.label),
+                format!(
+                    "accepted index `{}` changed without an evolution policy",
+                    old_index.sql_name
+                ),
+                "add a replacement index before retiring this one",
+            ));
         }
     }
     Ok(())

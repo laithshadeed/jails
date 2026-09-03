@@ -12,7 +12,7 @@
 //! actually enforces it, which is what catches a constraint that exists and
 //! was declared `not valid`.
 
-use crate::CompileError;
+use crate::Diagnostic;
 use crate::emit_java::JavaUnit;
 use jails_contracts::{FileKind, FileMode, Provenance, RenderedFile, RenderedTree};
 use jails_model::{AppModel, Package, Relation, StableId as _, TypeRef};
@@ -24,7 +24,7 @@ pub(crate) fn emit(
     model: &AppModel,
     output: &mut RenderedTree,
     _: &jails_contracts::WorkspaceSnapshot,
-) -> Result<(), CompileError> {
+) -> Result<(), Diagnostic> {
     if !model
         .capabilities
         .values()
@@ -36,7 +36,9 @@ pub(crate) fn emit(
         let Some((path, file)) = proof(model, relation)? else {
             continue;
         };
-        output.insert(path, file).map_err(CompileError::new)?;
+        output
+            .insert(path, file)
+            .map_err(crate::refuse::duplicate_emission)?;
     }
     Ok(())
 }
@@ -44,7 +46,7 @@ pub(crate) fn emit(
 fn proof(
     model: &AppModel,
     relation: &Relation,
-) -> Result<Option<(jails_contracts::ProjectPath, RenderedFile)>, CompileError> {
+) -> Result<Option<(jails_contracts::ProjectPath, RenderedFile)>, Diagnostic> {
     let (Some(child), Some(parent)) = (
         model.entities.get(&relation.child),
         model.entities.get(&relation.parent),
@@ -172,11 +174,10 @@ fn proof(
     let mut unit = JavaUnit::new(&package, &imports, &body);
     crate::emit_capability::imported_test_container(model, &mut unit);
     let rendered = unit.render(&artifact_id);
-    let path = jails_contracts::ProjectPath::parse(format!(
+    let path = crate::refuse::project_path(format!(
         "{JAVA_TEST_ROOT}/{}/{type_name}.java",
         package.replace('.', "/")
-    ))
-    .map_err(CompileError::new)?;
+    ))?;
     Ok(Some((
         path,
         RenderedFile {
@@ -216,14 +217,18 @@ fn sql_literal(model: &AppModel, field: &jails_model::Field) -> Option<String> {
 }
 
 /// The key of a parent that is not there.
-fn orphan_literal(model: &AppModel, field: &jails_model::Field) -> Result<String, CompileError> {
+fn orphan_literal(model: &AppModel, field: &jails_model::Field) -> Result<String, Diagnostic> {
     match &field.ty {
         TypeRef::Builtin(builtin) => Ok(builtin.semantics().sql_alternate.to_string()),
         TypeRef::External(_) => sql_literal(model, field).ok_or_else(|| {
-            CompileError::new(format!(
-                "relation key `{}` has no SQL literal jails can spell",
-                field.label
-            ))
+            Diagnostic::without_a_fix(
+                "compile-relation-key-without-literal",
+                field.id.to_string(),
+                format!(
+                    "relation key `{}` has no SQL literal jails can spell",
+                    field.label
+                ),
+            )
         }),
     }
 }

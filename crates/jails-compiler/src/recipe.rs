@@ -22,11 +22,10 @@
 //! the proof tests, anything that reaches across nodes for a sample) stay
 //! functions, and `emit.rs` says which those are.
 
-use crate::CompileError;
+use crate::Diagnostic;
 use crate::emit_java::JavaUnit;
 use jails_contracts::{
-    BuildFeature, FileKind, FileMode, ProjectPath, Provenance, RenderedFile, RenderedTree,
-    WorkspaceSnapshot,
+    BuildFeature, FileKind, FileMode, Provenance, RenderedFile, RenderedTree, WorkspaceSnapshot,
 };
 use jails_model::{AppModel, DependencyScope, Package, SettingTarget};
 use std::collections::BTreeSet;
@@ -50,8 +49,7 @@ pub(crate) trait Node: 'static {
     /// How a refusal names this node: `component auth \`Session\``.
     fn describe(&self) -> String;
     /// Render one of this node's typed values as `(placeholder, value)`.
-    fn key(&self, model: &AppModel, key: Self::Key)
-    -> Result<(&'static str, String), CompileError>;
+    fn key(&self, model: &AppModel, key: Self::Key) -> Result<(&'static str, String), Diagnostic>;
     /// Keys every file of this node gets, given the file's package and the
     /// class its template is written against.
     fn file_keys(&self, package: &str, template_class: &str) -> Vec<(&'static str, String)>;
@@ -376,7 +374,7 @@ pub(crate) enum Fragment<N: Node> {
     /// the name -- one spelling of the class, on the row.
     Rendered {
         key: &'static str,
-        render: fn(&AppModel, &N) -> Result<Rendered, CompileError>,
+        render: fn(&AppModel, &N) -> Result<Rendered, Diagnostic>,
     },
 }
 
@@ -538,15 +536,15 @@ pub(crate) fn check_needs<N: Node>(
     model: &AppModel,
     node: &N,
     recipe: &Recipe<N>,
-) -> Result<(), CompileError> {
+) -> Result<(), Diagnostic> {
     for need in recipe.requires {
         if !need.want.satisfied(model) {
-            return Err(CompileError::new(format!(
-                "{} {}\n       fix: {}",
-                node.describe(),
-                need.why,
-                need.want.fix()
-            )));
+            return Err(Diagnostic::new(
+                "compile-recipe-requirement-unmet",
+                node.id(),
+                format!("{} {}", node.describe(), need.why),
+                need.want.fix(),
+            ));
         }
     }
     Ok(())
@@ -557,7 +555,7 @@ pub(crate) fn node_keys<N: Node>(
     model: &AppModel,
     node: &N,
     recipe: &Recipe<N>,
-) -> Result<Vec<(&'static str, String)>, CompileError> {
+) -> Result<Vec<(&'static str, String)>, Diagnostic> {
     recipe
         .keys
         .iter()
@@ -576,7 +574,7 @@ pub(crate) fn render<N: Node>(
     recipe: &Recipe<N>,
     snapshot: &WorkspaceSnapshot,
     output: &mut RenderedTree,
-) -> Result<(), CompileError> {
+) -> Result<(), Diagnostic> {
     check_needs(model, node, recipe)?;
     let boot_major = crate::emit_capability::boot_major(snapshot.project.spring_boot.as_deref());
     let default_package = (recipe.default_package)(model, node);
@@ -600,7 +598,7 @@ pub(crate) fn render<N: Node>(
                 template.resolve(&snapshot.template_overrides)?.to_string(),
             ))
         })
-        .collect::<Result<Vec<_>, CompileError>>()?;
+        .collect::<Result<Vec<_>, Diagnostic>>()?;
     // Resolved once per node, and only where some file of this node spells
     // the key: a primary key's type is asked of an entity with a repository
     // port, not of every enum. A fragment whose capability the model does not
@@ -642,7 +640,7 @@ pub(crate) fn render<N: Node>(
             )),
             Fragment::Rendered { key, render } => Ok((*key, render(model, node)?)),
         })
-        .collect::<Result<Vec<_>, CompileError>>()?;
+        .collect::<Result<Vec<_>, Diagnostic>>()?;
     for (file, mut text) in files {
         let package = package_of(model, node, recipe, file);
         let class = file.class.resolve(node);
@@ -719,12 +717,11 @@ pub(crate) fn render<N: Node>(
             true => unit.render(&artifact_id),
             false => unit.source(),
         };
-        let path = ProjectPath::parse(format!(
+        let path = crate::refuse::project_path(format!(
             "{}/{}/{class}.java",
             file.source_set.root(),
             package.replace('.', "/")
-        ))
-        .map_err(CompileError::new)?;
+        ))?;
         output
             .insert(
                 path,
@@ -735,7 +732,7 @@ pub(crate) fn render<N: Node>(
                     provenance: node.provenance(artifact_id, file.ejectable, recipe.pass),
                 },
             )
-            .map_err(CompileError::new)?;
+            .map_err(crate::refuse::duplicate_emission)?;
     }
     Ok(())
 }
@@ -785,7 +782,7 @@ pub(crate) fn properties<N: Node>(
     node: &N,
     recipe: &Recipe<N>,
     target: SettingTarget,
-) -> Result<Vec<jails_contracts::PropertyEntry>, CompileError> {
+) -> Result<Vec<jails_contracts::PropertyEntry>, Diagnostic> {
     let keys = node_keys(model, node, recipe)?;
     let spell = |text: &str| {
         keys.iter().fold(text.to_string(), |text, (key, value)| {

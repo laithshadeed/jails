@@ -13,8 +13,8 @@
 //! run. So the fix is generated and the test holds it in place.
 
 use super::{Emitted, Package, package};
-use crate::CompileError;
-use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
+use crate::Diagnostic;
+use jails_contracts::{FileKind, FileMode, Provenance, RenderedFile};
 use jails_model::{AppModel, StableId};
 use std::collections::BTreeSet;
 
@@ -29,7 +29,7 @@ const SCHEDULING: crate::Template = crate::template!("spring/scheduling_config_j
 pub(super) fn scheduling(
     model: &AppModel,
     templates: &jails_contracts::TemplateOverrides,
-) -> Result<Option<Emitted>, CompileError> {
+) -> Result<Option<Emitted>, Diagnostic> {
     let mut owners = model
         .components
         .values()
@@ -69,12 +69,11 @@ pub(super) fn scheduling(
     }
     let pkg = package(model, Package::Jobs);
     let artifact = "art_app_scheduling_config".to_string();
-    let path = ProjectPath::parse(format!(
+    let path = crate::refuse::project_path(format!(
         "{}/{}/SchedulingConfig.java",
         super::MAIN_ROOT,
         pkg.replace('.', "/")
-    ))
-    .map_err(CompileError::new)?;
+    ))?;
     Ok(Some(Emitted {
         path,
         file: RenderedFile {

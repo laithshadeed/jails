@@ -12,9 +12,9 @@
 //! fail on the second declaration.
 
 use super::{Emitted, Package, package};
-use crate::CompileError;
+use crate::Diagnostic;
 use crate::emit_java::JavaUnit;
-use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
+use jails_contracts::{FileKind, FileMode, Provenance, RenderedFile};
 use jails_model::{AppModel, ComponentKind, StableId};
 use std::collections::BTreeSet;
 
@@ -26,7 +26,7 @@ const API_ERROR_TEST: crate::Template = crate::template!("spring/api_error_test_
 pub(super) fn envelope(
     model: &AppModel,
     templates: &jails_contracts::TemplateOverrides,
-) -> Result<Vec<Emitted>, CompileError> {
+) -> Result<Vec<Emitted>, Diagnostic> {
     let owners = model
         .components
         .values()
@@ -53,11 +53,10 @@ pub(super) fn envelope(
         } else {
             super::MAIN_ROOT
         };
-        let path = ProjectPath::parse(format!(
+        let path = crate::refuse::project_path(format!(
             "{root}/{}/{type_name}.java",
             domain.replace('.', "/")
-        ))
-        .map_err(CompileError::new)?;
+        ))?;
         Ok(Emitted {
             path,
             file: RenderedFile {

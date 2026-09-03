@@ -13,7 +13,7 @@ mod sqlite;
 
 use evolution::{drop_column, evolution_policies, evolve_field, reader_sql, unsupported_change};
 
-use crate::CompileError;
+use crate::Diagnostic;
 use jails_contracts::{RenderedMigration, WorkspaceSnapshot};
 use jails_model::LiteralKind;
 use jails_model::{
@@ -31,7 +31,7 @@ pub(crate) fn derive(
     snapshot: &WorkspaceSnapshot,
     next: &AppModel,
     evolution: &Evolution,
-) -> Result<Vec<RenderedMigration>, CompileError> {
+) -> Result<Vec<RenderedMigration>, Diagnostic> {
     let next_database = has_database(next);
     let accepted = snapshot.accepted_model.as_ref();
     let previous_database = accepted.is_some_and(has_database);
@@ -40,8 +40,11 @@ pub(crate) fn derive(
         return Ok(Vec::new());
     }
     if accepted.is_none() && !snapshot.migration_history.records.is_empty() {
-        return Err(CompileError::new(
-            "existing migrations have no canonical accepted-schema lock\n       fix: import the existing schema before enabling the canonical `db` capability",
+        return Err(Diagnostic::new(
+            "compile-migrations-without-accepted-lock",
+            "$.capabilities.db",
+            "existing migrations have no canonical accepted-schema lock",
+            "import the existing schema before enabling the canonical `db` capability",
         ));
     }
     if !next_database && !previous_database {
@@ -59,8 +62,11 @@ pub(crate) fn derive(
             .flat_map(|model| model.entities.values())
             .any(|entity| entity.facets.contains(&Facet::Repository));
         if stored || !snapshot.migration_history.records.is_empty() {
-            return Err(CompileError::new(
-                "removing canonical `db` would abandon accepted storage\n       fix: retire every table through an explicit schema policy before removing `db`",
+            return Err(Diagnostic::new(
+                "compile-storage-abandoned",
+                "$.capabilities.db",
+                "removing canonical `db` would abandon accepted storage",
+                "retire every table through an explicit schema policy before removing `db`",
             ));
         }
         return Ok(rendered);
@@ -109,16 +115,29 @@ pub(crate) fn derive(
                     continue;
                 }
                 Some(StorageRetirementPolicy::Drop { confirmed_table }) => {
-                    return Err(CompileError::new(format!(
-                        "confirmed table `{confirmed_table}` is not accepted table `{}`\n       fix: pass `--confirm-table {}` exactly",
-                        old.names.sql_table, old.names.sql_table
-                    )));
+                    return Err(Diagnostic::new(
+                        "compile-table-confirmation-mismatch",
+                        format!("$.entities.{}", old.label),
+                        format!(
+                            "confirmed table `{confirmed_table}` is not accepted table `{}`",
+                            old.names.sql_table
+                        ),
+                        format!("pass `--confirm-table {}` exactly", old.names.sql_table),
+                    ));
                 }
                 _ => {
-                    return Err(CompileError::new(format!(
-                        "accepted table `{}` was removed without a retirement policy\n       fix: use canonical schema retirement before removing `{}`",
-                        old.names.sql_table, old.label
-                    )));
+                    return Err(Diagnostic::new(
+                        "compile-table-removed-without-policy",
+                        format!("$.entities.{}", old.label),
+                        format!(
+                            "accepted table `{}` was removed without a retirement policy",
+                            old.names.sql_table
+                        ),
+                        format!(
+                            "use canonical schema retirement before removing `{}`",
+                            old.label
+                        ),
+                    ));
                 }
             }
         };
@@ -128,44 +147,78 @@ pub(crate) fn derive(
             if policies.retirements.get(old.id.as_str()) != Some(&StorageRetirementPolicy::Preserve)
                 || expected != *current
             {
-                return Err(CompileError::new(format!(
-                    "accepted table `{}` was deactivated without a preserve-storage policy\n       fix: use `destroy scaffold {} --storage preserve`",
-                    old.names.sql_table, old.names.java_type
-                )));
+                return Err(Diagnostic::new(
+                    "compile-table-deactivated-without-policy",
+                    format!("$.entities.{}", old.label),
+                    format!(
+                        "accepted table `{}` was deactivated without a preserve-storage policy",
+                        old.names.sql_table
+                    ),
+                    format!(
+                        "use `destroy scaffold {} --storage preserve`",
+                        old.names.java_type
+                    ),
+                ));
             }
             continue;
         }
         if !old.active && current.active {
             let Some(confirmed) = policies.revivals.get(old.id.as_str()) else {
-                return Err(CompileError::new(format!(
-                    "preserved table `{}` was reactivated without a revive policy\n       fix: use `resource revive {} --table {}`",
-                    old.names.sql_table, old.names.java_type, old.names.sql_table
-                )));
+                return Err(Diagnostic::new(
+                    "compile-table-revived-without-policy",
+                    format!("$.entities.{}", old.label),
+                    format!(
+                        "preserved table `{}` was reactivated without a revive policy",
+                        old.names.sql_table
+                    ),
+                    format!(
+                        "use `resource revive {} --table {}`",
+                        old.names.java_type, old.names.sql_table
+                    ),
+                ));
             };
             let mut expected = old.clone();
             expected.active = true;
             if confirmed != &old.names.sql_table || expected != *current {
-                return Err(CompileError::new(format!(
-                    "revival does not match preserved table `{}`\n       fix: revive the unchanged entity with `--table {}`",
-                    old.names.sql_table, old.names.sql_table
-                )));
+                return Err(Diagnostic::new(
+                    "compile-revival-table-mismatch",
+                    format!("$.entities.{}", old.label),
+                    format!(
+                        "revival does not match preserved table `{}`",
+                        old.names.sql_table
+                    ),
+                    format!(
+                        "revive the unchanged entity with `--table {}`",
+                        old.names.sql_table
+                    ),
+                ));
             }
             continue;
         }
         if !old.active {
             if old != current {
-                return Err(CompileError::new(format!(
-                    "retired entity `{}` changed while its storage is preserved\n       fix: revive it before evolving its schema",
-                    old.label
-                )));
+                return Err(Diagnostic::new(
+                    "compile-retired-entity-changed",
+                    format!("$.entities.{}", old.label),
+                    format!(
+                        "retired entity `{}` changed while its storage is preserved",
+                        old.label
+                    ),
+                    "revive it before evolving its schema",
+                ));
             }
             continue;
         }
         if !current.facets.contains(&Facet::Repository) {
-            return Err(CompileError::new(format!(
-                "accepted table `{}` lost its repository facet\n       fix: retire its storage explicitly before changing facets",
-                old.names.sql_table
-            )));
+            return Err(Diagnostic::new(
+                "compile-repository-facet-dropped",
+                format!("$.entities.{}", old.label),
+                format!(
+                    "accepted table `{}` lost its repository facet",
+                    old.names.sql_table
+                ),
+                "retire its storage explicitly before changing facets",
+            ));
         }
         if old.names.sql_table != current.names.sql_table {
             // **The cutover is one statement, and it is derived here.** The
@@ -173,10 +226,18 @@ pub(crate) fn derive(
             // from the same place every other schema change comes from is
             // what keeps it in the reviewed plan rather than beside it.
             if policies.table_renames.get(old.id.as_str()) != Some(&current.names.sql_table) {
-                return Err(CompileError::new(format!(
-                    "table `{}` was renamed to `{}` without a migration policy\n       fix: `jails rename resource {} <NewName> --strategy single-cutover`, or keep the table with `--strategy preserve-table`",
-                    old.names.sql_table, current.names.sql_table, old.names.java_type
-                )));
+                return Err(Diagnostic::new(
+                    "compile-table-renamed-without-policy",
+                    format!("$.entities.{}", old.label),
+                    format!(
+                        "table `{}` was renamed to `{}` without a migration policy",
+                        old.names.sql_table, current.names.sql_table
+                    ),
+                    format!(
+                        "`jails rename resource {} <NewName> --strategy single-cutover`, or keep the table with `--strategy preserve-table`",
+                        old.names.java_type
+                    ),
+                ));
             }
             // **Everything the old table's name is baked into.** PostgreSQL
             // renames the table and leaves its indexes and its primary-key
@@ -207,10 +268,15 @@ pub(crate) fn derive(
         for old_field in old.fields.iter() {
             let Some(current_field) = current.field(&old_field.id) else {
                 let Some(confirmed) = policies.removals.get(old_field.id.as_str()) else {
-                    return Err(CompileError::new(format!(
-                        "accepted column `{}.{}` was removed without a drop policy\n       fix: use canonical field drop with exact column confirmation",
-                        old.names.sql_table, old_field.names.sql_column
-                    )));
+                    return Err(Diagnostic::new(
+                        "compile-column-dropped-without-policy",
+                        format!("$.entities.{}.fields.{}", old.label, old_field.label),
+                        format!(
+                            "accepted column `{}.{}` was removed without a drop policy",
+                            old.names.sql_table, old_field.names.sql_column
+                        ),
+                        "use canonical field drop with exact column confirmation",
+                    ));
                 };
                 statements.extend(drop_column(old, old_field, confirmed)?);
                 semantic_ids.extend([
@@ -323,10 +389,15 @@ pub(crate) fn derive(
         return Ok(rendered);
     }
     if next.project.dialect != "postgresql" {
-        return Err(CompileError::new(format!(
-            "canonical schema evolution does not lower dialect `{}` yet\n       fix: use `dialect = \"postgresql\"` or add a typed dialect backend",
-            next.project.dialect
-        )));
+        return Err(Diagnostic::new(
+            "compile-dialect-not-lowered",
+            "$.project.dialect",
+            format!(
+                "canonical schema evolution does not lower dialect `{}` yet",
+                next.project.dialect
+            ),
+            "use `dialect = \"postgresql\"` or add a typed dialect backend",
+        ));
     }
     let logical_name = if descriptions.len() == 1 {
         descriptions.remove(0)
@@ -351,14 +422,18 @@ pub(crate) fn has_database(model: &AppModel) -> bool {
         .any(|capability| capability.kind == "db")
 }
 
-fn create_table(model: &AppModel, entity: &Entity) -> Result<Vec<String>, CompileError> {
+fn create_table(model: &AppModel, entity: &Entity) -> Result<Vec<String>, Diagnostic> {
     let mut columns = Vec::new();
     let mut indexes = Vec::new();
     // Which columns this table has is [`storage_columns`]'s answer, and the
     // DDL is rendered from the same list rather than from a second walk --
     // `doctor` asks that function the same question.
     for (field, name) in entity.fields.iter().zip(declared_columns(entity)) {
-        columns.push(initial_column(field, &name, sql_type(model, field)?)?);
+        columns.push(initial_column(
+            field,
+            &name,
+            sql_type(model, entity, field)?,
+        )?);
         // **Named, and a table constraint rather than a column check.** The
         // widening migration drops it by name and adds the next one, so the
         // two have to agree about what it is called.
@@ -390,10 +465,13 @@ fn create_table(model: &AppModel, entity: &Entity) -> Result<Vec<String>, Compil
                     .field(field)
                     .map(|field| field.names.sql_column.as_str())
                     .ok_or_else(|| {
-                        CompileError::new(format!(
-                            "linked constraint `{}` references missing field `{field}`",
-                            constraint.label
-                        ))
+                        crate::refuse::unlinked(
+                            format!("$.entities.{}", entity.label),
+                            format!(
+                                "linked constraint `{}` references missing field `{field}`",
+                                constraint.label
+                            ),
+                        )
                     })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -448,29 +526,34 @@ pub fn storage_columns(model: &AppModel, entity: &Entity) -> Vec<String> {
     columns
 }
 
-fn create_index(entity: &Entity, index: &Index) -> Result<String, CompileError> {
+fn create_index(entity: &Entity, index: &Index) -> Result<String, Diagnostic> {
     if index.columns.is_empty() {
-        return Err(CompileError::new(format!(
-            "index `{}` has no fields\n       fix: declare at least one indexed field",
-            index.sql_name
-        )));
+        return Err(Diagnostic::new(
+            "compile-index-without-fields",
+            format!("$.entities.{}.indexes.{}", entity.label, index.label),
+            format!("index `{}` has no fields", index.sql_name),
+            "declare at least one indexed field",
+        ));
     }
     let columns = index
         .columns
         .iter()
         .map(|column| {
             let field = entity.field(&column.field).ok_or_else(|| {
-                CompileError::new(format!(
-                    "index `{}` references missing field `{}`\n       fix: repair the linked model before compiling",
-                    index.sql_name, column.field
-                ))
+                crate::refuse::broken_link(
+                    format!("$.entities.{}.indexes.{}", entity.label, index.label),
+                    format!(
+                        "index `{}` references missing field `{}`",
+                        index.sql_name, column.field
+                    ),
+                )
             })?;
             Ok(match column.direction {
                 IndexDirection::Asc => field.names.sql_column.clone(),
                 IndexDirection::Desc => format!("{} desc", field.names.sql_column),
             })
         })
-        .collect::<Result<Vec<_>, CompileError>>()?;
+        .collect::<Result<Vec<_>, Diagnostic>>()?;
     Ok(format!(
         "create index {} on {} ({});",
         index.sql_name,
@@ -484,29 +567,39 @@ fn add_column(
     entity: &Entity,
     field: &Field,
     policy: Option<&FieldAddPolicy>,
-) -> Result<Vec<String>, CompileError> {
+) -> Result<Vec<String>, Diagnostic> {
     if field.primary_key {
-        return Err(CompileError::new(format!(
-            "cannot add `{}` as a second or replacement primary key\n       fix: model identity changes as an explicit evolution program",
-            field.names.sql_column
-        )));
+        return Err(Diagnostic::new(
+            "compile-second-primary-key",
+            format!("$.entities.{}.fields.{}", entity.label, field.label),
+            format!(
+                "cannot add `{}` as a second or replacement primary key",
+                field.names.sql_column
+            ),
+            "model identity changes as an explicit evolution program",
+        ));
     }
     let table = &entity.names.sql_table;
     let column = &field.names.sql_column;
-    let ty = sql_type(model, field)?;
+    let ty = sql_type(model, entity, field)?;
     let mut output = vec![format!("alter table {table} add column {column} {ty};")];
     if field.required {
         let backfill = match policy {
             Some(FieldAddPolicy::BackfillLiteral(value)) => {
-                let literal = sql_literal(field, value)?;
+                let literal = sql_literal(entity, field, value)?;
                 format!("update {table} set {column} = {literal} where {column} is null;")
             }
             Some(FieldAddPolicy::ReaderOwnedSql(bytes)) => reader_sql(bytes)?.to_string(),
             _ => {
-                return Err(CompileError::new(format!(
-                    "required field `{}.{}` needs a backfill for existing rows\n       fix: use `--default-literal <typed-value>` or `--backfill-file <project-path>`",
-                    entity.label, field.label
-                )));
+                return Err(Diagnostic::new(
+                    "compile-required-field-needs-backfill",
+                    format!("$.entities.{}.fields.{}", entity.label, field.label),
+                    format!(
+                        "required field `{}.{}` needs a backfill for existing rows",
+                        entity.label, field.label
+                    ),
+                    "use `--default-literal <typed-value>` or `--backfill-file <project-path>`",
+                ));
             }
         };
         output.extend([
@@ -517,10 +610,15 @@ fn add_column(
         policy,
         Some(FieldAddPolicy::BackfillLiteral(_) | FieldAddPolicy::ReaderOwnedSql(_))
     ) {
-        return Err(CompileError::new(format!(
-            "nullable field `{}.{}` does not need a mandatory backfill\n       fix: remove `--default-literal` or make the field required",
-            entity.label, field.label
-        )));
+        return Err(Diagnostic::new(
+            "compile-backfill-without-required-field",
+            format!("$.entities.{}.fields.{}", entity.label, field.label),
+            format!(
+                "nullable field `{}.{}` does not need a mandatory backfill",
+                entity.label, field.label
+            ),
+            "remove `--default-literal` or make the field required",
+        ));
     }
     if field.non_blank {
         output.push(format!(
@@ -551,22 +649,31 @@ fn add_column(
             "alter table {table} alter column {column} set default {value};"
         )),
         Some(SqlDefault::Identity) => {
-            return Err(CompileError::new(format!(
-                "identity field `{}` cannot be added as an ordinary field\n       fix: model primary-key creation with the entity",
-                field.label
-            )));
+            return Err(Diagnostic::new(
+                "compile-identity-field-added",
+                format!("$.entities.{}.fields.{}", entity.label, field.label),
+                format!(
+                    "identity field `{}` cannot be added as an ordinary field",
+                    field.label
+                ),
+                "model primary-key creation with the entity",
+            ));
         }
         Some(SqlDefault::Application) | None => {}
     }
     Ok(output)
 }
 
-fn sql_type(model: &AppModel, field: &Field) -> Result<&'static str, CompileError> {
+fn sql_type(model: &AppModel, entity: &Entity, field: &Field) -> Result<&'static str, Diagnostic> {
     if model.project.dialect != "postgresql" {
-        return Err(CompileError::new(format!(
-            "no SQL type backend for dialect `{}`",
-            model.project.dialect
-        )));
+        return Err(Diagnostic::without_a_fix(
+            "compile-dialect-without-type-backend",
+            "$.project.dialect",
+            format!(
+                "no SQL type backend for dialect `{}`",
+                model.project.dialect
+            ),
+        ));
     }
     match &field.ty {
         TypeRef::Builtin(builtin) => Ok(builtin.semantics().sql_postgres),
@@ -577,9 +684,12 @@ fn sql_type(model: &AppModel, field: &Field) -> Result<&'static str, CompileErro
         // rather than guessed, and no codec has to be declared for a fact the
         // model already states.
         TypeRef::External(name) if declares_enum(model, name) => Ok("text"),
-        TypeRef::External(name) => Err(CompileError::new(format!(
-            "project type `{name}` has no declared SQL representation\n       fix: declare a codec before storing this field"
-        ))),
+        TypeRef::External(name) => Err(Diagnostic::new(
+            "compile-project-type-without-sql-type",
+            format!("$.entities.{}.fields.{}", entity.label, field.label),
+            format!("project type `{name}` has no declared SQL representation"),
+            "declare a codec before storing this field",
+        )),
     }
 }
 
@@ -592,13 +702,17 @@ pub(super) fn declares_enum(model: &AppModel, name: &str) -> bool {
     })
 }
 
-fn sql_literal(field: &Field, value: &str) -> Result<String, CompileError> {
+fn sql_literal(entity: &Entity, field: &Field, value: &str) -> Result<String, Diagnostic> {
     let invalid = || {
-        CompileError::new(format!(
-            "`{value}` is not a valid {} backfill literal for `{}`",
-            field.ty.canonical_name(),
-            field.names.sql_column
-        ))
+        Diagnostic::without_a_fix(
+            "compile-backfill-literal-invalid",
+            format!("$.entities.{}.fields.{}", entity.label, field.label),
+            format!(
+                "`{value}` is not a valid {} backfill literal for `{}`",
+                field.ty.canonical_name(),
+                field.names.sql_column
+            ),
+        )
     };
     let builtin = match &field.ty {
         TypeRef::Builtin(builtin) => *builtin,

@@ -19,7 +19,7 @@
 //! twice is how the two drift.
 
 use super::{QueryFilter, scopes};
-use crate::CompileError;
+use crate::Diagnostic;
 use crate::emit_companion_test::JAVA_TEST_ROOT;
 use crate::emit_java::{JavaUnit, domain_import, import_declared_type};
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
@@ -34,7 +34,7 @@ pub(super) fn query(
     target: &Entity,
     filters: &[QueryFilter<'_>],
     joins: &[Join],
-) -> Result<Option<(ProjectPath, RenderedFile)>, CompileError> {
+) -> Result<Option<(ProjectPath, RenderedFile)>, Diagnostic> {
     let package = model.project.package_for(Package::AdaptersJdbc);
     let type_name = format!("Jdbc{}QueryIT", operation.names.java_type);
     let port_type = format!("{}Query", operation.names.java_type);
@@ -123,11 +123,10 @@ pub(super) fn query(
     let mut unit = JavaUnit::new(&package, &imports, &body);
     crate::emit_capability::imported_test_container(model, &mut unit);
     let rendered = unit.render(&artifact_id);
-    let path = ProjectPath::parse(format!(
+    let path = crate::refuse::project_path(format!(
         "{JAVA_TEST_ROOT}/{}/{type_name}.java",
         package.replace('.', "/")
-    ))
-    .map_err(CompileError::new)?;
+    ))?;
     Ok(Some((
         path,
         RenderedFile {
@@ -173,7 +172,7 @@ fn parent_fixtures(
     target: &Entity,
     joins: &[Join],
     imports: &mut BTreeSet<String>,
-) -> Result<Option<Fixtures>, CompileError> {
+) -> Result<Option<Fixtures>, Diagnostic> {
     ancestor_fixtures(model, target, joins, &operation.label, imports)
 }
 
@@ -190,7 +189,7 @@ pub(crate) fn ancestor_fixtures(
     joins: &[Join],
     label: &str,
     imports: &mut BTreeSet<String>,
-) -> Result<Option<Fixtures>, CompileError> {
+) -> Result<Option<Fixtures>, Diagnostic> {
     // The row the query has to find. Every filter is bound to the *same*
     // sample the stored row carries, so the two cannot drift into a test that
     // stores one value and asks for another.
@@ -212,9 +211,10 @@ pub(crate) fn ancestor_fixtures(
             continue;
         }
         let parent = model.entities.get(&entity_id).ok_or_else(|| {
-            CompileError::new(format!(
-                "linked query `{label}` references missing entity `{entity_id}`"
-            ))
+            crate::refuse::unlinked(
+                format!("$.operations.{label}"),
+                format!("linked query `{label}` references missing entity `{entity_id}`"),
+            )
         })?;
         let mut inherited = BTreeMap::new();
         for ancestor in ancestry(model, parent, &[]) {
@@ -378,7 +378,7 @@ pub(super) fn write(
     operation: &Operation,
     target: &Entity,
     shape: WriteShape<'_>,
-) -> Result<Option<(ProjectPath, RenderedFile)>, CompileError> {
+) -> Result<Option<(ProjectPath, RenderedFile)>, Diagnostic> {
     let WriteShape {
         port_suffix,
         port_package,
@@ -548,11 +548,10 @@ pub(super) fn write(
     let mut unit = JavaUnit::new(&package, &imports, &body);
     crate::emit_capability::imported_test_container(model, &mut unit);
     let rendered = unit.render(&artifact_id);
-    let path = ProjectPath::parse(format!(
+    let path = crate::refuse::project_path(format!(
         "{JAVA_TEST_ROOT}/{}/{type_name}.java",
         package.replace('.', "/")
-    ))
-    .map_err(CompileError::new)?;
+    ))?;
     Ok(Some((
         path,
         RenderedFile {

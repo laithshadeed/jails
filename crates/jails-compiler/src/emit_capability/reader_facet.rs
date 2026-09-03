@@ -1,6 +1,6 @@
 //! Compiler projection for capability slices embedded in reader documents.
 
-use crate::CompileError;
+use crate::Diagnostic;
 use crate::recipe::ComposeService;
 use jails_contracts::{
     FileMode, ProjectPath, Provenance, ReaderFacetKind, RenderedReaderFacet, RenderedTree,
@@ -15,7 +15,7 @@ pub(super) fn emit_managed_file(
     path: ProjectPath,
     bytes: Vec<u8>,
     mode: FileMode,
-) -> Result<(), CompileError> {
+) -> Result<(), Diagnostic> {
     let artifact_id = format!("doc_{}_file_{suffix}", capability.id.as_str());
     output
         .insert_reader_facet(
@@ -33,7 +33,7 @@ pub(super) fn emit_managed_file(
                 },
             },
         )
-        .map_err(CompileError::new)
+        .map_err(crate::refuse::duplicate_emission)
 }
 
 pub(super) fn emit_compose_service(
@@ -41,7 +41,7 @@ pub(super) fn emit_compose_service(
     capability: &Capability,
     path: &ProjectPath,
     service: &ComposeService,
-) -> Result<(), CompileError> {
+) -> Result<(), Diagnostic> {
     let artifact_id = format!("doc_{}_compose_{}", capability.id.as_str(), service.marker);
     output
         .insert_reader_facet(
@@ -62,7 +62,7 @@ pub(super) fn emit_compose_service(
                 },
             },
         )
-        .map_err(CompileError::new)
+        .map_err(crate::refuse::duplicate_emission)
 }
 
 fn compose_block(service: &ComposeService) -> String {

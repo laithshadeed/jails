@@ -10,26 +10,54 @@
 //! So the rule for adding one is the same as the rule for adding an emitter:
 //! if the model can state it and the compiler cannot render it, it belongs
 //! here, with a `fix:` line naming what the reader can do instead.
+//!
+//! # The compiler's shared refusals
+//!
+//! Below [`preflight`] are the constructors for the refusal *families* -- the
+//! ones the crate's two hundred and sixteen refusal sites would otherwise
+//! each spell for themselves. A family saying one thing gets one `compile-*`
+//! code behind one constructor, which is what
+//! `every_diagnostic_code_is_unique_and_kebab_case` in `tests/architecture/`
+//! holds: thirty-five path refusals under `compile-path-invalid`,
+//! twenty-eight duplicate emissions under `compile-duplicate-emission`, and
+//! the thirty-four the linker's own invariants produce.
+//!
+//! **The path a compiler diagnostic carries is the model path of the
+//! declaration it is about** -- `$.entities.Note.fields.title`, the same
+//! coordinate the linker writes. Where the emitter holds the declaration's
+//! stable id and not its owner it carries that instead, because an id
+//! resolves to exactly one declaration and a section path (`$.operations`)
+//! resolves to none. Where the subject is not a declaration at all -- a path
+//! this render built, the tree it emitted into -- it is that path or the
+//! tree.
 
-use crate::{CompileError, component_kind_is_emitted, emit_capability};
-use jails_contracts::WorkspaceSnapshot;
+use crate::{Diagnostic, component_kind_is_emitted, emit_capability};
+use jails_contracts::{ProjectPath, WorkspaceSnapshot};
 use jails_model::AppModel;
 
 pub(crate) fn preflight(
     snapshot: &WorkspaceSnapshot,
     next_model: &AppModel,
-) -> Result<(), CompileError> {
+) -> Result<(), Diagnostic> {
     if snapshot.project.java_release != next_model.project.java_release {
-        return Err(CompileError::new(format!(
-            "captured Java release {} disagrees with model release {}; recapture or update the model",
-            snapshot.project.java_release, next_model.project.java_release
-        )));
+        return Err(Diagnostic::without_a_fix(
+            "compile-captured-release-mismatch",
+            "$.project.java_release",
+            format!(
+                "captured Java release {} disagrees with model release {}; recapture or update the model",
+                snapshot.project.java_release, next_model.project.java_release
+            ),
+        ));
     }
     if snapshot.project.base_package != next_model.project.base_package {
-        return Err(CompileError::new(format!(
-            "captured base package `{}` disagrees with model package `{}`; recapture or update the model",
-            snapshot.project.base_package, next_model.project.base_package
-        )));
+        return Err(Diagnostic::without_a_fix(
+            "compile-captured-package-mismatch",
+            "$.project.base_package",
+            format!(
+                "captured base package `{}` disagrees with model package `{}`; recapture or update the model",
+                snapshot.project.base_package, next_model.project.base_package
+            ),
+        ));
     }
     if (next_model
         .capabilities
@@ -41,8 +69,11 @@ pub(crate) fn preflight(
             .any(|unit| unit.kind == jails_model::UnitKind::Controller))
         && snapshot.project.spring_boot.is_none()
     {
-        return Err(CompileError::new(
-            "`api` is a Spring Boot capability and this project has no Spring Boot parent\n       fix: add Spring Boot to the build, or `jails add http` for a framework-free HTTP client",
+        return Err(Diagnostic::new(
+            "compile-api-needs-spring-boot",
+            "$.capabilities.api",
+            "`api` is a Spring Boot capability and this project has no Spring Boot parent",
+            "add Spring Boot to the build, or `jails add http` for a framework-free HTTP client",
         ));
     }
     let spring_only = next_model.capabilities.values().find(|capability| {
@@ -63,10 +94,18 @@ pub(crate) fn preflight(
     {
         // Named, because a command listing several capabilities refuses over
         // one of them and a reader cannot retry what the message will not say.
-        return Err(CompileError::new(format!(
-            "`{}` is a Spring Boot capability and this project has no Spring Boot parent\n       fix: add Spring Boot to the build, or remove `{}` from the model",
-            capability.kind, capability.kind
-        )));
+        return Err(Diagnostic::new(
+            "compile-capability-needs-spring-boot",
+            format!("$.capabilities.{}", capability.kind),
+            format!(
+                "`{}` is a Spring Boot capability and this project has no Spring Boot parent",
+                capability.kind
+            ),
+            format!(
+                "add Spring Boot to the build, or remove `{}` from the model",
+                capability.kind
+            ),
+        ));
     }
     if let Some((kind, minimum, needs, actual)) =
         next_model.capabilities.values().find_map(|capability| {
@@ -75,9 +114,14 @@ pub(crate) fn preflight(
             (actual < minimum).then_some((capability.kind.as_str(), minimum, needs, actual))
         })
     {
-        return Err(CompileError::new(format!(
-            "canonical `{kind}` writes `{needs}`, which needs Spring Boot {minimum}, and this is a Spring Boot {actual} project\n       fix: raise the Spring Boot version, or keep to what compiles there -- `jails g scaffold`, `jails g usecase`, `jails g enum` and `jails add cors` all do"
-        )));
+        return Err(Diagnostic::new(
+            "compile-capability-needs-newer-boot",
+            format!("$.capabilities.{kind}"),
+            format!(
+                "canonical `{kind}` writes `{needs}`, which needs Spring Boot {minimum}, and this is a Spring Boot {actual} project"
+            ),
+            "raise the Spring Boot version, or keep to what compiles there -- `jails g scaffold`, `jails g usecase`, `jails g enum` and `jails add cors` all do",
+        ));
     }
     // **An operation somebody injects needs something to implement it.** The
     // compiler emits a port for every linked `command`, `query` and
@@ -101,10 +145,15 @@ pub(crate) fn preflight(
             .values()
             .find(|operation| !matches!(operation.kind, jails_model::OperationKind::Event(_)))
     {
-        return Err(CompileError::new(format!(
-            "canonical operation `{}` answers a route through a `JdbcClient` adapter, and this model declares no SQL storage -- so nothing implements the port its controller takes\n       fix: run `jails add db`, or remove the `api` capability",
-            operation.label
-        )));
+        return Err(Diagnostic::new(
+            "compile-operation-without-storage-adapter",
+            format!("$.operations.{}", operation.label),
+            format!(
+                "canonical operation `{}` answers a route through a `JdbcClient` adapter, and this model declares no SQL storage -- so nothing implements the port its controller takes",
+                operation.label
+            ),
+            "run `jails add db`, or remove the `api` capability",
+        ));
     }
     if next_model.units.values().any(|unit| {
         matches!(
@@ -118,8 +167,11 @@ pub(crate) fn preflight(
         )
     }) && snapshot.project.spring_boot.is_none()
     {
-        return Err(CompileError::new(
-            "canonical Spring source units require a captured Spring Boot project\n       fix: add Spring Boot to the build or use a plain class/interface unit",
+        return Err(Diagnostic::new(
+            "compile-spring-unit-needs-spring-boot",
+            "$.units",
+            "canonical Spring source units require a captured Spring Boot project",
+            "add Spring Boot to the build or use a plain class/interface unit",
         ));
     }
     // **A capitalised field type is a type this project owns, and this is
@@ -157,10 +209,17 @@ pub(crate) fn preflight(
             {
                 continue;
             }
-            return Err(CompileError::new(format!(
-                "`{}:{name}` names a type nothing declares: `{name}` is neither in this model nor in your own sources\n       fix: declare it with `jails g record {name} ...` or `jails g enum {name} ...`, write it yourself, or use one of jails' lowercase types",
-                field.label
-            )));
+            return Err(Diagnostic::new(
+                "compile-field-type-undeclared",
+                format!("$.entities.{}.fields.{}", entity.label, field.label),
+                format!(
+                    "`{}:{name}` names a type nothing declares: `{name}` is neither in this model nor in your own sources",
+                    field.label
+                ),
+                format!(
+                    "declare it with `jails g record {name} ...` or `jails g enum {name} ...`, write it yourself, or use one of jails' lowercase types"
+                ),
+            ));
         }
     }
     if next_model
@@ -169,8 +228,11 @@ pub(crate) fn preflight(
         .any(|entity| entity.active && entity.facets.contains(&jails_model::Facet::Dto))
         && snapshot.project.spring_boot.is_none()
     {
-        return Err(CompileError::new(
-            "canonical DTO facets require a captured Spring Boot project\n       fix: add Spring Boot to the build or remove the `dto` facet",
+        return Err(Diagnostic::new(
+            "compile-dto-facet-needs-spring-boot",
+            "$.entities",
+            "canonical DTO facets require a captured Spring Boot project",
+            "add Spring Boot to the build or remove the `dto` facet",
         ));
     }
     if let Some(component) = next_model
@@ -178,11 +240,18 @@ pub(crate) fn preflight(
         .values()
         .find(|component| !component_kind_is_emitted(component.kind))
     {
-        return Err(CompileError::new(format!(
-            "canonical `component {}` has no compiler backend yet\n       fix: remove the declaration, or generate `{}` on a legacy project until its emitter lands",
-            component.kind.label(),
-            component.kind.label()
-        )));
+        return Err(Diagnostic::new(
+            "compile-component-without-backend",
+            format!("$.components.{}", component.label),
+            format!(
+                "canonical `component {}` has no compiler backend yet",
+                component.kind.label()
+            ),
+            format!(
+                "remove the declaration, or generate `{}` on a legacy project until its emitter lands",
+                component.kind.label()
+            ),
+        ));
     }
     // **The database itself is not Spring's; the adapters for it are.**
     // `java.sql` is in the JDK, so `storage postgres` on a plain Maven project
@@ -201,10 +270,15 @@ pub(crate) fn preflight(
                 if let Some(entity) = next_model.entities.values().find(|entity| {
                     entity.active && entity.facets.contains(&jails_model::Facet::Repository)
                 }) {
-                    return Err(CompileError::new(format!(
-                        "`{}` asks for a repository adapter, which the compiler renders as a Spring `JdbcClient` bean, and this project has no Spring Boot parent\n       fix: add Spring Boot to the build, or drop the `repository` facet and write the persistence against `java.sql` by hand",
-                        entity.label
-                    )));
+                    return Err(Diagnostic::new(
+                        "compile-repository-facet-needs-spring-boot",
+                        format!("$.entities.{}", entity.label),
+                        format!(
+                            "`{}` asks for a repository adapter, which the compiler renders as a Spring `JdbcClient` bean, and this project has no Spring Boot parent",
+                            entity.label
+                        ),
+                        "add Spring Boot to the build, or drop the `repository` facet and write the persistence against `java.sql` by hand",
+                    ));
                 }
             }
             Some(version) => {
@@ -219,15 +293,19 @@ pub(crate) fn preflight(
                 if let Some((major, minor)) = boot_major_minor(version)
                     && (major, minor) < (3, 1)
                 {
-                    return Err(CompileError::new(format!(
-                        "`db` wires Testcontainers through `spring-boot-testcontainers`, and this project \
+                    return Err(Diagnostic::new(
+                        "compile-db-needs-boot-3-1",
+                        "$.capabilities.db",
+                        format!(
+                            "`db` wires Testcontainers through `spring-boot-testcontainers`, and this project \
                  is Spring Boot {major}.{minor}.\n       \
                  That module and `spring-boot-docker-compose` arrived in Spring Boot 3.1; on this \
                  project the spliced coordinates would resolve to nothing and the build would \
-                 stop resolving altogether -- a worse state than before the command ran.\n       \
-                 fix: `jails add sqlite`, `jails add h2`, `jails g migration` and `jails g repo` \
-                 work on this project. Raising the Boot version is the other way."
-                    )));
+                 stop resolving altogether -- a worse state than before the command ran."
+                        ),
+                        "`jails add sqlite`, `jails add h2`, `jails g migration` and `jails g repo` \
+                 work on this project. Raising the Boot version is the other way.",
+                    ));
                 }
             }
         }
@@ -239,8 +317,11 @@ pub(crate) fn preflight(
         && snapshot.project.spring_boot.is_none()
         && snapshot.project.junit.is_none()
     {
-        return Err(CompileError::new(
-            "`test --fast` runs JUnit's console launcher, and this project declares no JUnit version for it to match\n       fix: declare a JUnit dependency with an explicit version, or a Spring Boot parent that manages one",
+        return Err(Diagnostic::new(
+            "compile-fast-test-needs-junit",
+            "$.capabilities.fast-test",
+            "`test --fast` runs JUnit's console launcher, and this project declares no JUnit version for it to match",
+            "declare a JUnit dependency with an explicit version, or a Spring Boot parent that manages one",
         ));
     }
     Ok(())
@@ -254,4 +335,64 @@ fn boot_major_minor(version: &str) -> Option<(u32, u32)> {
     let major = parts.next()?.parse().ok()?;
     let minor = parts.next().unwrap_or("0").parse().ok()?;
     Some((major, minor))
+}
+
+/// A path this compiler built that is not a canonical project path.
+///
+/// No `fix:`: the value came from the model and a layout rule rather than
+/// from anything the reader typed, so the next step is whatever
+/// [`ProjectPath::parse`] found wrong with it and naming one would be advice
+/// jails cannot stand behind.
+pub(crate) fn invalid_path(value: impl Into<String>, message: String) -> Diagnostic {
+    Diagnostic::without_a_fix("compile-path-invalid", value, message)
+}
+
+/// A canonical project path, or the diagnostic that this is not one.
+///
+/// The one lift of [`ProjectPath::parse`] in this crate, so the thirty-four
+/// emitters that build a path out of a source root, a package and a type name
+/// share one code rather than spelling thirty-four.
+pub(crate) fn project_path(value: impl Into<String>) -> Result<ProjectPath, Diagnostic> {
+    let value = value.into();
+    ProjectPath::parse(value.clone()).map_err(|message| invalid_path(value, message))
+}
+
+/// Two emitters that rendered into the same place.
+///
+/// One code for the family -- a file at a path another unit already emitted,
+/// a reader facet under an id another already published -- because both are
+/// the same fault: the render produced one artifact twice. The path or the id
+/// is in the sentence and the subject is the tree they collided in. No
+/// `fix:`, because a collision between two of jails' own emitters is not
+/// something the reader can resolve.
+pub(crate) fn duplicate_emission(message: String) -> Diagnostic {
+    Diagnostic::without_a_fix("compile-duplicate-emission", "$.generated", message)
+}
+
+/// An id in the linked model that resolves to nothing.
+///
+/// The compiler reads a model the linker has already accepted, so each of
+/// these is an invariant of *that* pass rather than something the reader
+/// stated: a query whose entity id is not in `entities`, a parameter whose
+/// field id is not on the record. They are one refusal -- this model does not
+/// agree with itself -- with the broken edge in the sentence, and they carry
+/// no `fix:` for the reason [`Diagnostic::without_a_fix`] exists: there is no
+/// step to name that the linker was not already supposed to have taken.
+pub(crate) fn unlinked(path: impl Into<String>, message: impl Into<String>) -> Diagnostic {
+    Diagnostic::without_a_fix("compile-unlinked-reference", path, message)
+}
+
+/// The same fault as [`unlinked`], where the sentence already names a repair.
+///
+/// A separate code because it is a separate sentence: these seven were
+/// written with a `fix:` line, and adopting this contract rewrites no
+/// message -- folding them into [`unlinked`] would either drop that line or
+/// invent it on the twenty-seven that never had one.
+pub(crate) fn broken_link(path: impl Into<String>, message: impl Into<String>) -> Diagnostic {
+    Diagnostic::new(
+        "compile-model-link-broken",
+        path,
+        message,
+        "repair the linked model before compiling",
+    )
 }

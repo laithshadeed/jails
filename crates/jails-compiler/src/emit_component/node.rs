@@ -4,7 +4,7 @@
 //! may name, and the provenance its files carry. The recipes in the parent
 //! module say *which* keys each kind needs; this says what each one means.
 
-use crate::CompileError;
+use crate::Diagnostic;
 use crate::recipe::{Node, SourceSet};
 use jails_contracts::Provenance;
 use jails_model::{AppModel, Component, Package, StableId};
@@ -66,7 +66,7 @@ impl Node for Component {
         format!("component {} `{}`", self.kind.label(), self.name)
     }
 
-    fn key(&self, model: &AppModel, key: Key) -> Result<(&'static str, String), CompileError> {
+    fn key(&self, model: &AppModel, key: Key) -> Result<(&'static str, String), Diagnostic> {
         let property = self.label.replace('_', "-");
         Ok(match key {
             Key::Property => ("property", property),

@@ -25,7 +25,7 @@ use crate::recipe::Rendered;
 ///
 /// `\n` on both sides of the list, or nothing at all: an empty component
 /// list is `()`, not a blank line between parens.
-pub(super) fn record_components(_: &AppModel, entity: &Entity) -> Result<Rendered, CompileError> {
+pub(super) fn record_components(_: &AppModel, entity: &Entity) -> Result<Rendered, Diagnostic> {
     let mut imports = BTreeSet::new();
     let components = input::entity_components(entity);
     let declarations = input::record_declarations(&components, &mut imports, None);
@@ -38,7 +38,7 @@ pub(super) fn record_components(_: &AppModel, entity: &Entity) -> Result<Rendere
 
 /// A record's compact constructor, or nothing when no component needs a
 /// check. Spells `{{class}}`.
-pub(super) fn record_constructor(_: &AppModel, entity: &Entity) -> Result<Rendered, CompileError> {
+pub(super) fn record_constructor(_: &AppModel, entity: &Entity) -> Result<Rendered, Diagnostic> {
     let mut imports = BTreeSet::new();
     let components = input::entity_components(entity);
     let text = input::record_constructor("{{class}}", &components, &mut imports);
@@ -47,7 +47,7 @@ pub(super) fn record_constructor(_: &AppModel, entity: &Entity) -> Result<Render
 
 /// An enum's constants, one per line, carrying their wire value when the
 /// enum declares any.
-pub(super) fn enum_constants(_: &AppModel, entity: &Entity) -> Result<Rendered, CompileError> {
+pub(super) fn enum_constants(_: &AppModel, entity: &Entity) -> Result<Rendered, Diagnostic> {
     let wired = has_wire_values(entity);
     let text = entity
         .enum_constants
@@ -63,7 +63,7 @@ pub(super) fn enum_constants(_: &AppModel, entity: &Entity) -> Result<Rendered, 
 
 /// The field, constructor, accessor and factory an enum with wire values
 /// carries after its constants, or nothing. Spells `{{class}}`.
-pub(super) fn enum_wire_members(_: &AppModel, entity: &Entity) -> Result<Rendered, CompileError> {
+pub(super) fn enum_wire_members(_: &AppModel, entity: &Entity) -> Result<Rendered, Diagnostic> {
     if !has_wire_values(entity) {
         return Ok(Rendered::from(String::new()));
     }
@@ -116,17 +116,14 @@ pub(crate) fn has_wire_values(entity: &Entity) -> bool {
 
 /// The Java type of the entity's primary key: what a port's `findById` and
 /// `deleteById` take.
-pub(super) fn key_type(_: &AppModel, entity: &Entity) -> Result<Rendered, CompileError> {
+pub(super) fn key_type(_: &AppModel, entity: &Entity) -> Result<Rendered, Diagnostic> {
     let mut imports = BTreeSet::new();
     let text = java_type(primary_key(entity)?, &mut imports);
     Ok(Rendered { text, imports })
 }
 
 /// A builder's state: one field per component, started at its sample.
-pub(super) fn factory_declarations(
-    _: &AppModel,
-    entity: &Entity,
-) -> Result<Rendered, CompileError> {
+pub(super) fn factory_declarations(_: &AppModel, entity: &Entity) -> Result<Rendered, Diagnostic> {
     let mut imports = BTreeSet::new();
     let text = entity
         .fields
@@ -142,7 +139,7 @@ pub(super) fn factory_declarations(
 }
 
 /// A builder's fluent overrides, one per component. Spells `{{class}}`.
-pub(super) fn factory_methods(_: &AppModel, entity: &Entity) -> Result<Rendered, CompileError> {
+pub(super) fn factory_methods(_: &AppModel, entity: &Entity) -> Result<Rendered, Diagnostic> {
     let mut imports = BTreeSet::new();
     let text = entity
         .fields
@@ -163,7 +160,7 @@ pub(super) fn factory_methods(_: &AppModel, entity: &Entity) -> Result<Rendered,
 /// The guards `build()` runs first: one per required component jails cannot
 /// sample, so the reader who has to supply it is told which. Spells
 /// `{{class}}`.
-pub(super) fn factory_guards(_: &AppModel, entity: &Entity) -> Result<Rendered, CompileError> {
+pub(super) fn factory_guards(_: &AppModel, entity: &Entity) -> Result<Rendered, Diagnostic> {
     let mut imports = BTreeSet::new();
     let guards = entity
         .fields
@@ -186,7 +183,7 @@ pub(super) fn factory_guards(_: &AppModel, entity: &Entity) -> Result<Rendered, 
 
 /// The arguments `build()` hands the record's constructor, in component
 /// order.
-pub(super) fn factory_arguments(_: &AppModel, entity: &Entity) -> Result<Rendered, CompileError> {
+pub(super) fn factory_arguments(_: &AppModel, entity: &Entity) -> Result<Rendered, Diagnostic> {
     let text = entity
         .fields
         .iter()

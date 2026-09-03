@@ -24,13 +24,13 @@ pub(crate) fn input_components<'a>(
     model: &'a AppModel,
     operation: &'a Operation,
     imports: &mut BTreeSet<String>,
-) -> Result<Vec<RecordComponent<'a>>, CompileError> {
+) -> Result<Vec<RecordComponent<'a>>, Diagnostic> {
     let from_fields =
         |entity_id, field_ids: &[jails_model::FieldId], imports: &mut BTreeSet<String>| {
             let entity = entity(model, entity_id)?;
             let fields = fields(entity, field_ids)?;
             import_declared_types(model, &fields, imports);
-            Ok::<_, CompileError>(
+            Ok::<_, Diagnostic>(
                 fields
                     .into_iter()
                     .map(|field| RecordComponent {
@@ -161,7 +161,7 @@ fn import_declared_types(model: &AppModel, fields: &[&Field], imports: &mut BTre
 pub(crate) fn event_component_names(
     model: &AppModel,
     event: &jails_model::Event,
-) -> Result<Vec<String>, CompileError> {
+) -> Result<Vec<String>, Diagnostic> {
     if !event.semantics.parameters.is_empty() {
         return Ok(event
             .semantics
@@ -184,7 +184,7 @@ pub(crate) fn parameter_components<'a>(
     model: &'a AppModel,
     parameters: &'a [OperationParameter],
     imports: &mut BTreeSet<String>,
-) -> Result<Vec<RecordComponent<'a>>, CompileError> {
+) -> Result<Vec<RecordComponent<'a>>, Diagnostic> {
     let components = parameters
         .iter()
         .map(|parameter| {
@@ -193,10 +193,13 @@ pub(crate) fn parameter_components<'a>(
                 ParameterSource::Field(visible) => {
                     let owner = entity(model, &visible.entity)?;
                     let field = owner.field(&visible.field).ok_or_else(|| {
-                        CompileError::new(format!(
-                            "linked operation parameter `{}` references missing field `{}`",
-                            parameter.name, visible.field
-                        ))
+                        crate::refuse::unlinked(
+                            "$.operations",
+                            format!(
+                                "linked operation parameter `{}` references missing field `{}`",
+                                parameter.name, visible.field
+                            ),
+                        )
                     })?;
                     Some(field)
                 }
@@ -239,7 +242,7 @@ pub(crate) fn parameter_components<'a>(
                 nonnegative,
             })
         })
-        .collect::<Result<Vec<_>, CompileError>>()?;
+        .collect::<Result<Vec<_>, Diagnostic>>()?;
     Ok(components)
 }
 

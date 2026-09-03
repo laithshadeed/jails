@@ -23,7 +23,7 @@
 //! target does not carry, which is exactly what this can supply and a direct
 //! publication cannot.
 
-use crate::CompileError;
+use crate::Diagnostic;
 use crate::emit_operation::Key;
 use crate::recipe::{
     BootCondition, Import, JavaFile, Naming, Need, Placement, Recipe, SourceSet, Want,
@@ -86,7 +86,7 @@ pub(crate) fn emit(
     model: &AppModel,
     output: &mut RenderedTree,
     snapshot: &jails_contracts::WorkspaceSnapshot,
-) -> Result<(), CompileError> {
+) -> Result<(), Diagnostic> {
     for operation in commands(model) {
         crate::recipe::render(model, operation, &OUTBOX, snapshot, output)?;
     }
@@ -136,31 +136,51 @@ pub(crate) fn table(operation: &Operation) -> String {
 pub(crate) fn relayed<'a>(
     model: &'a AppModel,
     operation: &Operation,
-) -> Result<&'a Operation, CompileError> {
+) -> Result<&'a Operation, Diagnostic> {
     let OperationKind::Command(command) = &operation.kind else {
-        return Err(CompileError::new(format!(
-            "`deliver outbox` is a command policy; `{}` is not a command\n       fix: move the policy to the command that writes the row",
-            operation.label
-        )));
+        return Err(Diagnostic::new(
+            "compile-outbox-policy-on-non-command",
+            format!("$.operations.{}", operation.label),
+            format!(
+                "`deliver outbox` is a command policy; `{}` is not a command",
+                operation.label
+            ),
+            "move the policy to the command that writes the row",
+        ));
     };
     let [event_id] = command.semantics.emits.as_slice() else {
-        return Err(CompileError::new(format!(
-            "canonical command `{}` delivers {} events through one outbox\n       fix: `deliver outbox` relays exactly one event -- emit one, or split the command",
-            operation.label,
-            command.semantics.emits.len()
-        )));
+        return Err(Diagnostic::new(
+            "compile-outbox-relays-many-events",
+            format!("$.operations.{}", operation.label),
+            format!(
+                "canonical command `{}` delivers {} events through one outbox",
+                operation.label,
+                command.semantics.emits.len()
+            ),
+            "`deliver outbox` relays exactly one event -- emit one, or split the command",
+        ));
     };
     let event = model.operations.get(event_id).ok_or_else(|| {
-        CompileError::new(format!(
-            "canonical command `{}` emits missing event `{event_id}`\n       fix: declare the event, or remove the `emit`",
-            operation.label
-        ))
+        Diagnostic::new(
+            "compile-outbox-event-missing",
+            format!("$.operations.{}", operation.label),
+            format!(
+                "canonical command `{}` emits missing event `{event_id}`",
+                operation.label
+            ),
+            "declare the event, or remove the `emit`",
+        )
     })?;
     let OperationKind::Event(payload) = &event.kind else {
-        return Err(CompileError::new(format!(
-            "canonical command `{}` emits non-event operation `{}`\n       fix: `emit` names an event; declare one",
-            operation.label, event.label
-        )));
+        return Err(Diagnostic::new(
+            "compile-outbox-emits-non-event",
+            format!("$.operations.{}", operation.label),
+            format!(
+                "canonical command `{}` emits non-event operation `{}`",
+                operation.label, event.label
+            ),
+            "`emit` names an event; declare one",
+        ));
     };
     let identity = payload
         .semantics
@@ -169,14 +189,24 @@ pub(crate) fn relayed<'a>(
         .find(|parameter| parameter.name == "id");
     match identity.map(|parameter| &parameter.source) {
         Some(ParameterSource::Typed(TypeRef::Builtin(BuiltinType::Uuid))) => Ok(event),
-        Some(_) => Err(CompileError::new(format!(
-            "outbox event `{}` projects its `id` from the target row\n       fix: declare `id uuid` on the event so it is minted -- a staged event keyed on the resource id makes `on conflict (id) do nothing` discard the second event about that resource",
-            event.label
-        ))),
-        None => Err(CompileError::new(format!(
-            "outbox event `{}` has no `id` component to stage it by\n       fix: declare `id uuid` on the event",
-            event.label
-        ))),
+        Some(_) => Err(Diagnostic::new(
+            "compile-outbox-event-id-projected",
+            format!("$.operations.{}", event.label),
+            format!(
+                "outbox event `{}` projects its `id` from the target row",
+                event.label
+            ),
+            "declare `id uuid` on the event so it is minted -- a staged event keyed on the resource id makes `on conflict (id) do nothing` discard the second event about that resource",
+        )),
+        None => Err(Diagnostic::new(
+            "compile-outbox-event-without-id",
+            format!("$.operations.{}", event.label),
+            format!(
+                "outbox event `{}` has no `id` component to stage it by",
+                event.label
+            ),
+            "declare `id uuid` on the event",
+        )),
     }
 }
 

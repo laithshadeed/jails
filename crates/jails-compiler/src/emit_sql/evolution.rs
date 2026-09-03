@@ -90,11 +90,16 @@ pub(super) fn evolution_policies(evolution: &Evolution) -> EvolutionPolicies {
     output
 }
 
-pub(super) fn unsupported_change(entity: &Entity, before: &Field) -> CompileError {
-    CompileError::new(format!(
-        "accepted column `{}.{}` changed without an evolution policy\n       fix: use the canonical rename, type, nullability, or index command for this change",
-        entity.names.sql_table, before.names.sql_column
-    ))
+pub(super) fn unsupported_change(entity: &Entity, before: &Field) -> Diagnostic {
+    Diagnostic::new(
+        "compile-column-changed-without-policy",
+        format!("$.entities.{}.fields.{}", entity.label, before.label),
+        format!(
+            "accepted column `{}.{}` changed without an evolution policy",
+            entity.names.sql_table, before.names.sql_column
+        ),
+        "use the canonical rename, type, nullability, or index command for this change",
+    )
 }
 
 /// The migration filename's descriptive half, for one field change.
@@ -121,7 +126,7 @@ pub(super) fn evolve_field(
     before: &Field,
     after: &Field,
     policy: &FieldEvolutionPolicy,
-) -> Result<Vec<String>, CompileError> {
+) -> Result<Vec<String>, Diagnostic> {
     match policy {
         FieldEvolutionPolicy::Rename { column } => {
             let mut expected = before.clone();
@@ -149,10 +154,15 @@ pub(super) fn evolve_field(
                 return Ok(Vec::new());
             }
             if before.names.sql_column == after.names.sql_column {
-                return Err(CompileError::new(format!(
-                    "column `{}` did not change during single-cutover rename\n       fix: choose a Java field name with a different SQL projection, or use `--column preserve`",
-                    before.names.sql_column
-                )));
+                return Err(Diagnostic::new(
+                    "compile-cutover-column-unchanged",
+                    format!("$.entities.{}.fields.{}", entity.label, before.label),
+                    format!(
+                        "column `{}` did not change during single-cutover rename",
+                        before.names.sql_column
+                    ),
+                    "choose a Java field name with a different SQL projection, or use `--column preserve`",
+                ));
             }
             Ok(vec![format!(
                 "alter table {} rename column {} to {};",
@@ -166,17 +176,25 @@ pub(super) fn evolve_field(
                 return Err(unsupported_change(entity, before));
             }
             if *strategy != TypeChangeStrategy::Safe {
-                return Err(CompileError::new(
-                    "only proven safe field widening lowers as one canonical migration\n       fix: use `--strategy safe`, or model expand/contract as a multi-release campaign",
+                return Err(Diagnostic::new(
+                    "compile-widening-strategy-required",
+                    format!("$.entities.{}.fields.{}", entity.label, before.label),
+                    "only proven safe field widening lowers as one canonical migration",
+                    "use `--strategy safe`, or model expand/contract as a multi-release campaign",
                 ));
             }
-            let from = sql_type(model, before)?;
-            let to = sql_type(model, after)?;
+            let from = sql_type(model, entity, before)?;
+            let to = sql_type(model, entity, after)?;
             if !safe_widening(from, to) {
-                return Err(CompileError::new(format!(
-                    "changing `{}.{}` from `{from}` to `{to}` is not a proven safe widening\n       fix: use an explicit expand/contract campaign",
-                    entity.names.sql_table, before.names.sql_column
-                )));
+                return Err(Diagnostic::new(
+                    "compile-widening-not-proven",
+                    format!("$.entities.{}.fields.{}", entity.label, before.label),
+                    format!(
+                        "changing `{}.{}` from `{from}` to `{to}` is not a proven safe widening",
+                        entity.names.sql_table, before.names.sql_column
+                    ),
+                    "use an explicit expand/contract campaign",
+                ));
             }
             Ok(vec![format!(
                 "alter table {} alter column {} type {};",
@@ -190,23 +208,38 @@ pub(super) fn evolve_field(
                 return Err(unsupported_change(entity, before));
             }
             if before.required == after.required {
-                return Err(CompileError::new(format!(
-                    "column `{}.{}` already has the requested nullability\n       fix: request the opposite nullability",
-                    entity.names.sql_table, before.names.sql_column
-                )));
+                return Err(Diagnostic::new(
+                    "compile-nullability-unchanged",
+                    format!("$.entities.{}.fields.{}", entity.label, before.label),
+                    format!(
+                        "column `{}.{}` already has the requested nullability",
+                        entity.names.sql_table, before.names.sql_column
+                    ),
+                    "request the opposite nullability",
+                ));
             }
             if before.primary_key && !after.required {
-                return Err(CompileError::new(format!(
-                    "primary-key column `{}.{}` cannot be nullable\n       fix: keep the key required, or introduce a separate nullable field",
-                    entity.names.sql_table, before.names.sql_column
-                )));
+                return Err(Diagnostic::new(
+                    "compile-primary-key-nullable",
+                    format!("$.entities.{}.fields.{}", entity.label, before.label),
+                    format!(
+                        "primary-key column `{}.{}` cannot be nullable",
+                        entity.names.sql_table, before.names.sql_column
+                    ),
+                    "keep the key required, or introduce a separate nullable field",
+                ));
             }
             if after.required {
                 let sql = backfill_sql.as_deref().ok_or_else(|| {
-                    CompileError::new(format!(
-                        "making `{}.{}` required needs an explicit backfill\n       fix: pass `--backfill-file <project-path>`",
-                        entity.names.sql_table, before.names.sql_column
-                    ))
+                    Diagnostic::new(
+                        "compile-required-nullability-needs-backfill",
+                        format!("$.entities.{}.fields.{}", entity.label, before.label),
+                        format!(
+                            "making `{}.{}` required needs an explicit backfill",
+                            entity.names.sql_table, before.names.sql_column
+                        ),
+                        "pass `--backfill-file <project-path>`",
+                    )
                 })?;
                 Ok(vec![
                     reader_sql(sql)?.to_string(),
@@ -217,8 +250,11 @@ pub(super) fn evolve_field(
                 ])
             } else {
                 if backfill_sql.is_some() {
-                    return Err(CompileError::new(
-                        "making a field nullable does not need a backfill\n       fix: remove `--backfill-file`",
+                    return Err(Diagnostic::new(
+                        "compile-nullable-needs-no-backfill",
+                        format!("$.entities.{}.fields.{}", entity.label, before.label),
+                        "making a field nullable does not need a backfill",
+                        "remove `--backfill-file`",
                     ));
                 }
                 Ok(vec![format!(
@@ -234,18 +270,28 @@ pub(super) fn drop_column(
     entity: &Entity,
     field: &Field,
     confirmed: &str,
-) -> Result<Vec<String>, CompileError> {
+) -> Result<Vec<String>, Diagnostic> {
     if field.primary_key {
-        return Err(CompileError::new(format!(
-            "primary-key column `{}.{}` cannot be dropped by field evolution\n       fix: migrate to a replacement key explicitly first",
-            entity.names.sql_table, field.names.sql_column
-        )));
+        return Err(Diagnostic::new(
+            "compile-primary-key-dropped",
+            format!("$.entities.{}.fields.{}", entity.label, field.label),
+            format!(
+                "primary-key column `{}.{}` cannot be dropped by field evolution",
+                entity.names.sql_table, field.names.sql_column
+            ),
+            "migrate to a replacement key explicitly first",
+        ));
     }
     if confirmed != field.names.sql_column {
-        return Err(CompileError::new(format!(
-            "column confirmation `{confirmed}` does not match `{}.{}`\n       fix: pass `--confirm-column {}` exactly",
-            entity.names.sql_table, field.names.sql_column, field.names.sql_column
-        )));
+        return Err(Diagnostic::new(
+            "compile-column-confirmation-mismatch",
+            format!("$.entities.{}.fields.{}", entity.label, field.label),
+            format!(
+                "column confirmation `{confirmed}` does not match `{}.{}`",
+                entity.names.sql_table, field.names.sql_column
+            ),
+            format!("pass `--confirm-column {}` exactly", field.names.sql_column),
+        ));
     }
     Ok(vec![format!(
         "alter table {} drop column {};",
@@ -264,16 +310,22 @@ pub(super) fn safe_widening(from: &str, to: &str) -> bool {
     )
 }
 
-pub(super) fn reader_sql(bytes: &[u8]) -> Result<&str, CompileError> {
+pub(super) fn reader_sql(bytes: &[u8]) -> Result<&str, Diagnostic> {
     let sql = std::str::from_utf8(bytes).map_err(|_| {
-        CompileError::new(
-            "reader-owned backfill is not UTF-8 SQL\n       fix: save the backfill as UTF-8 text",
+        Diagnostic::new(
+            "compile-backfill-not-utf8",
+            "$.evolution",
+            "reader-owned backfill is not UTF-8 SQL",
+            "save the backfill as UTF-8 text",
         )
     })?;
     let sql = sql.trim();
     if sql.is_empty() {
-        return Err(CompileError::new(
-            "reader-owned backfill is empty\n       fix: provide the data update that makes the constraint safe",
+        return Err(Diagnostic::new(
+            "compile-backfill-empty",
+            "$.evolution",
+            "reader-owned backfill is empty",
+            "provide the data update that makes the constraint safe",
         ));
     }
     Ok(sql)

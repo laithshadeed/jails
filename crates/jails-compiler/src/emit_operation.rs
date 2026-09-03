@@ -9,7 +9,7 @@ mod transition;
 
 pub(crate) use node::Key;
 
-use crate::CompileError;
+use crate::Diagnostic;
 use crate::emit_java::{JAVA_ROOT, JavaUnit, entity};
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile, RenderedTree};
 use jails_model::{
@@ -22,7 +22,7 @@ pub(crate) fn emit(
     model: &AppModel,
     output: &mut RenderedTree,
     _: &jails_contracts::WorkspaceSnapshot,
-) -> Result<(), CompileError> {
+) -> Result<(), Diagnostic> {
     let Some(capability) = model
         .capabilities
         .values()
@@ -60,7 +60,7 @@ pub(crate) fn emit(
                 {
                     output
                         .insert(written.0, written.1)
-                        .map_err(CompileError::new)?;
+                        .map_err(crate::refuse::duplicate_emission)?;
                 }
                 command::lower(model, capability.id.as_str(), operation, spec)?
             }
@@ -76,7 +76,9 @@ pub(crate) fn emit(
                     &filters,
                     &spec.semantics.joins,
                 )? {
-                    output.insert(proof.0, proof.1).map_err(CompileError::new)?;
+                    output
+                        .insert(proof.0, proof.1)
+                        .map_err(crate::refuse::duplicate_emission)?;
                 }
                 query::lower(
                     model,
@@ -127,7 +129,7 @@ pub(crate) fn emit(
                 {
                     output
                         .insert(written.0, written.1)
-                        .map_err(CompileError::new)?;
+                        .map_err(crate::refuse::duplicate_emission)?;
                 }
                 transition::lower(model, capability.id.as_str(), operation, spec)?
             }
@@ -135,7 +137,7 @@ pub(crate) fn emit(
         };
         output
             .insert(lowered.0, lowered.1)
-            .map_err(CompileError::new)?;
+            .map_err(crate::refuse::duplicate_emission)?;
     }
     Ok(())
 }
@@ -237,7 +239,7 @@ fn query_filters<'a>(
     operation: &Operation,
     target: &'a Entity,
     spec: &'a jails_model::Query,
-) -> Result<Vec<QueryFilter<'a>>, CompileError> {
+) -> Result<Vec<QueryFilter<'a>>, Diagnostic> {
     if spec.semantics.parameters.is_empty() {
         return Ok(resolve_fields(operation, target, &spec.filters, "filters")?
             .into_iter()
@@ -256,19 +258,21 @@ fn query_filters<'a>(
         .iter()
         .map(|parameter| {
             let jails_model::ParameterSource::Field(visible) = &parameter.source else {
-                return Err(CompileError::new(format!(
-                    "canonical query `{}` declares parameter `{}` with no source column\n       fix: filter on a declared field of the query's entity or one it joins",
-                    operation.label, parameter.name
-                )));
+                return Err(Diagnostic::new(
+"compile-query-parameter-without-column",
+format!("$.operations.{}", operation.label),
+format!("canonical query `{}` declares parameter `{}` with no source column", operation.label, parameter.name),
+"filter on a declared field of the query's entity or one it joins",
+));
             };
             let owner = model.entities.get(&visible.entity).ok_or_else(|| {
-                CompileError::new(format!(
+                crate::refuse::unlinked(format!("$.operations.{}", operation.label), format!(
                     "linked query `{}` references missing entity `{}`",
                     operation.label, visible.entity
                 ))
             })?;
             let field = owner.field(&visible.field).ok_or_else(|| {
-                CompileError::new(format!(
+                crate::refuse::unlinked(format!("$.operations.{}", operation.label), format!(
                     "linked query `{}` references missing filter field `{}`",
                     operation.label, visible.field
                 ))
@@ -286,10 +290,12 @@ fn query_filters<'a>(
                     .iter()
                     .find(|join| join.entity == owner.id)
                     .ok_or_else(|| {
-                        CompileError::new(format!(
-                            "canonical query `{}` filters on `{}`, which is not the query's entity and is not joined\n       fix: add a `join {} as <alias> on <local> -> <alias>.<remote>` to the query",
-                            operation.label, parameter.name, owner.names.java_type
-                        ))
+                        Diagnostic::new(
+"compile-query-filter-not-joined",
+format!("$.operations.{}", operation.label),
+format!("canonical query `{}` filters on `{}`, which is not the query's entity and is not joined", operation.label, parameter.name),
+format!("add a `join {} as <alias> on <local> -> <alias>.<remote>` to the query", owner.names.java_type),
+)
                     })?;
                 Some(format!("\"{}\"", join.alias))
             };
@@ -312,13 +318,18 @@ fn stored_entity<'a>(
     operation: &Operation,
     target: &jails_model::EntityId,
     kind: &str,
-) -> Result<&'a Entity, CompileError> {
+) -> Result<&'a Entity, Diagnostic> {
     let target = entity(model, target)?;
     if !target.active || !target.facets.contains(&Facet::Repository) {
-        return Err(CompileError::new(format!(
-            "canonical {kind} `{}` targets an entity without active storage\n       fix: target an active scaffold or remove the `db` capability",
-            operation.label
-        )));
+        return Err(Diagnostic::new(
+            "compile-operation-target-without-storage",
+            format!("$.operations.{}", operation.label),
+            format!(
+                "canonical {kind} `{}` targets an entity without active storage",
+                operation.label
+            ),
+            "target an active scaffold or remove the `db` capability",
+        ));
     }
     Ok(target)
 }
@@ -339,7 +350,7 @@ pub(super) fn publications(
     target: &Entity,
     emits: &[jails_model::OperationId],
     imports: &mut BTreeSet<String>,
-) -> Result<Vec<String>, CompileError> {
+) -> Result<Vec<String>, Diagnostic> {
     let staged = outbox::delivery(operation) == jails_model::Delivery::Outbox;
     if staged {
         // Checked before a byte is rendered: exactly one event, staged by a
@@ -355,22 +366,33 @@ pub(super) fn publications(
     let mut publications = Vec::new();
     for event_id in emits {
         let yielded = model.operations.get(event_id).ok_or_else(|| {
-            CompileError::new(format!(
-                "linked operation `{}` references missing event `{event_id}`",
-                operation.label
-            ))
+            crate::refuse::unlinked(
+                format!("$.operations.{}", operation.label),
+                format!(
+                    "linked operation `{}` references missing event `{event_id}`",
+                    operation.label
+                ),
+            )
         })?;
         let OperationKind::Event(event) = &yielded.kind else {
-            return Err(CompileError::new(format!(
-                "linked operation `{}` emits non-event operation `{}`",
-                operation.label, yielded.label
-            )));
+            return Err(crate::refuse::unlinked(
+                format!("$.operations.{}", operation.label),
+                format!(
+                    "linked operation `{}` emits non-event operation `{}`",
+                    operation.label, yielded.label
+                ),
+            ));
         };
         if event.on.as_ref().is_some_and(|entity| entity != &target.id) {
-            return Err(CompileError::new(format!(
-                "canonical operation `{}` emits event `{}` from another entity\n       fix: emit an event projected from `{}`",
-                operation.label, yielded.label, target.label
-            )));
+            return Err(Diagnostic::new(
+                "compile-event-from-another-entity",
+                format!("$.operations.{}", operation.label),
+                format!(
+                    "canonical operation `{}` emits event `{}` from another entity",
+                    operation.label, yielded.label
+                ),
+                format!("emit an event projected from `{}`", target.label),
+            ));
         }
         let event_type = crate::emit_java::with_suffix(&yielded.names.java_type, "Event");
         imports.insert(format!(
@@ -395,7 +417,7 @@ pub(super) fn publications(
                     .field(&visible.field)
                     .map(|field| format!("result.{}()", field.names.java_member))
                     .ok_or_else(|| {
-                        CompileError::new(format!(
+                        crate::refuse::unlinked(format!("$.operations.{}", yielded.label), format!(
                             "linked event `{}` references missing field `{}`",
                             yielded.label, visible.field
                         ))
@@ -420,15 +442,19 @@ pub(super) fn publications(
                         imports.insert("java.time.Instant".to_string());
                         Ok("Instant.now()".to_string())
                     }
-                    _ => Err(CompileError::new(format!(
-                        "outbox event `{}` declares `{}`, which nothing in the staging transaction can supply\n       fix: project it from a field of `{}`, or declare it `uuid` (minted) or `instant` (now)",
-                        yielded.label, parameter.name, target.label
-                    ))),
+                    _ => Err(Diagnostic::new(
+"compile-outbox-event-parameter-unsupplied",
+format!("$.operations.{}", yielded.label),
+format!("outbox event `{}` declares `{}`, which nothing in the staging transaction can supply", yielded.label, parameter.name),
+format!("project it from a field of `{}`, or declare it `uuid` (minted) or `instant` (now)", target.label),
+)),
                 },
-                jails_model::ParameterSource::Typed(_) => Err(CompileError::new(format!(
-                    "canonical event `{}` declares `{}`, which the target row does not carry\n       fix: project it from a field of `{}`, or deliver this command through an outbox, which can mint one",
-                    yielded.label, parameter.name, target.label
-                ))),
+                jails_model::ParameterSource::Typed(_) => Err(Diagnostic::new(
+"compile-event-parameter-not-on-row",
+format!("$.operations.{}", yielded.label),
+format!("canonical event `{}` declares `{}`, which the target row does not carry", yielded.label, parameter.name),
+format!("project it from a field of `{}`, or deliver this command through an outbox, which can mint one", target.label),
+)),
             })
             .collect::<Result<Vec<_>, _>>()?
             .join(", ");
@@ -455,23 +481,24 @@ fn ordering<'a>(
     operation: &Operation,
     target: &'a Entity,
     spec: &jails_model::Query,
-) -> Result<Vec<(&'a Field, jails_model::SortDirection)>, CompileError> {
+) -> Result<Vec<(&'a Field, jails_model::SortDirection)>, Diagnostic> {
     spec.semantics
         .order
         .iter()
         .map(|ordering| {
             if ordering.field.qualifier.is_some() || ordering.field.entity != target.id {
-                return Err(CompileError::new(format!(
-                    "canonical query `{}` orders by a joined column
-       fix: order by a field of `{}`, or eject this adapter and write the statement by hand",
-                    operation.label, target.label
-                )));
+                return Err(Diagnostic::new(
+"compile-query-orders-by-joined-column",
+format!("$.operations.{}", operation.label),
+format!("canonical query `{}` orders by a joined column", operation.label),
+format!("order by a field of `{}`, or eject this adapter and write the statement by hand", target.label),
+));
             }
             target
                 .field(&ordering.field.field)
                 .map(|field| (field, ordering.direction))
                 .ok_or_else(|| {
-                    CompileError::new(format!(
+                    crate::refuse::unlinked(format!("$.operations.{}", operation.label), format!(
                         "linked operation `{}` references missing ordering field `{}`",
                         operation.label, ordering.field.field
                     ))
@@ -485,14 +512,17 @@ fn resolve_fields<'a>(
     target: &'a Entity,
     ids: &[jails_model::FieldId],
     role: &str,
-) -> Result<Vec<&'a Field>, CompileError> {
+) -> Result<Vec<&'a Field>, Diagnostic> {
     ids.iter()
         .map(|id| {
             target.field(id).ok_or_else(|| {
-                CompileError::new(format!(
-                    "linked operation `{}` references missing {role} field `{id}`",
-                    operation.label
-                ))
+                crate::refuse::unlinked(
+                    format!("$.operations.{}", operation.label),
+                    format!(
+                        "linked operation `{}` references missing {role} field `{id}`",
+                        operation.label
+                    ),
+                )
             })
         })
         .collect()
@@ -509,19 +539,18 @@ fn operation_file(
     compiler_pass: &str,
     imports: BTreeSet<String>,
     body: String,
-) -> Result<(ProjectPath, RenderedFile), CompileError> {
+) -> Result<(ProjectPath, RenderedFile), Diagnostic> {
     let package = model.project.package_for(Package::AdaptersJdbc);
     let artifact_id = format!(
         "art_{capability_id}_{}_{artifact_suffix}",
         operation.id.as_str()
     );
     let rendered = JavaUnit::new(&package, &imports, &body).render(&artifact_id);
-    let path = ProjectPath::parse(format!(
+    let path = crate::refuse::project_path(format!(
         "{JAVA_ROOT}/{}/{}.java",
         package.replace('.', "/"),
         type_name
-    ))
-    .map_err(CompileError::new)?;
+    ))?;
     Ok((
         path,
         RenderedFile {
@@ -594,7 +623,7 @@ fn assignment_sql_value(
     operation: &Operation,
     field: &Field,
     value: &Value,
-) -> Result<String, CompileError> {
+) -> Result<String, Diagnostic> {
     match value {
         Value::String(value) | Value::EnumConstant(value) => {
             Ok(format!("'{}'", value.replace('\'', "''")))
@@ -606,10 +635,15 @@ fn assignment_sql_value(
         Value::Function { name, arguments } if name == "now" && arguments.is_empty() => {
             Ok("current_timestamp".to_string())
         }
-        _ => Err(CompileError::new(format!(
-            "canonical operation `{}` cannot lower the constant assigned to `{}`\n       fix: use a string, enum, numeric, boolean, or `now()` constant, or eject the implementation boundary",
-            operation.label, field.label
-        ))),
+        _ => Err(Diagnostic::new(
+            "compile-constant-not-lowerable",
+            format!("$.operations.{}", operation.label),
+            format!(
+                "canonical operation `{}` cannot lower the constant assigned to `{}`",
+                operation.label, field.label
+            ),
+            "use a string, enum, numeric, boolean, or `now()` constant, or eject the implementation boundary",
+        )),
     }
 }
 

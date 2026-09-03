@@ -17,11 +17,11 @@
 //! the whole surface: `service` is a one-method stub, and the linker already
 //! refuses `http` on an entity without `repo`.
 
-use crate::CompileError;
+use crate::Diagnostic;
 use crate::emit_java::{
     JAVA_ROOT, JavaUnit, Unit, domain_import, java_type, primary_key, with_suffix,
 };
-use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile};
+use jails_contracts::{FileKind, FileMode, Provenance, RenderedFile};
 use jails_model::{AppModel, Entity, Package, StableId, boundary};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -32,7 +32,7 @@ pub(crate) fn lower(
     model: &AppModel,
     entity: &Entity,
     spring_boot: Option<&str>,
-) -> Result<Vec<Unit>, CompileError> {
+) -> Result<Vec<Unit>, Diagnostic> {
     let mut units = vec![port(model, entity)?];
     // **Only a Spring project gets a controller.** The port is plain Java and
     // costs a project nothing; a `@RestController` needs Spring Web, and on a
@@ -63,7 +63,7 @@ pub(crate) fn lower(
 /// and are written with a Rust `format!` for that reason -- `template!` reads
 /// `{{...}}` as a placeholder, so a `.http` rendered through it would have its
 /// own syntax substituted away.
-fn requests(model: &AppModel, entity: &Entity) -> Result<Unit, CompileError> {
+fn requests(model: &AppModel, entity: &Entity) -> Result<Unit, Diagnostic> {
     let path = resource_path(model, entity);
     let name = &entity.names.java_type;
     let key = primary_key(entity)?;
@@ -107,9 +107,10 @@ fn requests(model: &AppModel, entity: &Entity) -> Result<Unit, CompileError> {
          {reads}",
         body.join(",\n")
     );
+    let name = format!("{}.http", entity.names.sql_table);
     let path = jails_contracts::SourceRoot::TestHttp
-        .join(&format!("{}.http", entity.names.sql_table))
-        .map_err(CompileError::new)?;
+        .join(&name)
+        .map_err(|message| crate::refuse::invalid_path(name.clone(), message))?;
     Ok(Unit {
         path,
         file: RenderedFile {
@@ -131,7 +132,7 @@ fn requests(model: &AppModel, entity: &Entity) -> Result<Unit, CompileError> {
 ///
 /// Kept although the controller that serves the resource does not implement
 /// it: it is a port, and a port is ABI.
-fn port(model: &AppModel, entity: &Entity) -> Result<Unit, CompileError> {
+fn port(model: &AppModel, entity: &Entity) -> Result<Unit, Diagnostic> {
     let package = crate::emit_java::entity_package(model, entity, Package::PortsHttp);
     let type_name = format!("{}HttpPort", entity.names.java_type);
     let imports = BTreeSet::from([domain_import(model, entity)]);
@@ -229,7 +230,7 @@ fn controller(
     model: &AppModel,
     entity: &Entity,
     spring_boot: Option<&str>,
-) -> Result<Unit, CompileError> {
+) -> Result<Unit, Diagnostic> {
     let package = crate::emit_java::entity_package(model, entity, Package::Web);
     let type_name = with_suffix(&entity.names.java_type, "Controller");
     let record = &entity.names.java_type;
@@ -375,7 +376,7 @@ fn controller_test(
     model: &AppModel,
     entity: &Entity,
     spring_boot: Option<&str>,
-) -> Result<Option<Unit>, CompileError> {
+) -> Result<Option<Unit>, Diagnostic> {
     let package = crate::emit_java::entity_package(model, entity, Package::Web);
     let controller = with_suffix(&entity.names.java_type, "Controller");
     let type_name = format!("{controller}Test");
@@ -531,11 +532,10 @@ fn unit(
     kind: FileKind,
     root: &str,
     compiler_pass: &str,
-) -> Result<Unit, CompileError> {
+) -> Result<Unit, Diagnostic> {
     let rendered = JavaUnit::new(&package, &imports, &body).render(&artifact_id);
     let package_path = package.replace('.', "/");
-    let path = ProjectPath::parse(format!("{root}/{package_path}/{type_name}.java"))
-        .map_err(CompileError::new)?;
+    let path = crate::refuse::project_path(format!("{root}/{package_path}/{type_name}.java"))?;
     Ok(Unit {
         path,
         file: RenderedFile {

@@ -67,9 +67,9 @@ pub(crate) fn link(
                 );
             }
             let Some(parent_id) = labels.get(&declaration.target).cloned() else {
-                linker.problem(
-                    "model-relation-target-reference",
-                    format!("{path}.target"),
+                refuse_target(
+                    linker,
+                    &path,
                     format!("`{}` does not name an entity", declaration.target),
                     "name a declared entity",
                 );
@@ -79,9 +79,9 @@ pub(crate) fn link(
                 continue;
             };
             if parent.facets.contains(&crate::Facet::Enum) {
-                linker.problem(
-                    "model-relation-target-reference",
-                    format!("{path}.target"),
+                refuse_target(
+                    linker,
+                    &path,
                     format!("`{}` names an enum, not an entity", declaration.target),
                     "target a stored entity",
                 );
@@ -400,4 +400,17 @@ fn has_cycle(graph: &BTreeMap<EntityId, Vec<EntityId>>) -> bool {
     graph
         .keys()
         .any(|node| visit(node, graph, &mut visiting, &mut visited))
+}
+
+/// A relation whose `target` does not name a stored entity.
+///
+/// One code, so one constructor: a name nothing declares and a name that
+/// declares an enum are the same refusal, and only the sentence differs.
+fn refuse_target(linker: &mut Linker, path: &str, message: impl Into<String>, fix: &'static str) {
+    linker.problem(
+        "model-relation-target-reference",
+        format!("{path}.target"),
+        message,
+        fix,
+    );
 }

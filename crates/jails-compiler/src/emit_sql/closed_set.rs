@@ -11,7 +11,7 @@
 //! migrate`, on whichever machine ran it first, about a command that had
 //! reported success.
 
-use crate::CompileError;
+use crate::Diagnostic;
 use jails_model::{AppModel, Entity, Facet, StableId as _, TypeRef};
 use std::collections::BTreeSet;
 
@@ -63,7 +63,7 @@ pub(super) fn derive_into(
     statements: &mut Vec<String>,
     semantic_ids: &mut BTreeSet<String>,
     descriptions: &mut Vec<String>,
-) -> Result<(), CompileError> {
+) -> Result<(), Diagnostic> {
     for declared in next
         .entities
         .values()
@@ -87,11 +87,11 @@ pub(super) fn derive_into(
             .map(|constant| constant.java_name.as_str())
             .collect::<Vec<_>>();
         if !removed.is_empty() {
-            return Err(CompileError::new(narrowing_refusal(
+            return Err(narrowing_refusal(
                 &declared.names.java_type,
                 &accepted.enum_constants,
                 &removed,
-            )));
+            ));
         }
         // **Only tables that exist.** A plain `g record` naming the same enum
         // has no `create table`, and `alter table drafts` would be
@@ -140,15 +140,20 @@ pub fn narrowing_refusal(
     java_type: &str,
     accepted: &[jails_model::EnumConstant],
     removed: &[&str],
-) -> String {
-    format!(
-        "`{java_type}` currently allows {}, and this drops {}. A stored row may still hold {}, which jails cannot check from here.\n       fix: keep the constant and stop writing it, or write the migration that proves no row holds it and then re-declare the enum",
-        accepted
-            .iter()
-            .map(|constant| constant.java_name.as_str())
-            .collect::<Vec<_>>()
-            .join(", "),
-        removed.join(", "),
-        if removed.len() == 1 { "it" } else { "one" }
+) -> Diagnostic {
+    Diagnostic::new(
+        "compile-enum-narrowed",
+        format!("$.entities.{java_type}"),
+        format!(
+            "`{java_type}` currently allows {}, and this drops {}. A stored row may still hold {}, which jails cannot check from here.",
+            accepted
+                .iter()
+                .map(|constant| constant.java_name.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+            removed.join(", "),
+            if removed.len() == 1 { "it" } else { "one" }
+        ),
+        "keep the constant and stop writing it, or write the migration that proves no row holds it and then re-declare the enum",
     )
 }

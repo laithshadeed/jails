@@ -83,48 +83,6 @@ mise run verify-rewrite
 the readable boundary path resolves through `jails_model::boundary`, the one
 registry the linker and the emitters both read.
 
----
-
-## A3.13 — one diagnostic contract, in the compiler
-
-The capture/apply phase has adopted it: 103 `workspace-*` codes across
-`jails-workspace` and `jails-project`'s `capture`, `documents` and `merge`,
-and the 78 `Result<_, String>` returns those files carried are down to none.
-`jails-compiler` has not, and it is what is left of this item.
-
-**The compiler refuses with `CompileError`, a newtype over one `String`, from
-216 sites.** It never appeared in the old `Result<_, String>` grep, which is
-why the count read as zero for that crate and the work looked done. Giving
-each distinct refusal a `compile-*` code is the same exercise the workspace
-half just went through, and the machinery is already there:
-`Diagnostic::without_a_fix` for a refusal with no next step to name,
-`jails_project::diagnosed` at the boundary,
-`every_diagnostic_code_belongs_to_the_crate_that_owns_its_phase` and
-`every_diagnostic_code_is_unique_and_kebab_case` to hold it. The rule that
-made the workspace half tractable: a family of sites saying one thing --
-fifteen `could not <verb> <path>` refusals, four `the owned <label> block was
-edited` -- gets *one* code behind one constructor, not one code each.
-
-**Exit:** `CompileError` carries a `compile-*` code, or is replaced by
-`Diagnostic`, and the human message of every refusal is unchanged.
-
-```
-grep -rhoc 'CompileError::new' crates/jails-compiler/src | paste -sd+ | bc
-```
-
-Three `Result<_, String>` returns remain in `jails-project` and stay:
-`gradle::parse_classpath_report` and two in `template`. They are not the
-capture/apply phase -- `measure::is_canonical_workspace` draws that boundary
-and excludes them -- and their refusals are worded by the caller that reports
-them, so a code on them would say which *reader helper* failed rather than
-which pass refused.
-
-Twenty-five of the parser's and linker's own codes are still raised from two
-sites each (`model-controller-body-method` from both `linker/unit.rs` and
-`linker/component/registry.rs`, and its kin). Each pair is one refusal and
-wants one constructor. `every_diagnostic_code_is_unique_and_kebab_case` holds
-the number at 25 and refuses a rise, so this shrinks or stays.
-
 ## Open items
 
 **P9.3 §4.2 -- slices.** `rename resource` accepts a `<slice>.<name>`

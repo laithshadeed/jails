@@ -168,7 +168,7 @@ fn is_event(_: &AppModel, operation: &Operation) -> bool {
 }
 
 /// The entity a command, query or transition is on.
-fn target<'a>(model: &'a AppModel, operation: &Operation) -> Result<&'a Entity, CompileError> {
+fn target<'a>(model: &'a AppModel, operation: &Operation) -> Result<&'a Entity, Diagnostic> {
     let id = match &operation.kind {
         OperationKind::Command(command) => &command.on,
         OperationKind::Query(query) => &query.on,
@@ -179,7 +179,7 @@ fn target<'a>(model: &'a AppModel, operation: &Operation) -> Result<&'a Entity, 
 }
 
 /// `String ROUTE = "...";`, for a routed operation; nothing otherwise.
-fn route(_: &AppModel, operation: &Operation) -> Result<Rendered, CompileError> {
+fn route(_: &AppModel, operation: &Operation) -> Result<Rendered, Diagnostic> {
     let route = match &operation.kind {
         OperationKind::Command(command) => command.route.as_deref(),
         OperationKind::Query(query) => query.route.as_deref(),
@@ -197,7 +197,7 @@ fn route(_: &AppModel, operation: &Operation) -> Result<Rendered, CompileError> 
 /// The insert selects the foreign key out of the parent's own row, so a
 /// caller naming a parent that is not there writes nothing -- which is a 404,
 /// not a 500.
-fn answer(model: &AppModel, operation: &Operation) -> Result<Rendered, CompileError> {
+fn answer(model: &AppModel, operation: &Operation) -> Result<Rendered, Diagnostic> {
     let OperationKind::Command(command) = &operation.kind else {
         unreachable!("only a command spells {{answer}}");
     };
@@ -213,7 +213,7 @@ fn answer(model: &AppModel, operation: &Operation) -> Result<Rendered, CompileEr
 }
 
 /// What a query answers with: a list of the entity.
-fn result(model: &AppModel, operation: &Operation) -> Result<Rendered, CompileError> {
+fn result(model: &AppModel, operation: &Operation) -> Result<Rendered, Diagnostic> {
     let entity = target(model, operation)?;
     Ok(Rendered {
         text: format!("List<{}>", entity.names.java_type),
@@ -222,7 +222,7 @@ fn result(model: &AppModel, operation: &Operation) -> Result<Rendered, CompileEr
 }
 
 /// The entity's type, imported from its domain package.
-fn entity_type(model: &AppModel, operation: &Operation) -> Result<Rendered, CompileError> {
+fn entity_type(model: &AppModel, operation: &Operation) -> Result<Rendered, Diagnostic> {
     let entity = target(model, operation)?;
     Ok(Rendered {
         text: entity.names.java_type.clone(),
@@ -232,7 +232,7 @@ fn entity_type(model: &AppModel, operation: &Operation) -> Result<Rendered, Comp
 
 /// `ExecutionContext context, ` when the entity has a scoped field, so the
 /// port takes the request boundary its adapter proves the claim against.
-fn context(model: &AppModel, operation: &Operation) -> Result<Rendered, CompileError> {
+fn context(model: &AppModel, operation: &Operation) -> Result<Rendered, Diagnostic> {
     let entity = target(model, operation)?;
     let mut imports = BTreeSet::new();
     Ok(Rendered {
@@ -242,7 +242,7 @@ fn context(model: &AppModel, operation: &Operation) -> Result<Rendered, CompileE
 }
 
 /// A query's `DEFAULT_LIMIT`, when it declares one.
-fn limit(_: &AppModel, operation: &Operation) -> Result<Rendered, CompileError> {
+fn limit(_: &AppModel, operation: &Operation) -> Result<Rendered, Diagnostic> {
     let OperationKind::Query(query) = &operation.kind else {
         unreachable!("only a query spells {{limit}}");
     };
@@ -254,7 +254,7 @@ fn limit(_: &AppModel, operation: &Operation) -> Result<Rendered, CompileError> 
 }
 
 /// The row a transition selects, as `execute`'s first argument.
-fn key(model: &AppModel, operation: &Operation) -> Result<Rendered, CompileError> {
+fn key(model: &AppModel, operation: &Operation) -> Result<Rendered, Diagnostic> {
     let OperationKind::Transition(transition) = &operation.kind else {
         unreachable!("only a transition spells {{key}}");
     };
@@ -270,7 +270,7 @@ fn key(model: &AppModel, operation: &Operation) -> Result<Rendered, CompileError
 
 /// The version an `if-match` transition takes, with its leading comma. See
 /// [`super::precondition`].
-fn expected(model: &AppModel, operation: &Operation) -> Result<Rendered, CompileError> {
+fn expected(model: &AppModel, operation: &Operation) -> Result<Rendered, Diagnostic> {
     let OperationKind::Transition(transition) = &operation.kind else {
         unreachable!("only a transition spells {{expected}}");
     };
@@ -287,7 +287,7 @@ fn expected(model: &AppModel, operation: &Operation) -> Result<Rendered, Compile
 /// **Only a form-bound route needs the binding annotation.** A JSON body
 /// reaches Jackson, which applies the project's naming strategy itself; a
 /// form reaches Spring's data binder, which has none.
-fn input(model: &AppModel, operation: &Operation) -> Result<Rendered, CompileError> {
+fn input(model: &AppModel, operation: &Operation) -> Result<Rendered, Diagnostic> {
     let binder = operation
         .route()
         .is_some_and(|route| route.consumes == Some(jails_model::RequestFormat::Form))
@@ -317,7 +317,7 @@ fn event_payload<'a>(
     model: &'a AppModel,
     operation: &'a Operation,
     imports: &mut BTreeSet<String>,
-) -> Result<Vec<RecordComponent<'a>>, CompileError> {
+) -> Result<Vec<RecordComponent<'a>>, Diagnostic> {
     let OperationKind::Event(event) = &operation.kind else {
         unreachable!("only an event spells its record's components");
     };
@@ -332,7 +332,7 @@ fn event_payload<'a>(
     ))
 }
 
-fn event_components(model: &AppModel, operation: &Operation) -> Result<Rendered, CompileError> {
+fn event_components(model: &AppModel, operation: &Operation) -> Result<Rendered, Diagnostic> {
     let mut imports = BTreeSet::new();
     let components = event_payload(model, operation, &mut imports)?;
     let declarations = input::record_declarations(&components, &mut imports, None);
@@ -343,7 +343,7 @@ fn event_components(model: &AppModel, operation: &Operation) -> Result<Rendered,
     Ok(Rendered { text, imports })
 }
 
-fn event_constructor(model: &AppModel, operation: &Operation) -> Result<Rendered, CompileError> {
+fn event_constructor(model: &AppModel, operation: &Operation) -> Result<Rendered, Diagnostic> {
     let mut imports = BTreeSet::new();
     let components = event_payload(model, operation, &mut imports)?;
     let text = input::record_constructor("{{class}}", &components, &mut imports);

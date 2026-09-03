@@ -20,7 +20,7 @@
 //! three tables. The scheduling config is shared, so it comes from
 //! [`super::job::scheduling`] like every other scheduled bean's.
 
-use crate::CompileError;
+use crate::Diagnostic;
 use jails_contracts::RenderedMigration;
 use jails_model::{AppModel, Component, ComponentKind, ComponentReference, StableId};
 use std::collections::BTreeSet;
@@ -61,26 +61,41 @@ fn table(component: &Component) -> String {
 pub(super) fn fetcher<'a>(
     model: &'a AppModel,
     component: &Component,
-) -> Result<&'a Component, CompileError> {
+) -> Result<&'a Component, Diagnostic> {
     let Some(ComponentReference::Component(id)) = component.on.as_ref() else {
-        return Err(CompileError::new(format!(
-            "http workflow `{}` has nothing to fetch through\n       fix: point `on` at a `fetcher` component",
-            component.label
-        )));
+        return Err(Diagnostic::new(
+            "compile-http-workflow-without-fetcher",
+            format!("$.components.{}", component.label),
+            format!(
+                "http workflow `{}` has nothing to fetch through",
+                component.label
+            ),
+            "point `on` at a `fetcher` component",
+        ));
     };
     let fetcher = model.components.get(id).ok_or_else(|| {
-        CompileError::new(format!(
-            "http workflow `{}` references missing component `{id}`\n       fix: declare the fetcher it traverses through",
-            component.label
-        ))
+        Diagnostic::new(
+            "compile-http-workflow-component-missing",
+            format!("$.components.{}", component.label),
+            format!(
+                "http workflow `{}` references missing component `{id}`",
+                component.label
+            ),
+            "declare the fetcher it traverses through",
+        )
     })?;
     if fetcher.kind != ComponentKind::Fetcher {
-        return Err(CompileError::new(format!(
-            "http workflow `{}` traverses through `{}`, which is a {} rather than a fetcher\n       fix: a traversal follows links a remote page supplied, so it must go through the port that bounds them",
-            component.label,
-            fetcher.label,
-            fetcher.kind.label()
-        )));
+        return Err(Diagnostic::new(
+            "compile-http-workflow-fetcher-wrong-kind",
+            format!("$.components.{}", component.label),
+            format!(
+                "http workflow `{}` traverses through `{}`, which is a {} rather than a fetcher",
+                component.label,
+                fetcher.label,
+                fetcher.kind.label()
+            ),
+            "a traversal follows links a remote page supplied, so it must go through the port that bounds them",
+        ));
     }
     Ok(fetcher)
 }

@@ -8,7 +8,7 @@
 //! itself, and only an integration test against a real PostgreSQL proves them.
 
 use super::{SqlDefault, declares_enum, sql_default};
-use crate::CompileError;
+use crate::Diagnostic;
 use jails_model::{AppModel, Field, TypeRef};
 use std::collections::BTreeSet;
 
@@ -17,7 +17,7 @@ use std::collections::BTreeSet;
 /// `generated always as identity` is not merely defaulted -- PostgreSQL
 /// refuses an insert that supplies a value at all, so this is the difference
 /// between a repository that can store a row and one that cannot.
-pub(crate) fn database_assigned(field: &Field) -> Result<bool, CompileError> {
+pub(crate) fn database_assigned(field: &Field) -> Result<bool, Diagnostic> {
     Ok(matches!(sql_default(field)?, Some(SqlDefault::Identity)))
 }
 

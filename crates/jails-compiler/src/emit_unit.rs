@@ -1,6 +1,6 @@
 //! Standalone main and test source-unit backend.
 
-use crate::CompileError;
+use crate::Diagnostic;
 use crate::emit_java::JavaUnit;
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile, RenderedTree};
 use jails_model::{AppModel, SourceUnit, StableId, UnitKind};
@@ -13,12 +13,12 @@ pub(crate) fn emit(
     model: &AppModel,
     output: &mut RenderedTree,
     spring_boot: Option<&str>,
-) -> Result<(), CompileError> {
+) -> Result<(), Diagnostic> {
     for source in model.units.values() {
         for unit in lower(source, model, spring_boot)? {
             output
                 .insert(unit.path, unit.file)
-                .map_err(CompileError::new)?;
+                .map_err(crate::refuse::duplicate_emission)?;
         }
     }
     Ok(())
@@ -45,7 +45,7 @@ fn lower(
     source: &SourceUnit,
     model: &AppModel,
     spring_boot: Option<&str>,
-) -> Result<Vec<Unit>, CompileError> {
+) -> Result<Vec<Unit>, Diagnostic> {
     let id = source.id.as_str();
     let package = &placed(source, model);
     let type_name = &source.java_type;
@@ -202,6 +202,21 @@ fn standalone_test_body(kind: UnitKind, type_name: &str) -> String {
     }
 }
 
+/// A strategy port that is not in the domain layer.
+///
+/// One sentence, so one code and one constructor: `lower_strategy` asks the
+/// question twice on one path and a code names one refusal.
+fn strategy_package(source: &SourceUnit) -> Diagnostic {
+    Diagnostic::without_a_fix(
+        "compile-strategy-package-not-canonical",
+        format!("$.units.{}", source.label),
+        format!(
+            "strategy `{}` must use the canonical domain package",
+            source.java_type
+        ),
+    )
+}
+
 /// **A strategy is the one Spring-shaped unit a plain project also gets.**
 ///
 /// `@Component` on each implementation is how Spring collects them into the
@@ -215,11 +230,16 @@ fn standalone_test_body(kind: UnitKind, type_name: &str) -> String {
 /// group `Strategy` with them. That is right for the other two, whose whole
 /// body is an annotation, and wrong here: it would make `g strategy` refuse
 /// on exactly the plain projects it supports.
+///
+/// The domain-package rule is checked twice on one path -- against the
+/// projection, and again when that package is split to name the `service`
+/// package beside it -- and both are the one refusal [`strategy_package`]
+/// spells.
 fn lower_strategy(
     source: &SourceUnit,
     model: &AppModel,
     spring_boot: bool,
-) -> Result<Vec<Unit>, CompileError> {
+) -> Result<Vec<Unit>, Diagnostic> {
     let id = source.id.as_str();
     let domain = &placed(source, model);
     // Compared against the *projection*, so a project that renames `domain`
@@ -228,23 +248,20 @@ fn lower_strategy(
     // layer, because `g scaffold` writes an ArchUnit rule forbidding Spring
     // inside it -- and only its spelling follows the reader's.
     if domain != &model.project.package_for(jails_model::Package::Domain) {
-        return Err(CompileError::new(format!(
-            "strategy `{}` must use the canonical domain package",
-            source.java_type
-        )));
+        return Err(strategy_package(source));
     }
-    let base = domain.strip_suffix(".domain").ok_or_else(|| {
-        CompileError::new(format!(
-            "strategy `{}` must use the canonical domain package",
-            source.java_type
-        ))
-    })?;
+    let base = domain
+        .strip_suffix(".domain")
+        .ok_or_else(|| strategy_package(source))?;
     let service = format!("{base}.service");
     let name = &source.java_type;
-    let on = source
-        .on
-        .as_deref()
-        .ok_or_else(|| CompileError::new(format!("strategy `{name}` has no input Java type")))?;
+    let on = source.on.as_deref().ok_or_else(|| {
+        Diagnostic::without_a_fix(
+            "compile-strategy-without-input-type",
+            format!("$.units.{}", source.label),
+            format!("strategy `{name}` has no input Java type"),
+        )
+    })?;
     let (return_type, method, empty) = match source.yields.as_deref() {
         Some(yields) => (
             format!("Optional<{yields}>"),
@@ -464,12 +481,13 @@ fn lower_controller(
     source: &SourceUnit,
     model: &AppModel,
     spring_boot: Option<&str>,
-) -> Result<Vec<Unit>, CompileError> {
+) -> Result<Vec<Unit>, Diagnostic> {
     let endpoint = source.endpoint.as_ref().ok_or_else(|| {
-        CompileError::new(format!(
-            "controller `{}` has no HTTP endpoint",
-            source.java_type
-        ))
+        Diagnostic::without_a_fix(
+            "compile-controller-without-endpoint",
+            format!("$.units.{}", source.label),
+            format!("controller `{}` has no HTTP endpoint", source.java_type),
+        )
     })?;
     let id = source.id.as_str();
     let package = &placed(source, model);
@@ -585,10 +603,9 @@ fn file(
     artifact_id: String,
     ejectable: bool,
     semantic_id: &str,
-) -> Result<Unit, CompileError> {
+) -> Result<Unit, Diagnostic> {
     let package_path = package.replace('.', "/");
-    let path = ProjectPath::parse(format!("{root}/{package_path}/{type_name}.java"))
-        .map_err(CompileError::new)?;
+    let path = crate::refuse::project_path(format!("{root}/{package_path}/{type_name}.java"))?;
     Ok(Unit {
         path,
         file: RenderedFile {

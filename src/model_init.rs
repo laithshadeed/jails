@@ -66,7 +66,12 @@ fn run_as(invocation: Invocation) -> Result<()> {
         &snapshot.model.model,
         &jails_model::Evolution::none(),
     )
-    .map_err(|error| Failure::Told(format!("could not compile the new model: {error}")))?;
+    .map_err(|error| {
+        Failure::diagnosed(
+            error.code,
+            format!("could not compile the new model: {error}"),
+        )
+    })?;
     let bundle = jails_workspace::materialize(
         &snapshot,
         jails_contracts::PlanInput::init_model(),

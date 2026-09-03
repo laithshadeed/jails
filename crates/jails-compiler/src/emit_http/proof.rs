@@ -15,7 +15,7 @@
 //! a container into Surefire.
 
 use super::Binding;
-use crate::CompileError;
+use crate::Diagnostic;
 use crate::emit_companion_test::json_sample;
 use crate::emit_java::RecordComponent;
 use crate::emit_mockmvc::{Dialect, Drive, Status};
@@ -68,7 +68,7 @@ pub(super) struct Scopes<'a> {
 pub(super) fn controller_test(
     model: &AppModel,
     proof: ControllerProof<'_>,
-) -> Result<(BTreeSet<String>, String), CompileError> {
+) -> Result<(BTreeSet<String>, String), Diagnostic> {
     let ControllerProof {
         type_name,
         route,
@@ -287,7 +287,7 @@ fn request_shape(
     components: &[RecordComponent<'_>],
     key_json: Option<&str>,
     binder: Option<crate::emit_java::Binder<'_>>,
-) -> Result<Request, CompileError> {
+) -> Result<Request, Diagnostic> {
     let mut imports = BTreeSet::new();
     let mut missing = None;
     match binding {

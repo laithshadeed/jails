@@ -14,7 +14,7 @@ mod record_validation;
 mod repository;
 mod time_ordered_uuid;
 
-use crate::CompileError;
+use crate::Diagnostic;
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile, RenderedTree};
 use jails_model::{
     AppModel, BuiltinType, Entity, EntityId, EnumConstant, Facet, Field, FieldId, Operation,
@@ -36,7 +36,7 @@ pub(crate) fn emit(
     model: &AppModel,
     output: &mut RenderedTree,
     snapshot: &jails_contracts::WorkspaceSnapshot,
-) -> Result<(), CompileError> {
+) -> Result<(), Diagnostic> {
     let spring_boot = snapshot.project.spring_boot.as_deref();
     let templates = &snapshot.template_overrides;
     let jdbc = crate::emit::jdbc_on_classpath(&snapshot.project);
@@ -44,12 +44,12 @@ pub(crate) fn emit(
     if let Some(unit) = execution_context::lower(model)? {
         output
             .insert(unit.path, unit.file)
-            .map_err(CompileError::new)?;
+            .map_err(crate::refuse::duplicate_emission)?;
     }
     if let Some(unit) = time_ordered_uuid::lower(model)? {
         output
             .insert(unit.path, unit.file)
-            .map_err(CompileError::new)?;
+            .map_err(crate::refuse::duplicate_emission)?;
     }
     for entity in model.entities.values().filter(|entity| entity.active) {
         // The one-file facets, the test-data builder and the enum converter:
@@ -61,7 +61,9 @@ pub(crate) fn emit(
             match facet {
                 Facet::Seed => {
                     for (path, file) in crate::emit_seed::lower(model, entity, templates)? {
-                        output.insert(path, file).map_err(CompileError::new)?;
+                        output
+                            .insert(path, file)
+                            .map_err(crate::refuse::duplicate_emission)?;
                     }
                 }
                 // **The scaffold's HTTP surface, which is three files**: the
@@ -72,7 +74,7 @@ pub(crate) fn emit(
                     for unit in crate::emit_resource_http::lower(model, entity, spring_boot)? {
                         output
                             .insert(unit.path, unit.file)
-                            .map_err(CompileError::new)?;
+                            .map_err(crate::refuse::duplicate_emission)?;
                     }
                 }
                 Facet::Dto => {
@@ -80,7 +82,7 @@ pub(crate) fn emit(
                         let unit = unit?;
                         output
                             .insert(unit.path, unit.file)
-                            .map_err(CompileError::new)?;
+                            .map_err(crate::refuse::duplicate_emission)?;
                     }
                 }
                 // The companion test ships with the type, not as an opt-in:
@@ -90,7 +92,7 @@ pub(crate) fn emit(
                     if let Some(unit) = crate::emit_companion_test::lower(model, entity, *facet)? {
                         output
                             .insert(unit.path, unit.file)
-                            .map_err(CompileError::new)?;
+                            .map_err(crate::refuse::duplicate_emission)?;
                     }
                 }
                 Facet::Factory
@@ -144,7 +146,7 @@ pub(crate) fn emit(
         if let Some(unit) = repository::lower_repository_contract(model, entity, templates)? {
             output
                 .insert(unit.path, unit.file)
-                .map_err(CompileError::new)?;
+                .map_err(crate::refuse::duplicate_emission)?;
         }
     }
     if fake.is_some() || !stored {
@@ -162,7 +164,7 @@ pub(crate) fn emit(
             )?;
             output
                 .insert(unit.path, unit.file)
-                .map_err(CompileError::new)?;
+                .map_err(crate::refuse::duplicate_emission)?;
             // A fake with no test of its own can drift from the adapter it
             // stands in for while every test using it stays green.
             if let Some(unit) =
@@ -170,7 +172,7 @@ pub(crate) fn emit(
             {
                 output
                     .insert(unit.path, unit.file)
-                    .map_err(CompileError::new)?;
+                    .map_err(crate::refuse::duplicate_emission)?;
             }
         }
     }
@@ -189,13 +191,13 @@ pub(crate) fn emit(
             let unit = repository::lower_db_repository(model, owner, entity)?;
             output
                 .insert(unit.path, unit.file)
-                .map_err(CompileError::new)?;
+                .map_err(crate::refuse::duplicate_emission)?;
             // The tier that answers the question the adapter exists for. See
             // `lower_db_repository_it`.
             if let Some(unit) = repository::lower_db_repository_it(model, owner, entity)? {
                 output
                     .insert(unit.path, unit.file)
-                    .map_err(CompileError::new)?;
+                    .map_err(crate::refuse::duplicate_emission)?;
             }
         }
         // The search port's only implementation, and it belongs here rather
@@ -210,7 +212,7 @@ pub(crate) fn emit(
             let unit = repository::lower_search_adapter(model, owner, entity)?;
             output
                 .insert(unit.path, unit.file)
-                .map_err(CompileError::new)?;
+                .map_err(crate::refuse::duplicate_emission)?;
         }
     }
     Ok(())
@@ -237,21 +239,26 @@ fn operation_context(model: &AppModel, entity: &Entity, imports: &mut BTreeSet<S
     }
 }
 
-pub(crate) fn entity<'a>(model: &'a AppModel, id: &EntityId) -> Result<&'a Entity, CompileError> {
-    model
-        .entities
-        .get(id)
-        .ok_or_else(|| CompileError::new(format!("linked operation references missing `{id}`")))
+pub(crate) fn entity<'a>(model: &'a AppModel, id: &EntityId) -> Result<&'a Entity, Diagnostic> {
+    model.entities.get(id).ok_or_else(|| {
+        crate::refuse::unlinked(
+            "$.operations",
+            format!("linked operation references missing `{id}`"),
+        )
+    })
 }
 
-fn fields<'a>(entity: &'a Entity, ids: &[FieldId]) -> Result<Vec<&'a Field>, CompileError> {
+fn fields<'a>(entity: &'a Entity, ids: &[FieldId]) -> Result<Vec<&'a Field>, Diagnostic> {
     ids.iter()
         .map(|id| {
             entity.field(id).ok_or_else(|| {
-                CompileError::new(format!(
-                    "linked operation references missing field `{id}` on `{}`",
-                    entity.id
-                ))
+                crate::refuse::unlinked(
+                    format!("$.entities.{}", entity.id),
+                    format!(
+                        "linked operation references missing field `{id}` on `{}`",
+                        entity.id
+                    ),
+                )
             })
         })
         .collect()
@@ -384,7 +391,7 @@ impl Precondition<'_> {
 pub(crate) fn transition_key<'a>(
     entity: &'a Entity,
     transition: &jails_model::Transition,
-) -> Result<&'a Field, CompileError> {
+) -> Result<&'a Field, Diagnostic> {
     match transition.semantics.select.first() {
         None => primary_key(entity),
         Some(selected) => entity
@@ -392,21 +399,27 @@ pub(crate) fn transition_key<'a>(
             .iter()
             .find(|field| &field.id == selected)
             .ok_or_else(|| {
-                CompileError::new(format!(
-                    "linked entity `{}` does not declare selected field `{selected}`",
-                    entity.id
-                ))
+                crate::refuse::unlinked(
+                    format!("$.entities.{}", entity.id),
+                    format!(
+                        "linked entity `{}` does not declare selected field `{selected}`",
+                        entity.id
+                    ),
+                )
             }),
     }
 }
 
-pub(crate) fn primary_key(entity: &Entity) -> Result<&Field, CompileError> {
+pub(crate) fn primary_key(entity: &Entity) -> Result<&Field, Diagnostic> {
     entity
         .fields
         .iter()
         .find(|field| field.primary_key)
         .ok_or_else(|| {
-            CompileError::new(format!("linked entity `{}` has no primary key", entity.id))
+            crate::refuse::unlinked(
+                format!("$.entities.{}", entity.id),
+                format!("linked entity `{}` has no primary key", entity.id),
+            )
         })
 }
 

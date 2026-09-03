@@ -29,7 +29,7 @@ pub(super) fn lower_fake_repository(
     capability_id: &str,
     entity: &Entity,
     bean: bool,
-) -> Result<Unit, CompileError> {
+) -> Result<Unit, Diagnostic> {
     let primary_key = primary_key(entity)?;
     let package = crate::emit_java::entity_package(model, entity, Package::AdaptersMemory);
     let type_name = format!("InMemory{}Repository", entity.names.java_type);
@@ -79,8 +79,7 @@ pub(super) fn lower_fake_repository(
     let artifact_id = boundary::REPOSITORY_FAKE.owned_by(entity.id.as_str());
     let rendered = JavaUnit::new(&package, &imports, &body).render(&artifact_id);
     let package_path = package.replace('.', "/");
-    let path = ProjectPath::parse(format!("{JAVA_ROOT}/{package_path}/{type_name}.java"))
-        .map_err(CompileError::new)?;
+    let path = crate::refuse::project_path(format!("{JAVA_ROOT}/{package_path}/{type_name}.java"))?;
     Ok(Unit {
         path,
         file: RenderedFile {
@@ -105,7 +104,7 @@ pub(super) fn lower_db_repository(
     model: &AppModel,
     capability_id: &str,
     entity: &Entity,
-) -> Result<Unit, CompileError> {
+) -> Result<Unit, Diagnostic> {
     let primary_key = primary_key(entity)?;
     let package = crate::emit_java::entity_package(model, entity, Package::AdaptersJdbc);
     let type_name = format!("Jdbc{}Repository", entity.names.java_type);
@@ -206,8 +205,7 @@ pub(super) fn lower_db_repository(
     let artifact_id = boundary::REPOSITORY_POSTGRES.stored_by(capability_id, entity.id.as_str());
     let rendered = JavaUnit::new(&package, &imports, &body).render(&artifact_id);
     let package_path = package.replace('.', "/");
-    let path = ProjectPath::parse(format!("{JAVA_ROOT}/{package_path}/{type_name}.java"))
-        .map_err(CompileError::new)?;
+    let path = crate::refuse::project_path(format!("{JAVA_ROOT}/{package_path}/{type_name}.java"))?;
     Ok(Unit {
         path,
         file: RenderedFile {
@@ -244,7 +242,7 @@ pub(super) fn lower_db_repository_it(
     model: &AppModel,
     capability_id: &str,
     entity: &Entity,
-) -> Result<Option<Unit>, CompileError> {
+) -> Result<Option<Unit>, Diagnostic> {
     let package = crate::emit_java::entity_package(model, entity, Package::AdaptersJdbc);
     let type_name = format!("Jdbc{}RepositoryIT", entity.names.java_type);
     let record = &entity.names.java_type;
@@ -291,12 +289,11 @@ pub(super) fn lower_db_repository_it(
     let mut unit = JavaUnit::new(&package, &imports, &body);
     crate::emit_capability::imported_test_container(model, &mut unit);
     let rendered = unit.render(&artifact_id);
-    let path = ProjectPath::parse(format!(
+    let path = crate::refuse::project_path(format!(
         "{}/{}/{type_name}.java",
         crate::emit_companion_test::JAVA_TEST_ROOT,
         package.replace('.', "/")
-    ))
-    .map_err(CompileError::new)?;
+    ))?;
     Ok(Some(Unit {
         path,
         file: RenderedFile {
@@ -336,7 +333,7 @@ pub(super) fn lower_repository_contract(
     model: &AppModel,
     entity: &Entity,
     templates: &jails_contracts::TemplateOverrides,
-) -> Result<Option<Unit>, CompileError> {
+) -> Result<Option<Unit>, Diagnostic> {
     if crate::emit_operation::proof::record_arguments(
         model,
         entity,
@@ -390,7 +387,7 @@ pub(super) fn lower_fake_repository_test(
     capability_id: &str,
     entity: &Entity,
     templates: &jails_contracts::TemplateOverrides,
-) -> Result<Option<Unit>, CompileError> {
+) -> Result<Option<Unit>, Diagnostic> {
     let package = crate::emit_java::entity_package(model, entity, Package::AdaptersMemory);
     let record = &entity.names.java_type;
     let type_name = format!("InMemory{record}RepositoryTest");
@@ -454,13 +451,12 @@ fn test_unit(
     _artifact_id: String,
     rendered: String,
     provenance: Provenance,
-) -> Result<Unit, CompileError> {
-    let path = ProjectPath::parse(format!(
+) -> Result<Unit, Diagnostic> {
+    let path = crate::refuse::project_path(format!(
         "{}/{}/{type_name}.java",
         crate::emit_companion_test::JAVA_TEST_ROOT,
         package.replace('.', "/")
-    ))
-    .map_err(CompileError::new)?;
+    ))?;
     Ok(Unit {
         path,
         file: RenderedFile {
@@ -488,7 +484,7 @@ pub(super) fn lower_search_adapter(
     model: &AppModel,
     capability_id: &str,
     entity: &Entity,
-) -> Result<Unit, CompileError> {
+) -> Result<Unit, Diagnostic> {
     let package = crate::emit_java::entity_package(model, entity, Package::AdaptersJdbc);
     let record = &entity.names.java_type;
     let type_name = format!("Jdbc{record}Search");
@@ -518,8 +514,7 @@ pub(super) fn lower_search_adapter(
     let artifact_id = boundary::SEARCH_POSTGRES.stored_by(capability_id, entity.id.as_str());
     let rendered = JavaUnit::new(&package, &imports, &body).render(&artifact_id);
     let package_path = package.replace('.', "/");
-    let path = ProjectPath::parse(format!("{JAVA_ROOT}/{package_path}/{type_name}.java"))
-        .map_err(CompileError::new)?;
+    let path = crate::refuse::project_path(format!("{JAVA_ROOT}/{package_path}/{type_name}.java"))?;
     Ok(Unit {
         path,
         file: RenderedFile {

@@ -1,6 +1,6 @@
 //! PostgreSQL lowering for validated field constraints and typed defaults.
 
-use crate::CompileError;
+use crate::Diagnostic;
 use jails_model::{Field, Value};
 
 pub(super) enum SqlDefault {
@@ -13,7 +13,7 @@ pub(super) fn initial_column(
     field: &Field,
     name: &str,
     sql_type: &str,
-) -> Result<String, CompileError> {
+) -> Result<String, Diagnostic> {
     let mut column = format!("    {name} {sql_type}");
     match sql_default(field)? {
         Some(SqlDefault::Identity) => column.push_str(" generated always as identity"),
@@ -64,7 +64,7 @@ pub(super) fn numeric_check(field: &Field) -> Option<String> {
     }
 }
 
-pub(super) fn sql_default(field: &Field) -> Result<Option<SqlDefault>, CompileError> {
+pub(super) fn sql_default(field: &Field) -> Result<Option<SqlDefault>, Diagnostic> {
     let Some(default) = &field.semantics.default else {
         return Ok(None);
     };
@@ -79,17 +79,27 @@ pub(super) fn sql_default(field: &Field) -> Result<Option<SqlDefault>, CompileEr
             "now" => SqlDefault::Expression("current_timestamp".to_string()),
             "today" => SqlDefault::Expression("current_date".to_string()),
             other => {
-                return Err(CompileError::new(format!(
-                    "linked field `{}` carries unknown default function `{other}`\n       fix: re-link the source through the closed JDL default registry",
-                    field.label
-                )));
+                return Err(Diagnostic::new(
+                    "compile-default-function-unknown",
+                    field.id.to_string(),
+                    format!(
+                        "linked field `{}` carries unknown default function `{other}`",
+                        field.label
+                    ),
+                    "re-link the source through the closed JDL default registry",
+                ));
             }
         },
         Value::Function { name, .. } => {
-            return Err(CompileError::new(format!(
-                "linked field `{}` carries arguments for zero-argument default `{name}`\n       fix: remove the arguments and re-link the source",
-                field.label
-            )));
+            return Err(Diagnostic::new(
+                "compile-default-function-arguments",
+                field.id.to_string(),
+                format!(
+                    "linked field `{}` carries arguments for zero-argument default `{name}`",
+                    field.label
+                ),
+                "remove the arguments and re-link the source",
+            ));
         }
     };
     Ok(Some(value))

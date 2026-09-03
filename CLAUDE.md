@@ -349,12 +349,26 @@ and the executor; `block_edited`, `missing_tree`, `reader_owned_feature`,
 `lock_undecodable` and their kin do the same for their families.
 `every_diagnostic_code_is_unique_and_kebab_case` fails on a code constructed
 twice, so the second site is a compile-time question rather than a drift.
-`jails-model`'s own 25 doubled codes are counted rather than refused and the
-number may only fall.
+`jails-model`'s own 21 doubled codes are counted rather than refused and the
+number may only fall; sixteen are `JDL####` spelled at two points of one
+parse.
 
-`jails-compiler` has not adopted it: it refuses with `CompileError`, a
-newtype over one `String`, from 216 sites, and `docs/10-language.md` A3.13 is
-that work. Three `Result<_, String>` returns remain in `jails-project`
+**The compiler has no error type of its own.** `jails-compiler` used to refuse
+with `CompileError`, a newtype over one `String`, from 216 sites; it refuses
+with `Diagnostic` from all of them now, under 122 `compile-*` codes.
+`crates/jails-compiler/src/refuse.rs` holds both halves -- `preflight`, which
+is what a model may declare that this compiler cannot yet honour, and the
+family constructors below it: `project_path`/`invalid_path` for the
+thirty-five paths an emitter builds out of a source root and a package,
+`duplicate_emission` for the twenty-eight `RenderedTree` insertions,
+`unlinked` for the twenty-seven ids the linker accepted that resolve to
+nothing, and `broken_link` for the seven of those whose sentence already
+named a repair. **The path is the model path of the declaration** --
+`$.entities.Note.fields.title` -- or the declaration's stable id where the
+emitter holds only that; an emitter that had neither is why
+`sql_type` and `sql_literal` take the entity beside the field.
+
+Three `Result<_, String>` returns remain in `jails-project`
 (`gradle::parse_classpath_report`, two in `template`) and stay: they are not
 this phase, and their refusals are worded by the caller that reports them.
 

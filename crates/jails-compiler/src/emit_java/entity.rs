@@ -45,7 +45,7 @@ impl Node for Entity {
         format!("entity `{}`", self.names.java_type)
     }
 
-    fn key(&self, _: &AppModel, key: Key) -> Result<(&'static str, String), CompileError> {
+    fn key(&self, _: &AppModel, key: Key) -> Result<(&'static str, String), Diagnostic> {
         Ok(match key {
             Key::Record => ("record", self.names.java_type.clone()),
             Key::Variable => ("variable", lower_first(&self.names.java_type)),

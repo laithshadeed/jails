@@ -316,11 +316,13 @@ pub(super) fn widen_enum(
         .map(|constant| constant.java_name.as_str())
         .collect::<Vec<_>>();
     if !removed.is_empty() {
-        return Err(Failure::Told(jails_compiler::enum_narrowing_refusal(
-            &entity.names.java_type,
-            &entity.enum_constants,
-            &removed,
-        )));
+        return Err(jails_project::diagnosed(
+            jails_compiler::enum_narrowing_refusal(
+                &entity.names.java_type,
+                &entity.enum_constants,
+                &removed,
+            ),
+        ));
     }
     if requested.len() <= entity.enum_constants.len() {
         return Ok(None);

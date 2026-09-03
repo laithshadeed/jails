@@ -14,9 +14,9 @@
 //! because a project that loses its last scaffold loses a suite that would
 //! have been checking nothing.
 
-use crate::CompileError;
+use crate::Diagnostic;
 use jails_contracts::{
-    BuildDependency, FileKind, FileMode, ProjectPath, Provenance, RenderedFile, RenderedTree,
+    BuildDependency, FileKind, FileMode, Provenance, RenderedFile, RenderedTree,
 };
 use jails_model::{AppModel, DependencyScope, Facet, Package};
 use std::collections::BTreeSet;
@@ -64,7 +64,7 @@ pub(crate) fn emit(
     model: &AppModel,
     output: &mut RenderedTree,
     snapshot: &jails_contracts::WorkspaceSnapshot,
-) -> Result<(), CompileError> {
+) -> Result<(), Diagnostic> {
     let templates = &snapshot.template_overrides;
     if !applies(model) {
         return Ok(());
@@ -123,10 +123,10 @@ fn insert(
     bytes: Vec<u8>,
     kind: FileKind,
     suffix: &str,
-) -> Result<(), CompileError> {
+) -> Result<(), Diagnostic> {
     output
         .insert(
-            ProjectPath::parse(path).map_err(CompileError::new)?,
+            crate::refuse::project_path(path)?,
             RenderedFile {
                 kind,
                 mode: FileMode::Regular,
@@ -140,5 +140,5 @@ fn insert(
                 },
             },
         )
-        .map_err(CompileError::new)
+        .map_err(crate::refuse::duplicate_emission)
 }

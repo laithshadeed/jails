@@ -16,7 +16,7 @@
 //! sample argument list the proofs construct the payload with -- is a
 //! [`Fragment`] named on the row.
 
-use crate::CompileError;
+use crate::Diagnostic;
 use crate::emit_operation::Key;
 use crate::recipe::{
     BootCondition, Fragment, Import, JavaFile, Naming, Placement, Recipe, Rendered, SourceSet,
@@ -28,7 +28,7 @@ pub(crate) fn emit(
     model: &AppModel,
     output: &mut RenderedTree,
     snapshot: &jails_contracts::WorkspaceSnapshot,
-) -> Result<(), CompileError> {
+) -> Result<(), Diagnostic> {
     if !crate::recipe::declares(model, "kafka") {
         return Ok(());
     }
@@ -170,7 +170,7 @@ fn has_id(model: &AppModel, operation: &Operation) -> bool {
     payload_names(model, operation).is_ok_and(|names| names.iter().any(|name| name == "id"))
 }
 
-fn payload_names(model: &AppModel, operation: &Operation) -> Result<Vec<String>, CompileError> {
+fn payload_names(model: &AppModel, operation: &Operation) -> Result<Vec<String>, Diagnostic> {
     let OperationKind::Event(event) = &operation.kind else {
         unreachable!("only events reach here");
     };
@@ -178,12 +178,12 @@ fn payload_names(model: &AppModel, operation: &Operation) -> Result<Vec<String>,
 }
 
 /// `{{ordering}}`: the Javadoc that says truthfully what the partition key is.
-fn ordering(model: &AppModel, operation: &Operation) -> Result<Rendered, CompileError> {
+fn ordering(model: &AppModel, operation: &Operation) -> Result<Rendered, Diagnostic> {
     Ok(partition_key(model, operation)?.javadoc.into())
 }
 
 /// `{{send}}`: the `kafka.send(..)` call, keyed or not.
-fn send(model: &AppModel, operation: &Operation) -> Result<Rendered, CompileError> {
+fn send(model: &AppModel, operation: &Operation) -> Result<Rendered, Diagnostic> {
     Ok(match partition_key(model, operation)?.expression {
         Some(expression) => format!("kafka.send(topic, {expression}, event)"),
         None => "kafka.send(topic, event)".to_string(),
@@ -197,7 +197,7 @@ fn send(model: &AppModel, operation: &Operation) -> Result<Rendered, CompileErro
 /// names.** The sample is `UUID.fromString(..)`, `Instant.parse(..)` and the
 /// rest, and a test given only the event record's own import compiles
 /// exactly as long as every component happens to be a `String`.
-fn event_args(model: &AppModel, operation: &Operation) -> Result<Rendered, CompileError> {
+fn event_args(model: &AppModel, operation: &Operation) -> Result<Rendered, Diagnostic> {
     let (arguments, _, imports) = crate::emit_component::http_sink::sample(model, operation)?;
     Ok(Rendered {
         text: arguments,
@@ -207,7 +207,7 @@ fn event_args(model: &AppModel, operation: &Operation) -> Result<Rendered, Compi
 
 /// `{{disabled}}`: the annotation a proof carries when jails cannot construct
 /// a project-owned component of the payload, and the import it needs.
-fn disabled(model: &AppModel, operation: &Operation) -> Result<Rendered, CompileError> {
+fn disabled(model: &AppModel, operation: &Operation) -> Result<Rendered, Diagnostic> {
     let (_, disabled, _) = crate::emit_component::http_sink::sample(model, operation)?;
     Ok(match disabled {
         true => Rendered {
@@ -235,7 +235,7 @@ struct PartitionKey {
     javadoc: String,
 }
 
-fn partition_key(model: &AppModel, operation: &Operation) -> Result<PartitionKey, CompileError> {
+fn partition_key(model: &AppModel, operation: &Operation) -> Result<PartitionKey, Diagnostic> {
     let OperationKind::Event(event) = &operation.kind else {
         unreachable!("only events reach here");
     };

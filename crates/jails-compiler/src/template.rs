@@ -6,7 +6,7 @@
 //! no way to replace -- the type is what makes that structural rather than a
 //! rule somebody has to remember.
 
-use crate::CompileError;
+use crate::Diagnostic;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Template {
@@ -20,13 +20,20 @@ impl Template {
     pub fn resolve<'a>(
         self,
         overrides: &'a jails_contracts::TemplateOverrides,
-    ) -> Result<&'a str, CompileError>
+    ) -> Result<&'a str, Diagnostic>
     where
         Self: 'a,
     {
         overrides
             .resolve(self.name, self.built_in)
-            .map_err(CompileError::new)
+            .map_err(|(message, fix)| {
+                Diagnostic::new(
+                    "compile-template-override-mismatch",
+                    self.name,
+                    message,
+                    fix,
+                )
+            })
     }
 }
 

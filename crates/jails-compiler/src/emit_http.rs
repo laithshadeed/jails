@@ -2,7 +2,7 @@
 
 mod proof;
 
-use crate::CompileError;
+use crate::Diagnostic;
 use crate::emit_companion_test::JAVA_TEST_ROOT;
 use crate::emit_java::{
     JAVA_ROOT, JavaUnit, domain_import, entity, java_type, primary_key, with_suffix,
@@ -32,7 +32,7 @@ pub(crate) fn emit(
     model: &AppModel,
     output: &mut RenderedTree,
     snapshot: &jails_contracts::WorkspaceSnapshot,
-) -> Result<(), CompileError> {
+) -> Result<(), Diagnostic> {
     let spring_boot = snapshot.project.spring_boot.as_deref();
     let Some(capability) = model
         .capabilities
@@ -46,7 +46,9 @@ pub(crate) fn emit(
             continue;
         };
         for (path, file) in files {
-            output.insert(path, file).map_err(CompileError::new)?;
+            output
+                .insert(path, file)
+                .map_err(crate::refuse::duplicate_emission)?;
         }
     }
     Ok(())
@@ -92,7 +94,7 @@ fn lower(
     capability_id: &str,
     operation: &Operation,
     spring_boot: Option<&str>,
-) -> Result<Option<Vec<(ProjectPath, RenderedFile)>>, CompileError> {
+) -> Result<Option<Vec<(ProjectPath, RenderedFile)>>, Diagnostic> {
     // The typed route the linker resolved, not the flat `.jails/model.toml`
     // rendering beside it: that one is `None` whenever the convention supplied
     // the path, which is every operation whose author did not pin one.
@@ -209,24 +211,35 @@ fn lower(
                         .iter()
                         .find(|field| &field.id == only)
                         .ok_or_else(|| {
-                            CompileError::new(format!(
+                            Diagnostic::without_a_fix(
+"compile-transition-selects-undeclared-field",
+format!("$.operations.{}", operation.label),
+format!(
                                 "transition operation `{}` selects field `{only}`, which entity `{}` does not declare",
                                 operation.label, entity.id
-                            ))
+                            ),
+)
                         })?,
                     _ => {
-                        return Err(CompileError::new(format!(
-                            "transition operation `{}` selects more than one field, which no single path variable can carry\n       fix: select one component, or remove the `api` capability",
-                            operation.label
-                        )));
+                        return Err(Diagnostic::new(
+"compile-transition-selects-many-fields",
+format!("$.operations.{}", operation.label),
+format!("transition operation `{}` selects more than one field, which no single path variable can carry", operation.label),
+"select one component, or remove the `api` capability",
+));
                     }
                 };
                 let member = key.names.java_member.clone();
                 if !path.contains(&format!("{{{member}}}")) {
-                    return Err(CompileError::new(format!(
-                        "transition operation `{}` needs `{{{member}}}` in its API route\n       fix: set `route = \"PATCH /path/{{{member}}}\"` or remove the `api` capability",
-                        operation.label
-                    )));
+                    return Err(Diagnostic::new(
+                        "compile-transition-route-without-variable",
+                        format!("$.operations.{}", operation.label),
+                        format!(
+                            "transition operation `{}` needs `{{{member}}}` in its API route",
+                            operation.label
+                        ),
+                        "set `route = \"PATCH /path/{{{member}}}\"` or remove the `api` capability",
+                    ));
                 }
                 path_member = member.clone();
                 let mut imports = BTreeSet::from([
@@ -396,8 +409,7 @@ fn lower(
     let artifact_id = format!("art_{}_http", operation.id.as_str());
     let rendered = JavaUnit::new(&package, &imports, &body).render(&artifact_id);
     let package_path = package.replace('.', "/");
-    let path = ProjectPath::parse(format!("{JAVA_ROOT}/{package_path}/{type_name}.java"))
-        .map_err(CompileError::new)?;
+    let path = crate::refuse::project_path(format!("{JAVA_ROOT}/{package_path}/{type_name}.java"))?;
     let semantic_ids =
         BTreeSet::from([capability_id.to_string(), operation.id.as_str().to_string()]);
     let controller = (
@@ -463,10 +475,9 @@ fn lower(
         },
     )?;
     let test_artifact = format!("art_{}_http_test", operation.id.as_str());
-    let test_path = ProjectPath::parse(format!(
+    let test_path = crate::refuse::project_path(format!(
         "{JAVA_TEST_ROOT}/{package_path}/{type_name}Test.java"
-    ))
-    .map_err(CompileError::new)?;
+    ))?;
     let test = (
         test_path,
         RenderedFile {

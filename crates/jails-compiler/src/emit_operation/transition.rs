@@ -21,7 +21,7 @@ use super::{
     assignment_sql_value, context_parameter, context_value, java_string, operation_file,
     resolve_fields, scopes, stored_entity,
 };
-use crate::CompileError;
+use crate::Diagnostic;
 use crate::emit_java::{domain_import, java_type, primary_key, with_suffix};
 use jails_contracts::{ProjectPath, RenderedFile};
 use jails_model::{AppModel, Operation, Package, Transition};
@@ -32,7 +32,7 @@ pub(super) fn lower(
     capability_id: &str,
     operation: &Operation,
     transition: &Transition,
-) -> Result<(ProjectPath, RenderedFile), CompileError> {
+) -> Result<(ProjectPath, RenderedFile), Diagnostic> {
     let target = stored_entity(model, operation, &transition.on, "transition")?;
     let inputs = resolve_fields(operation, target, &transition.fields, "input")?;
     let primary_key = primary_key(target)?;
@@ -47,34 +47,52 @@ pub(super) fn lower(
                 .field(&assignment.field)
                 .map(|field| (field, &assignment.value))
                 .ok_or_else(|| {
-                    CompileError::new(format!(
-                        "linked transition `{}` references missing assignment field `{}`",
-                        operation.label, assignment.field
-                    ))
+                    crate::refuse::unlinked(
+                        format!("$.operations.{}", operation.label),
+                        format!(
+                            "linked transition `{}` references missing assignment field `{}`",
+                            operation.label, assignment.field
+                        ),
+                    )
                 })
         })
         .collect::<Result<Vec<_>, _>>()?;
     if sets.is_empty() && constant_sets.is_empty() {
-        return Err(CompileError::new(format!(
-            "canonical transition `{}` changes no fields\n       fix: declare at least one field in `update` or a constant `set` statement",
-            operation.label
-        )));
+        return Err(Diagnostic::new(
+            "compile-transition-changes-nothing",
+            format!("$.operations.{}", operation.label),
+            format!(
+                "canonical transition `{}` changes no fields",
+                operation.label
+            ),
+            "declare at least one field in `update` or a constant `set` statement",
+        ));
     }
     if let Some((field, _)) = constant_sets
         .iter()
         .find(|(field, _)| sets.iter().any(|set| set.id == field.id))
     {
-        return Err(CompileError::new(format!(
-            "canonical transition `{}` supplies field `{}` from both input and a constant assignment\n       fix: remove the field from `update` or remove its `set` statement",
-            operation.label, field.label
-        )));
+        return Err(Diagnostic::new(
+            "compile-transition-field-supplied-twice",
+            format!("$.operations.{}", operation.label),
+            format!(
+                "canonical transition `{}` supplies field `{}` from both input and a constant assignment",
+                operation.label, field.label
+            ),
+            "remove the field from `update` or remove its `set` statement",
+        ));
     }
     for field in &sets {
         if !inputs.iter().any(|input| input.id == field.id) {
-            return Err(CompileError::new(format!(
-                "canonical transition `{}` sets `{}` without carrying it as input\n       fix: add `{}` to `fields` or remove it from `sets`",
-                operation.label, field.label, field.label
-            )));
+            return Err(Diagnostic::new(
+                "compile-transition-sets-uncarried-field",
+                format!("$.operations.{}", operation.label),
+                format!(
+                    "canonical transition `{}` sets `{}` without carrying it as input",
+                    operation.label, field.label
+                ),
+                format!("add `{}` to `fields` or remove it from `sets`", field.label),
+            ));
         }
     }
     if sets.iter().any(|field| field.id == primary_key.id)
@@ -82,10 +100,15 @@ pub(super) fn lower(
             .iter()
             .any(|(field, _)| field.id == primary_key.id)
     {
-        return Err(CompileError::new(format!(
-            "canonical transition `{}` attempts to rewrite primary key `{}`\n       fix: remove the primary key from `sets`",
-            operation.label, primary_key.label
-        )));
+        return Err(Diagnostic::new(
+            "compile-transition-rewrites-primary-key",
+            format!("$.operations.{}", operation.label),
+            format!(
+                "canonical transition `{}` attempts to rewrite primary key `{}`",
+                operation.label, primary_key.label
+            ),
+            "remove the primary key from `sets`",
+        ));
     }
     // JDL v1 §12.4: parameters in `select` identify the row, parameters in
     // `update` provide new values, and every remaining entity parameter is an
@@ -368,17 +391,22 @@ fn selector<'a>(
     target: &'a jails_model::Entity,
     transition: &jails_model::Transition,
     primary_key: &'a jails_model::Field,
-) -> Result<Vec<&'a jails_model::Field>, CompileError> {
+) -> Result<Vec<&'a jails_model::Field>, Diagnostic> {
     if transition.semantics.select.is_empty() {
         return Ok(vec![primary_key]);
     }
     let selected = resolve_fields(operation, target, &transition.semantics.select, "select")?;
     if selected.len() != 1 {
-        return Err(CompileError::new(format!(
-            "canonical transition `{}` selects rows by {} fields, and the update statement binds one\n       fix: select a single field, or eject this adapter and write the statement by hand",
-            operation.label,
-            selected.len()
-        )));
+        return Err(Diagnostic::new(
+            "compile-transition-selector-not-single",
+            format!("$.operations.{}", operation.label),
+            format!(
+                "canonical transition `{}` selects rows by {} fields, and the update statement binds one",
+                operation.label,
+                selected.len()
+            ),
+            "select a single field, or eject this adapter and write the statement by hand",
+        ));
     }
     Ok(selected)
 }
@@ -397,7 +425,7 @@ fn updates<'a>(
     transition: &jails_model::Transition,
     inputs: &[&'a jails_model::Field],
     selector: &[&jails_model::Field],
-) -> Result<Vec<&'a jails_model::Field>, CompileError> {
+) -> Result<Vec<&'a jails_model::Field>, Diagnostic> {
     if !transition.semantics.update.is_empty() {
         return resolve_fields(operation, target, &transition.semantics.update, "update");
     }

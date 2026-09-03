@@ -1657,19 +1657,23 @@ fn diagnostic_owner(literal: &str) -> Option<(&'static str, CodeOwner)> {
 /// chose.
 ///
 /// **The parser and the linker are counted rather than refused, and the count
-/// is a ratchet.** Twenty-five of `jails-model`'s codes are raised from two
+/// is a ratchet.** Twenty-one of `jails-model`'s codes are raised from two
 /// places -- a rule checked once while parsing an operation and again while
 /// linking it, a constraint checked on the entity and on the model. Each pair
 /// really is one refusal, so each is a shared constructor waiting to be
 /// written; that is `jails-model`'s own work and predates this contract, so
 /// this holds the number where it is instead of pretending the property is
-/// clean. `compile-*` and `workspace-*` adopted the contract with the
-/// property, and get no allowance at all.
+/// clean. Sixteen of the twenty-one are `JDL####`, spelled at two or more
+/// points of one parse; the four that fell were the linker pairs whose two
+/// sites sit in one function, and each is a constructor now
+/// (`refuse_arguments`, `refuse_target`, `refuse_field_role`,
+/// `refuse_version_parameter`). `compile-*` and `workspace-*` adopted the
+/// contract with the property, and get no allowance at all.
 #[test]
 fn every_diagnostic_code_is_unique_and_kebab_case() {
     /// Codes in the parser's and the linker's namespaces raised from more
     /// than one site. Lower it when one is collapsed; never raise it.
-    const REPEATED_MODEL_CODES: usize = 25;
+    const REPEATED_MODEL_CODES: usize = 21;
 
     let mut sites: std::collections::BTreeMap<String, Vec<String>> =
         std::collections::BTreeMap::new();

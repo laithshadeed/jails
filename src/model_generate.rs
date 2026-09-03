@@ -156,9 +156,10 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
     let input = PlanInput::evolution(&evolution).map_err(Failure::Told)?;
     let mut draft =
         jails_compiler::Compiler::compile(&snapshot, &next_model, &evolution).map_err(|error| {
-            Failure::Told(format!(
-                "could not compile model change: {error}\n       nothing was written"
-            ))
+            Failure::diagnosed(
+                error.code,
+                format!("could not compile model change: {error}\n       nothing was written"),
+            )
         })?;
     // After the compile, because it is not derived from the model: see
     // `PreparedMutation::authored_migration`. It is still the plan's, not a

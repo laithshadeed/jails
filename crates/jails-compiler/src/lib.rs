@@ -36,7 +36,6 @@ use jails_contracts::{
 };
 use jails_model::{DependencyScope, Evolution, SettingTarget};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::{Display, Formatter};
 
 pub const COMPILER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -57,26 +56,14 @@ pub fn external_project_paths(model: &jails_model::AppModel) -> Vec<ProjectPath>
     paths
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CompileError {
-    message: String,
-}
-
-impl CompileError {
-    fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-        }
-    }
-}
-
-impl Display for CompileError {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for CompileError {}
+/// How this pass refuses: the one diagnostic contract, under `compile-*`.
+///
+/// Re-exported rather than wrapped. What stood here was a `CompileError`
+/// newtype over one `String`, which is the shape [`Diagnostic`] exists to
+/// replace: it carried no code, so `--output json` called every refusal the
+/// compiler makes `invalid-request` alike, and a caller could not tell a
+/// dialect with no backend from a reader's template that lost a placeholder.
+pub use jails_model::Diagnostic;
 
 mod emit;
 mod plan_effects;
@@ -96,7 +83,7 @@ impl Compiler {
         snapshot: &WorkspaceSnapshot,
         next: &jails_model::AppModel,
         evolution: &Evolution,
-    ) -> Result<PlanDraft, CompileError> {
+    ) -> Result<PlanDraft, Diagnostic> {
         let mut next_model = next.clone();
         // Why the layout arrives here rather than beside the model at each emit
         // site: `ProjectIntent::layout`, which has the whole argument.
@@ -185,7 +172,8 @@ impl Compiler {
             return Err(refuse_ejections(
                 "ejection boundary",
                 "form",
-                "managed ABI and cannot be ejected\n       fix: eject an adapter implementation boundary; records and ports stay managed",
+                "managed ABI and cannot be ejected",
+                "eject an adapter implementation boundary; records and ports stay managed",
                 &non_ejectable,
             ));
         }
@@ -198,7 +186,8 @@ impl Compiler {
             return Err(refuse_ejections(
                 "ejection target",
                 "emit",
-                "no ejectable Java implementation\n       fix: eject an implementation boundary id; records and ports remain managed ABI",
+                "no ejectable Java implementation",
+                "eject an implementation boundary id; records and ports remain managed ABI",
                 &unmatched,
             ));
         }
@@ -338,8 +327,11 @@ impl Compiler {
                 Vec::new()
             }
             BuildSystem::Unknown => {
-                return Err(CompileError::new(
-                    "canonical dependencies and build features require one captured Maven or Gradle build\n       fix: restore pom.xml, build.gradle, or build.gradle.kts, then re-plan",
+                return Err(Diagnostic::new(
+                    "compile-build-file-missing",
+                    "$.project.build",
+                    "canonical dependencies and build features require one captured Maven or Gradle build",
+                    "restore pom.xml, build.gradle, or build.gradle.kts, then re-plan",
                 ));
             }
         };
@@ -369,7 +361,7 @@ impl Compiler {
                 continue;
             }
             reader_document_intents.push(DocumentIntent::ReconcileProperties {
-                path: ProjectPath::parse(path).map_err(CompileError::new)?,
+                path: crate::refuse::project_path(path)?,
                 previous,
                 desired,
             });
@@ -532,23 +524,32 @@ fn spring_starter(name: &str, scope: DependencyScope) -> BuildDependency {
 /// carried its own pair of inverted pluralisation ternaries -- the shape where
 /// a copy gets the noun's `s` and the verb's `s` the same way round and reads
 /// correctly for exactly one of the two lengths.
+///
+/// One constructor, so one code: `compile-ejection-refused` is the family,
+/// and which of the two it was is the sentence's job.
 fn refuse_ejections<T: std::fmt::Display>(
     noun: &str,
     verb: &str,
     tail: &str,
+    fix: &str,
     targets: impl IntoIterator<Item = T>,
-) -> CompileError {
+) -> Diagnostic {
     let named = targets
         .into_iter()
         .map(|target| format!("`{target}`"))
         .collect::<Vec<_>>();
     let one = named.len() == 1;
-    CompileError::new(format!(
-        "{noun}{} {} {verb}{} {tail}",
-        if one { "" } else { "s" },
-        named.join(", "),
-        if one { "s" } else { "" },
-    ))
+    Diagnostic::new(
+        "compile-ejection-refused",
+        "$.ejections",
+        format!(
+            "{noun}{} {} {verb}{} {tail}",
+            if one { "" } else { "s" },
+            named.join(", "),
+            if one { "s" } else { "" },
+        ),
+        fix,
+    )
 }
 
 fn property_entries(
@@ -556,7 +557,7 @@ fn property_entries(
     target: SettingTarget,
     spring_boot: Option<&str>,
     artifact_id: Option<&str>,
-) -> Result<Vec<PropertyEntry>, CompileError> {
+) -> Result<Vec<PropertyEntry>, Diagnostic> {
     let mut entries = model
         .settings
         .values()
@@ -570,10 +571,18 @@ fn property_entries(
         if let Some(reader_value) = entries.get(&property.key)
             && reader_value != &property.value
         {
-            return Err(CompileError::new(format!(
-                "canonical capability property `{}` conflicts with model value `{reader_value}`\n       fix: remove the duplicate setting or give it the capability-required value `{}`",
-                property.key, property.value
-            )));
+            return Err(Diagnostic::new(
+                "compile-capability-property-conflict",
+                format!("$.settings.{}", property.key),
+                format!(
+                    "canonical capability property `{}` conflicts with model value `{reader_value}`",
+                    property.key
+                ),
+                format!(
+                    "remove the duplicate setting or give it the capability-required value `{}`",
+                    property.value
+                ),
+            ));
         }
         entries.insert(property.key, property.value);
     }
@@ -587,7 +596,7 @@ fn property_entries(
 mod tests {
     /// Compile the snapshot's own model with no evolution: the shape every
     /// test that is not about schema evolution wants.
-    fn compile_current(snapshot: &WorkspaceSnapshot) -> Result<PlanDraft, CompileError> {
+    fn compile_current(snapshot: &WorkspaceSnapshot) -> Result<PlanDraft, Diagnostic> {
         Compiler::compile(snapshot, &snapshot.model.model, &Evolution::none())
     }
 

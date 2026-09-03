@@ -1,7 +1,7 @@
 //! Whole project files emitted through the generic reader-file merge protocol.
 
 use super::reader_facet;
-use crate::CompileError;
+use crate::Diagnostic;
 use jails_contracts::{FileMode, ProjectPath, RenderedTree};
 use jails_model::{AppModel, Capability, EndpointMethod, OperationKind, UnitKind};
 
@@ -127,7 +127,7 @@ pub(super) fn emit(
     output: &mut RenderedTree,
     project: &jails_contracts::ProjectFacts,
     templates: &jails_contracts::TemplateOverrides,
-) -> Result<(), CompileError> {
+) -> Result<(), Diagnostic> {
     match capability.kind.as_str() {
         "loadtest" => lower_loadtest(model, capability, output, templates),
         "ci" => lower_ci(model, capability, output, project.maven_wrapper, templates),
@@ -159,13 +159,12 @@ pub(super) fn emit(
 fn lower_migration_directory(
     capability: &Capability,
     output: &mut RenderedTree,
-) -> Result<(), CompileError> {
+) -> Result<(), Diagnostic> {
     reader_facet::emit_managed_file(
         output,
         capability,
         "migration-directory",
-        ProjectPath::parse("src/main/resources/db/migration/.gitkeep")
-            .map_err(CompileError::new)?,
+        crate::refuse::project_path("src/main/resources/db/migration/.gitkeep")?,
         Vec::new(),
         FileMode::Regular,
     )
@@ -187,7 +186,7 @@ fn lower_ci(
     output: &mut RenderedTree,
     maven_wrapper: bool,
     templates: &jails_contracts::TemplateOverrides,
-) -> Result<(), CompileError> {
+) -> Result<(), Diagnostic> {
     let workflow = crate::template!("add/ci_workflow.yml")
         .resolve(templates)?
         .replace("{{CHECKOUT_SHA}}", CHECKOUT_SHA)
@@ -198,7 +197,7 @@ fn lower_ci(
         output,
         capability,
         "workflow",
-        ProjectPath::parse(CI_WORKFLOW_PATH).map_err(CompileError::new)?,
+        crate::refuse::project_path(CI_WORKFLOW_PATH)?,
         workflow.into_bytes(),
         FileMode::Regular,
     )
@@ -216,7 +215,7 @@ fn lower_docker(
     output: &mut RenderedTree,
     maven_wrapper: bool,
     templates: &jails_contracts::TemplateOverrides,
-) -> Result<(), CompileError> {
+) -> Result<(), Diagnostic> {
     let release = model.project.java_release.to_string();
     let build = if maven_wrapper {
         crate::template!("add/dockerfile_build_wrapper")
@@ -254,7 +253,7 @@ fn lower_docker(
             output,
             capability,
             suffix,
-            ProjectPath::parse(path).map_err(CompileError::new)?,
+            crate::refuse::project_path(path)?,
             body.into_bytes(),
             FileMode::Regular,
         )?;
@@ -270,12 +269,12 @@ fn lower_format(
     capability: &Capability,
     output: &mut RenderedTree,
     templates: &jails_contracts::TemplateOverrides,
-) -> Result<(), CompileError> {
+) -> Result<(), Diagnostic> {
     reader_facet::emit_managed_file(
         output,
         capability,
         "editorconfig",
-        ProjectPath::parse(EDITORCONFIG_PATH).map_err(CompileError::new)?,
+        crate::refuse::project_path(EDITORCONFIG_PATH)?,
         crate::template!("add/editorconfig")
             .resolve(templates)?
             .as_bytes()
@@ -299,16 +298,21 @@ fn lower_k8s(
     capability: &Capability,
     output: &mut RenderedTree,
     templates: &jails_contracts::TemplateOverrides,
-) -> Result<(), CompileError> {
+) -> Result<(), Diagnostic> {
     for (kind, fix) in [
         ("actuator", "jails add actuator"),
         ("observability", "jails add observability"),
         ("docker", "jails add docker"),
     ] {
         if !has(model, kind) {
-            return Err(CompileError::new(format!(
-                "k8s probes, burn-rate alerts and the image it deploys need the `{kind}` capability.\n       fix: run `{fix}` first."
-            )));
+            return Err(Diagnostic::new(
+                "compile-k8s-needs-capability",
+                format!("$.capabilities.{}", capability.kind),
+                format!(
+                    "k8s probes, burn-rate alerts and the image it deploys need the `{kind}` capability."
+                ),
+                format!("run `{fix}` first."),
+            ));
         }
     }
     let name = helm_name(&model.project.name);
@@ -317,7 +321,7 @@ fn lower_k8s(
             output,
             capability,
             suffix,
-            ProjectPath::parse(path).map_err(CompileError::new)?,
+            crate::refuse::project_path(path)?,
             template
                 .resolve(templates)?
                 .replace("{{NAME}}", &name)
@@ -354,7 +358,7 @@ fn lower_loadtest(
     capability: &Capability,
     output: &mut RenderedTree,
     templates: &jails_contracts::TemplateOverrides,
-) -> Result<(), CompileError> {
+) -> Result<(), Diagnostic> {
     let routes = routes(model);
     if routes.is_empty() {
         // **Phrased as the state, not as the command**, because the compiler
@@ -363,8 +367,11 @@ fn lower_loadtest(
         // installed. Naming only the first would send the reader in the second
         // case to run a command they have run -- and it is the same refusal
         // every other reference the model protects gives.
-        return Err(CompileError::new(
-            "removing the last route would leave the `loadtest` capability pointing at nothing.\n       fix: keep a controller or routed operation, or run `jails remove loadtest`",
+        return Err(Diagnostic::new(
+            "compile-loadtest-without-route",
+            format!("$.capabilities.{}", capability.kind),
+            "removing the last route would leave the `loadtest` capability pointing at nothing.",
+            "keep a controller or routed operation, or run `jails remove loadtest`",
         ));
     }
     for (suffix, path, template) in LOADTEST_PATHS {
@@ -372,7 +379,7 @@ fn lower_loadtest(
             output,
             capability,
             suffix,
-            ProjectPath::parse(*path).map_err(CompileError::new)?,
+            crate::refuse::project_path(*path)?,
             template.resolve(templates)?.as_bytes().to_vec(),
             FileMode::Regular,
         )?;

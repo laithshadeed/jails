@@ -9,7 +9,7 @@
 //! were prose, and the reader then cannot tell why a search for "active"
 //! returns everything.
 
-use super::{AppModel, BTreeSet, CompileError};
+use super::{AppModel, BTreeSet, Diagnostic};
 use jails_model::{ProjectionKind, StableId as _};
 
 /// The text search configuration, named rather than left to
@@ -38,7 +38,7 @@ pub(super) fn derive_into(
     statements: &mut Vec<String>,
     semantic_ids: &mut BTreeSet<String>,
     descriptions: &mut Vec<String>,
-) -> Result<(), CompileError> {
+) -> Result<(), Diagnostic> {
     for projection in next.projections.values() {
         let ProjectionKind::Search { fields } = &projection.kind else {
             continue;
@@ -47,8 +47,9 @@ pub(super) fn derive_into(
             continue;
         }
         let entity = next.entities.get(&projection.entity).ok_or_else(|| {
-            CompileError::new(
-                "a search projection names a missing entity\n       fix: repair the linked model before compiling",
+            crate::refuse::broken_link(
+                "$.projections",
+                "a search projection names a missing entity",
             )
         })?;
         let mut columns = Vec::new();
@@ -58,18 +59,23 @@ pub(super) fn derive_into(
                 .iter()
                 .find(|candidate| candidate.id == *field)
                 .ok_or_else(|| {
-                    CompileError::new(format!(
-                        "search on `{}` indexes missing field `{field}`\n       fix: repair the linked model before compiling",
-                        entity.label
-                    ))
+                    crate::refuse::broken_link(
+                        format!("$.entities.{}", entity.label),
+                        format!(
+                            "search on `{}` indexes missing field `{field}`",
+                            entity.label
+                        ),
+                    )
                 })?;
             columns.push(column.names.sql_column.clone());
         }
         if columns.is_empty() {
-            return Err(CompileError::new(format!(
-                "search on `{}` names no components to index\n       fix: list them, as `use search(fields: [title, body])` -- indexing every text column would index ids and status codes as prose",
-                entity.label
-            )));
+            return Err(Diagnostic::new(
+                "compile-search-without-components",
+                format!("$.entities.{}", entity.label),
+                format!("search on `{}` names no components to index", entity.label),
+                "list them, as `use search(fields: [title, body])` -- indexing every text column would index ids and status codes as prose",
+            ));
         }
         let table = &entity.names.sql_table;
         // `coalesce(x, '')` around every column is not defensive noise: `||`
@@ -108,8 +114,11 @@ pub(super) fn derive_into(
         }
         // The policy indexes and relations already have: dropping a column is
         // a forward migration somebody has to mean.
-        return Err(CompileError::new(
-            "an accepted search column was removed without a retirement policy\n       fix: keep the search projection, or drop the column and index in a migration you write",
+        return Err(Diagnostic::new(
+            "compile-search-column-removed-without-policy",
+            "$.projections",
+            "an accepted search column was removed without a retirement policy",
+            "keep the search projection, or drop the column and index in a migration you write",
         ));
     }
     Ok(())

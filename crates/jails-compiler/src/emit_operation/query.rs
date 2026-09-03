@@ -14,7 +14,7 @@
 //! from text, so a column name can never reach SQL as an ordering clause.
 
 use super::{QueryFilter, context_parameter, context_value, java_string, operation_file, scopes};
-use crate::CompileError;
+use crate::Diagnostic;
 use crate::emit_java::{domain_import, java_type, with_suffix};
 use jails_contracts::{ProjectPath, RenderedFile};
 use jails_model::{AppModel, Entity, Field, Join, Operation, Package, SortDirection};
@@ -48,7 +48,7 @@ pub(super) fn lower(
     operation: &Operation,
     target: &Entity,
     shape: Shape<'_>,
-) -> Result<(ProjectPath, RenderedFile), CompileError> {
+) -> Result<(ProjectPath, RenderedFile), Diagnostic> {
     let Shape {
         filters,
         ordering,
@@ -56,10 +56,12 @@ pub(super) fn lower(
         limit,
     } = shape;
     if limit == 0 {
-        return Err(CompileError::new(format!(
-            "canonical query `{}` has a zero row limit\n       fix: set a positive limit or omit it for the bounded default of {DEFAULT_LIMIT}",
-            operation.label
-        )));
+        return Err(Diagnostic::new(
+            "compile-query-zero-limit",
+            format!("$.operations.{}", operation.label),
+            format!("canonical query `{}` has a zero row limit", operation.label),
+            format!("set a positive limit or omit it for the bounded default of {DEFAULT_LIMIT}"),
+        ));
     }
     let type_name = format!("Jdbc{}", with_suffix(&operation.names.java_type, "Query"));
     let port_type = with_suffix(&operation.names.java_type, "Query");
@@ -102,26 +104,35 @@ pub(super) fn lower(
         .iter()
         .map(|join| {
             let remote = model.entities.get(&join.entity).ok_or_else(|| {
-                CompileError::new(format!(
-                    "linked query `{}` joins missing entity `{}`",
-                    operation.label, join.entity
-                ))
+                crate::refuse::unlinked(
+                    format!("$.operations.{}", operation.label),
+                    format!(
+                        "linked query `{}` joins missing entity `{}`",
+                        operation.label, join.entity
+                    ),
+                )
             })?;
             let on = join
                 .mappings
                 .iter()
                 .map(|mapping| {
                     let local = target.field(&mapping.local).ok_or_else(|| {
-                        CompileError::new(format!(
-                            "linked query `{}` joins on missing local field `{}`",
-                            operation.label, mapping.local
-                        ))
+                        crate::refuse::unlinked(
+                            format!("$.operations.{}", operation.label),
+                            format!(
+                                "linked query `{}` joins on missing local field `{}`",
+                                operation.label, mapping.local
+                            ),
+                        )
                     })?;
                     let remote_field = remote.field(&mapping.remote).ok_or_else(|| {
-                        CompileError::new(format!(
-                            "linked query `{}` joins on missing remote field `{}`",
-                            operation.label, mapping.remote
-                        ))
+                        crate::refuse::unlinked(
+                            format!("$.operations.{}", operation.label),
+                            format!(
+                                "linked query `{}` joins on missing remote field `{}`",
+                                operation.label, mapping.remote
+                            ),
+                        )
                     })?;
                     Ok(format!(
                         "{}.{} = \"{}\".{}",
@@ -131,14 +142,14 @@ pub(super) fn lower(
                         remote_field.names.sql_column
                     ))
                 })
-                .collect::<Result<Vec<_>, CompileError>>()?
+                .collect::<Result<Vec<_>, Diagnostic>>()?
                 .join(" and ");
             Ok(format!(
                 " join {} \"{}\" on {on}",
                 remote.names.sql_table, join.alias
             ))
         })
-        .collect::<Result<Vec<_>, CompileError>>()?
+        .collect::<Result<Vec<_>, Diagnostic>>()?
         .join("");
     let predicates = filters
         .iter()

@@ -7,7 +7,7 @@
 //! recipe shares; what is capability-specific -- resources, compose services
 //! and the reader-owned project files -- is rendered beside the rows here.
 
-use crate::CompileError;
+use crate::Diagnostic;
 use crate::emit_java::JavaUnit;
 use crate::recipe::{
     BootCondition, ComposeService, DependencySpec, Fragment, Import, JavaFile, MovedImport, Naming,
@@ -91,7 +91,7 @@ impl Node for Capability {
         format!("capability `{}`", self.kind)
     }
 
-    fn key(&self, _: &AppModel, key: NoKey) -> Result<(&'static str, String), CompileError> {
+    fn key(&self, _: &AppModel, key: NoKey) -> Result<(&'static str, String), Diagnostic> {
         match key {}
     }
 
@@ -193,7 +193,7 @@ pub(crate) fn emit(
     model: &AppModel,
     output: &mut RenderedTree,
     snapshot: &jails_contracts::WorkspaceSnapshot,
-) -> Result<(), CompileError> {
+) -> Result<(), Diagnostic> {
     let compose_path = crate::emit::compose_path(snapshot)?;
     for capability in model.capabilities.values() {
         if let Some(pack) = pack(&capability.kind) {
@@ -260,13 +260,12 @@ fn emit_resource(
     output: &mut RenderedTree,
     capability: &Capability,
     resource: &ResourceFile,
-) -> Result<(), CompileError> {
+) -> Result<(), Diagnostic> {
     let root = match resource.source_set {
         SourceSet::Main => MAIN_RESOURCE_ROOT,
         SourceSet::Test | SourceSet::IntegrationTest => TEST_RESOURCE_ROOT,
     };
-    let path =
-        ProjectPath::parse(format!("{root}/{}", resource.path)).map_err(CompileError::new)?;
+    let path = crate::refuse::project_path(format!("{root}/{}", resource.path))?;
     output
         .insert(
             path,
@@ -281,7 +280,7 @@ fn emit_resource(
                 ),
             },
         )
-        .map_err(CompileError::new)
+        .map_err(crate::refuse::duplicate_emission)
 }
 
 /// Splice `@Import(TestcontainersConfig.class)` into a generated test.
