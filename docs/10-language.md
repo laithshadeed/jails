@@ -85,14 +85,23 @@ registry the linker and the emitters both read.
 
 ## Open items
 
-**P9.3 §4.2 -- slices.** `rename resource` accepts a `<slice>.<name>`
-selector and nothing declares a slice. A slice is a declaration, not a CLI
-selector: §4.2 says package layout, ports, migrations and route prefixes
-derive from it, and a thing that derives names has to be in the model so
-`AppModel.derived` stays a function of the model. The implicit slice is
-derived, never written, so a project with no slices keeps working unchanged
-and `model fmt --check` passes on every existing file. It is a v2 construct
-and pays §6.2's full price: grammar, typed payload, validation, stable-ID rule
-(what happens to `ent_order` when `Order` moves into a slice), ownership
-boundary, formatter, CLI mapping, upgrade rule (every existing model lands on
-the implicit slice without a byte changing), conformance tests.
+**P9.3 -- slices.** Two halves, and the actionable one closed: `rename
+resource` accepted a `<slice>.<name>` selector and read past the prefix, so
+with an `Invoice` in two packages it renamed whichever entity carried the
+last segment and said nothing. It refuses a qualified selector now, naming
+the entity and pointing at `--package`.
+
+What is left is the construct, and it is not v1's. The normative spec does
+not mention a slice: `docs/01-jdl-v1.md` has no such section, and the §4.2
+this item used to cite does not exist. A slice derives package layout,
+ports, migrations and route prefixes, so §20.4 puts it past a version
+boundary -- an old compiler would accept the declaration and ignore the
+names it moves, which is the case that rule exists for -- and §6.2 prices
+it at grammar, typed payload, validation, stable-ID rule (what happens to
+`ent_order` when `Order` moves into a slice), ownership boundary,
+formatter, CLI mapping, upgrade rule and conformance tests. Meanwhile
+`--package` already collapses one entity's classes into one package, which
+is how a vertical slice is spelled today (`Entity::java_package`).
+
+**Exit:** a `jdl 2` that defines it, or a decision that `--package` is
+enough. Neither is a defect, so this item is a question rather than a debt.

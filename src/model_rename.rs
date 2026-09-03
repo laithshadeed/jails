@@ -48,13 +48,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
 
     refuse_reader_java(&invocation.root()?, &request)?;
     let current = crate::model_command::Current::load(&invocation)?;
-    let selector = request.from.rsplit('.').next().unwrap_or_default();
-    if selector.is_empty() {
-        return Err(Failure::Told(
-            "canonical resource rename needs a non-empty entity selector.\n       fix: pass an entity label or Java type after `rename resource`"
-                .to_string(),
-        ));
-    }
+    let selector = entity_selector(&request.from)?;
     let entity = current.model
         .entities
         .values()
@@ -152,6 +146,34 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
 /// the type, and a reader's own SQL depending on the table -- both are outside
 /// the managed tree, both stop working the moment the rename lands, and both
 /// are exactly the case a rename is dangerous for. Reported before anything is
+/// The entity a rename names, refusing a qualified selector rather than
+/// reading past it.
+///
+/// **A dotted selector was accepted and its prefix thrown away.** The syntax
+/// comes from a vertical slice -- `billing.Invoice` -- and nothing in the
+/// model declares one, so `rsplit('.')` renamed whatever entity carried the
+/// last segment and said nothing about the rest. Two projects with an
+/// `Invoice` each is exactly the case the prefix was meant to disambiguate,
+/// and silently picking one is the worst answer available. A slice is a
+/// language construct with a price the spec sets (`docs/00-contracts.md`
+/// §6.2); until it is paid, an entity is named by its label or its Java
+/// type, and `--package` is how a slice's classes are collapsed into one
+/// package today.
+fn entity_selector(from: &str) -> Result<&str> {
+    if let Some((qualifier, name)) = from.rsplit_once('.') {
+        return Err(Failure::Told(format!(
+            "canonical resource rename does not take a qualified selector, and `{qualifier}` is not a thing this model declares.\n       fix: name the entity itself -- `{name}` -- or, to move its classes into one package, pass `--package`"
+        )));
+    }
+    if from.is_empty() {
+        return Err(Failure::Told(
+            "canonical resource rename needs a non-empty entity selector.\n       fix: pass an entity label or Java type after `rename resource`"
+                .to_string(),
+        ));
+    }
+    Ok(from)
+}
+
 /// written, naming the file, because the fix is a hand edit the reader has to
 /// make either way and they would rather make it first than after a broken
 /// build.
@@ -159,7 +181,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
 /// The reader's *SQL* is only searched on a cutover: preserving the table
 /// changes no name a database knows.
 fn refuse_reader_java(root: &Path, request: &Request) -> Result<()> {
-    let old_java = request.from.rsplit('.').next().unwrap_or_default();
+    let old_java = entity_selector(&request.from)?;
     // **The reader's files only.** Managed sources sit beside theirs under
     // `src/`, name the old type by construction, and are the rename's to
     // move; the lock says which they are.
