@@ -190,6 +190,19 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
     capture_paths.extend(jails_compiler::external_project_paths(&next_model));
     capture_paths.sort();
     capture_paths.dedup();
+    // **The model half, measured.** Everything above this point is the edited
+    // source becoming an `AppModel`: read, parse, link, run the guards,
+    // splice the declaration in and lay the file out again. It is the phase a
+    // reader is least likely to guess at, and on a large model it is not
+    // small, so a table that jumped straight to `capture` sent them looking
+    // in the wrong place.
+    clock.mark("model", || {
+        format!(
+            "{} of JDL, {} entities",
+            bytes(next_source.len()),
+            next_model.entities.len()
+        )
+    });
     let mut snapshot = jails_project::capture::capture(
         &root,
         model_path,
@@ -302,6 +315,9 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
             println!("{line}");
         }
         if invocation.output == Output::Human {
+            clock.mark("report", || {
+                format!("{} operations", bundle.plan.operations.len())
+            });
             clock.report();
         }
         return Ok(());
@@ -421,6 +437,9 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
     }
     report::report_review(&bundle, &invocation);
     if invocation.output == Output::Human {
+        clock.mark("report", || {
+            format!("{} operations", bundle.plan.operations.len())
+        });
         clock.report();
     }
     run_follow_up_effects(&root, &bundle, &execution, &invocation)
