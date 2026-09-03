@@ -2697,31 +2697,31 @@ mod permit_pool_tests {
         // release that takes a few milliseconds to become visible to a fresh
         // descriptor still satisfies that. It is written as a loop with a
         // named ceiling so a release that never lands still fails.
-        let mut refusals = Vec::new();
-        let mut replacement = None;
-        for _ in 0..64 {
-            let (acquired, reported) =
-                pool.try_acquire_reporting(MAX_INFRASTRUCTURE_START_PROCESSES);
-            if acquired.is_some() {
-                replacement = acquired;
-                break;
+        let within_the_ceiling = |pool: &PermitPool| {
+            let mut refusals = Vec::new();
+            for _ in 0..64 {
+                let (acquired, reported) =
+                    pool.try_acquire_reporting(MAX_INFRASTRUCTURE_START_PROCESSES);
+                if acquired.is_some() {
+                    return acquired;
+                }
+                refusals = reported;
+                std::thread::sleep(super::PERMIT_POLL);
             }
-            refusals = reported;
-            std::thread::sleep(super::PERMIT_POLL);
-        }
-        let replacement = replacement.unwrap_or_else(|| {
             panic!(
                 "a released permit never became reusable; slot by slot: {}",
                 refusals.join("; ")
             )
-        });
+        };
+        let replacement = within_the_ceiling(&pool);
 
         drop(second);
         drop(replacement);
-        assert!(
-            pool.try_acquire(MAX_INFRASTRUCTURE_START_PROCESSES)
-                .is_some()
-        );
+        // **Both releases wait, because both are the same lag.** Asserting
+        // the last one bare made this test fail under a full gate run while
+        // the identical assertion four lines up was passing: the property is
+        // that a permit comes back, and the ceiling is what says "at all".
+        within_the_ceiling(&pool);
     }
 
     #[test]
@@ -2765,7 +2765,21 @@ mod permit_pool_tests {
         // suite) or failed to lock for a reason that is not contention, and a
         // summary sends the reader after a release path that was never
         // involved.
-        let (permit, refusals) = two.try_acquire_reporting(1);
+        // Bounded for the same reason the pool's other test waits: a slot
+        // this process has just closed can report as held for a few
+        // milliseconds under a full-suite run, and "a permit comes back" is
+        // the property, not "it comes back on the first descriptor".
+        let mut permit = None;
+        let mut refusals = Vec::new();
+        for _ in 0..64 {
+            let (acquired, reported) = two.try_acquire_reporting(1);
+            if acquired.is_some() {
+                permit = acquired;
+                break;
+            }
+            refusals = reported;
+            std::thread::sleep(super::PERMIT_POLL);
+        }
         assert!(
             permit.is_some(),
             "the shared budget refused a permit after its only holder was dropped: {}",

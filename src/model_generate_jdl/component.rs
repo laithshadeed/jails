@@ -355,34 +355,64 @@ fn cases_stem(source: &Path) -> Result<String> {
     Ok(stem)
 }
 
-pub(super) fn reject_v1_options(args: &GenerateArgs, kind: ComponentKind) -> Result<()> {
+/// Which of the component vocabulary's flags this registry member accepts.
+///
+/// **One table, read twice.** `reject_v1_options` refuses a flag outside a
+/// member's schema and `jails g <kind> --help` names the ones inside it, so a
+/// page that offers `--on` for a kind the frontend would refuse it on cannot
+/// exist. `required` is the second half of the same answer: `g workflow` with
+/// no `--on` is refused, and the page says so rather than leaving the reader
+/// to find out.
+pub(crate) struct Accepts {
+    pub(crate) on: bool,
+    pub(crate) on_required: bool,
+    pub(crate) yields: bool,
+    pub(crate) yields_required: bool,
+    pub(crate) route: bool,
+    pub(crate) bind: bool,
+}
+
+pub(crate) fn accepts(kind: ComponentKind) -> Accepts {
     use ComponentKind as K;
-    let accepts_on = matches!(
-        kind,
-        K::Controller
-            | K::Strategy
-            | K::Command
-            | K::Client
-            | K::HttpWorkflow
-            | K::HttpSink
-            | K::DurableJob
-    );
-    let requires_on = matches!(
-        kind,
-        K::Strategy | K::HttpWorkflow | K::HttpSink | K::DurableJob
-    );
-    let accepts_yields = matches!(
-        kind,
-        K::Controller | K::Strategy | K::Client | K::HttpSink | K::DurableJob
-    );
-    let requires_yields = matches!(kind, K::HttpSink | K::DurableJob);
-    let accepts_route = matches!(
-        kind,
-        K::Controller | K::Handler | K::Client | K::Webhook | K::Socket
-    );
-    // **A client with no `--path` is not refused**: the collection route is
-    // a documented default, materialized in `v1_declaration`.
-    let accepts_bind = matches!(kind, K::Controller | K::Webhook);
+    Accepts {
+        on: matches!(
+            kind,
+            K::Controller
+                | K::Strategy
+                | K::Command
+                | K::Client
+                | K::HttpWorkflow
+                | K::HttpSink
+                | K::DurableJob
+        ),
+        on_required: matches!(
+            kind,
+            K::Strategy | K::HttpWorkflow | K::HttpSink | K::DurableJob
+        ),
+        yields: matches!(
+            kind,
+            K::Controller | K::Strategy | K::Client | K::HttpSink | K::DurableJob
+        ),
+        yields_required: matches!(kind, K::HttpSink | K::DurableJob),
+        // **A client with no `--path` is not refused**: the collection route
+        // is a documented default, materialized in `v1_declaration`.
+        route: matches!(
+            kind,
+            K::Controller | K::Handler | K::Client | K::Webhook | K::Socket
+        ),
+        bind: matches!(kind, K::Controller | K::Webhook),
+    }
+}
+
+pub(super) fn reject_v1_options(args: &GenerateArgs, kind: ComponentKind) -> Result<()> {
+    let Accepts {
+        on: accepts_on,
+        on_required: requires_on,
+        yields: accepts_yields,
+        yields_required: requires_yields,
+        route: accepts_route,
+        bind: accepts_bind,
+    } = accepts(kind);
     let unrelated = args.timestamps
         || args.default_literal.is_some()
         || args.backfill_file.is_some()

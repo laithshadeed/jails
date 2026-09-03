@@ -66,7 +66,7 @@ reopening a contract:
 | 5 | I70.22, I71.3, I71.4, I71.5 | the lock is 1× the tree, a scaffold is a 20-line diff, a mutation at a hundred entities is under 100 ms |
 | ~~6~~ | ~~I71.40, I71.41, I71.24~~ | ~~every scanner sees every source root; `test --affected` never selects nothing and passes~~ |
 | ~~7~~ | ~~I70.2~~ | ~~one JSON encoding, carrying the same value as the human report~~ |
-| 8 | ~~I70.8~~, I70.9 (one line over), I71.18 | a one-screen `--help`, global flags printed once, `g <kind> --help` about the kind |
+| 8 | ~~I70.8~~, I70.9 (one line over), ~~I71.18~~ | a one-screen `--help`, global flags printed once, `g <kind> --help` about the kind |
 | 9 | I71.29, I71.26, I71.28 | README, the specification and the binary agree |
 | ~~10~~ | ~~I71.14~~ | ~~every mutation prints the JDL it wrote~~ |
 
@@ -660,11 +660,24 @@ list of the flags clap already knows is the second source this repository
 spends its gates preventing. Declined at one line over, deliberately.
 
 
-**I71.18 — `g <kind> --help` is about the kind.** *Change* the `explain`
-entry for the kind plus the flags that kind accepts, derived from where
-the frontends already refuse a flag that does not apply. *Done when*
-`jails g scaffold --help` is under 40 lines and names `--index`, `--path`,
-`--timestamps`.
+**I71.18 — `g <kind> --help` is about the kind.** *Landed.* `jails g <kind>
+--help` is intercepted before clap and prints the kind's `explain` entry
+followed by the flags that kind accepts. `jails g scaffold --help` is 20
+lines and names `--timestamps`, `--index`, `--unique`, `--path` and
+`--package`, against 233 lines for the shared page. The flags are read off
+the tables the frontends already refuse by: the component registry's
+`accepts` — extracted out of `reject_v1_options`, so the page and the
+refusal are one table read twice — the entity profile, and the operation
+lowering's own per-kind branch. `generator_help_is_about_the_kind_and_names_only_flags_that_exist`
+walks every advertised kind, holds each page under 60 lines, and fails on a
+flag no `jails g --help` declares.
+
+*Deviation:* the operation kinds' rows are a list beside `OperationProfile`
+rather than a predicate lifted out of the lowering. There is no single
+refusal to lift: `operation.rs` gates `--via`, `--order-by` and `--limit`
+inline on `args.kind` at the point each is read, and hoisting them into one
+predicate would move behaviour to shorten a help page. The spelling gate is
+what holds that list honest.
 
 **I71.23 — the closed sets complete on the command line.** *Change* the
 shell completer calls `editor complete` for field types, markers, `--on`

@@ -2,7 +2,7 @@
 
 pub(crate) use jails_model::field_syntax::{ParsedField, normalize_type, parse_field};
 
-mod profile;
+pub(crate) mod profile;
 
 mod effects;
 pub(crate) mod report;

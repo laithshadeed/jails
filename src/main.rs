@@ -62,6 +62,53 @@ use clap::{CommandFactory, Parser};
 
 pub(crate) use template_macro::template_here;
 
+/// `jails g <kind> --help`: the kind, not the generator.
+///
+/// **The page a reader asked for.** clap gives a positional `ValueEnum` no
+/// help of its own, so `jails g scaffold --help` printed the 228-line page
+/// for every kind at once -- thirty-nine descriptions and every flag any of
+/// them takes, when the question was about one. Intercepted at argv, the way
+/// `--plan-in` is, because clap has no seam for it.
+///
+/// What it prints is derived: the kind's `explain` entry, and the options
+/// read off `model_generate::profile`, which is the same table the frontends
+/// refuse a flag from. A page that disagreed with the refusal would be worse
+/// than the long one.
+fn kind_help_requested() -> Option<jails_support::Result<()>> {
+    use clap::ValueEnum;
+
+    let words: Vec<String> = std::env::args().skip(1).collect();
+    let mut words = words.iter().map(String::as_str);
+    if !matches!(words.next(), Some("g" | "generate")) {
+        return None;
+    }
+    let kind = words.next()?;
+    if !words.any(|word| word == "--help" || word == "-h") {
+        return None;
+    }
+    let kind = jails_model::ArtifactKind::from_str(kind, true).ok()?;
+    Some(explain_kind(kind))
+}
+
+/// One kind's page: what it writes, the trap, and the flags it takes.
+fn explain_kind(kind: jails_model::ArtifactKind) -> jails_support::Result<()> {
+    jails_report::explain::explain(kind)?;
+    let options = model_generate::profile::kind_options(kind);
+    // **An empty heading is worse than no heading.** A facet takes a name and
+    // its entity's own components, and printing `options` over nothing reads
+    // as a page that failed to load rather than as a kind with no flags.
+    if !options.is_empty() {
+        println!();
+        println!("options");
+        for option in options {
+            println!("  {option}");
+        }
+    }
+    println!();
+    println!("`jails g --help` lists every kind and every flag; `jails commands` lists all of it.");
+    Ok(())
+}
+
 /// The commands `--pretend` has nothing to say about, and the word each is
 /// spelled with.
 ///
@@ -96,6 +143,9 @@ fn starts_something(command: &Command) -> Option<&'static str> {
 
 fn main() -> std::process::ExitCode {
     if let Some(result) = plan_command::requested() {
+        return dispatch::finish(result);
+    }
+    if let Some(result) = kind_help_requested() {
         return dispatch::finish(result);
     }
     let cli = match Cli::try_parse() {

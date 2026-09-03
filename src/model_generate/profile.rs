@@ -24,6 +24,126 @@ pub(crate) struct EntityProfile {
     pub(crate) route: bool,
 }
 
+/// The flags this kind accepts beyond a name and its fields.
+///
+/// **Read off the same table the refusals are.** `jails g <kind> --help`
+/// prints this, so the page and the refusal cannot disagree about whether
+/// `--timestamps` applies -- which is the whole reason the profile is a
+/// table and not nine `if` statements.
+pub(crate) fn kind_options(kind: ArtifactKind) -> Vec<&'static str> {
+    let mut options = Vec::new();
+    if let Some(profile) = entity_profile(kind) {
+        if profile.timestamps {
+            options.push("--timestamps");
+        }
+        if profile.table {
+            options.push("--index <COLUMNS>");
+            options.push("--unique <COMPONENTS>");
+        }
+        if profile.route {
+            options.push("--path <PATH>");
+        }
+    }
+    if let Some(component) = crate::model_generate_jdl::component::component_kind(kind) {
+        let accepts = crate::model_generate_jdl::component::accepts(component);
+        if accepts.on {
+            options.push(if accepts.on_required {
+                "--on <TYPE> (required)"
+            } else {
+                "--on <TYPE>"
+            });
+        }
+        if accepts.yields {
+            options.push(if accepts.yields_required {
+                "--yields <TYPE> (required)"
+            } else {
+                "--yields <TYPE>"
+            });
+        }
+        if accepts.route {
+            options.push("--path <PATH>");
+            options.push("--method <METHOD>");
+            options.push("--consumes <FORMAT>");
+        }
+        if accepts.bind {
+            options.push("--bind <COMPONENT=SOURCE>");
+        }
+    }
+    options.extend(operation_profile(kind).map_or(&[][..], operation_options));
+    if kind == ArtifactKind::Association {
+        // The one kind whose two entities are both flags; `relation.rs`
+        // refuses every other member of the vocabulary by name.
+        options.push("--on <CHILD> (required)");
+        options.push("--yields <PARENT> (required)");
+    }
+    if accepts_package(kind) {
+        options.push("--package <PACKAGE>");
+    }
+    options
+}
+
+/// The operation vocabulary each operation kind reads.
+///
+/// **Not the whole vocabulary, because an operation is not one shape.**
+/// `--via` joins a parent into a `query` and borrows a component into a
+/// `usecase`; `--order-by` and `--limit` are the query's alone. The lowering
+/// in `model_generate_jdl::operation` branches on `args.kind` for each, and
+/// this is that branch read forwards.
+fn operation_options(profile: OperationProfile) -> &'static [&'static str] {
+    match profile {
+        OperationProfile::Command => &[
+            "--on <ENTITY>",
+            "--via <PARENT>",
+            "--set <COMPONENT=VALUE>",
+            "--on-conflict <COMPONENT>",
+            "--yields <EVENT>",
+            "--path <PATH>",
+            "--method <METHOD>",
+            "--consumes <FORMAT>",
+            "--bind <COMPONENT=SOURCE>",
+        ],
+        OperationProfile::Query => &[
+            "--on <ENTITY>",
+            "--via <PARENT>",
+            "--select <COMPONENTS>",
+            "--order-by <COMPONENT>",
+            "--limit <ROWS>",
+            "--path <PATH>",
+            "--consumes <FORMAT>",
+        ],
+        OperationProfile::Transition => &[
+            "--on <ENTITY>",
+            "--set <COMPONENT=VALUE>",
+            "--if-match <PRECONDITION>",
+            "--yields <EVENT>",
+            "--path <PATH>",
+            "--method <METHOD>",
+            "--consumes <FORMAT>",
+        ],
+        OperationProfile::Event => &["--on <ENTITY>"],
+    }
+}
+
+/// Whether a kind's placement is the reader's to choose.
+///
+/// A facet is a projection of an entity that already has a package, and
+/// `facet.rs` refuses `--package` by name; an association's two sides carry
+/// theirs. Everything else lands in the layer its kind owns unless told
+/// otherwise.
+fn accepts_package(kind: ArtifactKind) -> bool {
+    !matches!(
+        kind,
+        ArtifactKind::Repo
+            | ArtifactKind::Dto
+            | ArtifactKind::Factory
+            | ArtifactKind::Seed
+            | ArtifactKind::Search
+            | ArtifactKind::Association
+            | ArtifactKind::Field
+            | ArtifactKind::Migration
+    )
+}
+
 fn entity_profile(kind: ArtifactKind) -> Option<&'static EntityProfile> {
     static RECORD: EntityProfile = EntityProfile {
         timestamps: false,

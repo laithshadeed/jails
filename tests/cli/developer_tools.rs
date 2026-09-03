@@ -1581,6 +1581,138 @@ fn pretend_refuses_on_the_commands_that_only_start_something() {
     }
 }
 
+/// **`g <kind> --help` answers about the kind, not about the parser.**
+///
+/// The shared `jails g --help` is 233 lines because it is the union of every
+/// kind's vocabulary, and a reader who typed a kind has already made the
+/// choice that page exists to present. This one names what that kind is and
+/// the flags it accepts, and the flags come off the same tables the frontends
+/// refuse by -- the component registry's `accepts`, the entity profile, the
+/// operation branch -- so a page cannot offer a flag its own frontend would
+/// call unrelated. The spelling gate below is what catches a table row that
+/// names a flag clap does not have.
+#[test]
+fn generator_help_is_about_the_kind_and_names_only_flags_that_exist() {
+    let root = temp_dir("kind-help");
+    let every = String::from_utf8_lossy(
+        &jails_cmd(&root, None)
+            .args(["g", "--help"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .to_string();
+    let declared = every
+        .split_whitespace()
+        .filter(|word| word.starts_with("--"))
+        .map(|word| word.trim_end_matches(',').to_string())
+        .collect::<std::collections::BTreeSet<_>>();
+    let surface = String::from_utf8_lossy(
+        &jails_cmd(&root, None)
+            .args(["commands", "--json"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .to_string();
+    let kinds = advertised_kinds(&surface);
+    assert!(kinds.len() > 30, "expected the whole registry: {kinds:?}");
+    let mut pages = 0;
+    for kind in &kinds {
+        let output = jails_cmd(&root, None)
+            .args(["g", kind, "--help"])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "`jails g {kind} --help` refused");
+        let printed = String::from_utf8_lossy(&output.stdout).to_string();
+        assert!(
+            printed.starts_with(&format!("{kind}  ")),
+            "the first line names the kind: {printed}"
+        );
+        assert!(
+            printed.lines().count() < 60,
+            "`jails g {kind} --help` is {} lines, which is the shared page again",
+            printed.lines().count()
+        );
+        for option in options_in(&printed) {
+            assert!(
+                declared.contains(&option),
+                "`jails g {kind} --help` names `{option}`, which `jails g --help` does not declare"
+            );
+        }
+        pages += 1;
+    }
+    assert_eq!(pages, kinds.len());
+
+    // The item's own measurement: the kind with the most flags is still a
+    // page a reader takes in at once.
+    let scaffold = String::from_utf8_lossy(
+        &jails_cmd(&root, None)
+            .args(["g", "scaffold", "--help"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .to_string();
+    assert!(
+        scaffold.lines().count() < 40,
+        "`jails g scaffold --help` is {} lines",
+        scaffold.lines().count()
+    );
+    for flag in ["--index", "--path", "--timestamps"] {
+        assert!(
+            scaffold.contains(flag),
+            "`jails g scaffold --help` does not name `{flag}`: {scaffold}"
+        );
+    }
+    // A component kind whose registry row accepts `--on`, and one whose row
+    // does not: the two halves of the table, read off the page.
+    let command = String::from_utf8_lossy(
+        &jails_cmd(&root, None)
+            .args(["g", "command", "--help"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .to_string();
+    assert!(command.contains("--on <TYPE>"), "{command}");
+    let service = String::from_utf8_lossy(
+        &jails_cmd(&root, None)
+            .args(["g", "service", "--help"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .to_string();
+    assert!(!service.contains("--on"), "{service}");
+    // `--help` after the kind is help, not a generation with a stray flag.
+    assert!(!root.join(".jails").exists(), "a help page wrote a model");
+}
+
+/// The kinds `jails commands` advertises, which is the same clap tree that
+/// parses them -- there is no second list.
+fn advertised_kinds(surface: &str) -> Vec<String> {
+    surface
+        .lines()
+        .skip_while(|line| !line.trim_start().starts_with("\"kinds\""))
+        .skip(1)
+        .take_while(|line| line.trim_start().starts_with('{'))
+        .filter_map(|line| line.split_once("\"name\": \"").map(|(_, rest)| rest))
+        .filter_map(|rest| rest.split_once('"').map(|(name, _)| name.to_string()))
+        .collect()
+}
+
+/// The flag names a kind's page lists under `options`.
+fn options_in(page: &str) -> Vec<String> {
+    page.lines()
+        .skip_while(|line| line.trim() != "options")
+        .skip(1)
+        .take_while(|line| line.starts_with("  "))
+        .filter_map(|line| line.split_whitespace().next())
+        .map(str::to_string)
+        .collect()
+}
+
 /// **A broker exception is a refusal, not twenty lines of Java.**
 ///
 /// Asking for the lag of a group that has never committed is the first thing

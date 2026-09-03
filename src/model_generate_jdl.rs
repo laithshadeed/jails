@@ -1,6 +1,6 @@
 //! Lossless JDL edits for the familiar `jails generate` surface.
 
-mod component;
+pub(crate) mod component;
 mod edit;
 pub(crate) mod facet;
 pub(crate) mod index;

@@ -162,6 +162,10 @@ source: the next change can be made by hand in the file and applied with
   carry one help line each, and the reason each exists lives here rather
   than on the first screen of `--help`. The generated Javadoc carries the same reasoning for whoever reads
   the file; this is for whoever is deciding whether to generate it.
+  `jails g <kind> --help` prints that same entry followed by the flags that
+  kind accepts, read off the tables the frontends refuse by, so it names
+  only flags that kind can honour. The shared `jails g --help` is the union
+  of every kind's vocabulary and stays available.
 - `jails model jdl` — the language this binary accepts: the declaration
   families and the `@attributes` each takes, the field types and their
   aliases, the `use` projections, and the `cap` kinds a source may spell.
