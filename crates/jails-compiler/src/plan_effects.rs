@@ -84,8 +84,41 @@ pub(crate) fn follow_up(
     follow_up_effects
 }
 
-/// What the compiler noticed and would not refuse over.
-pub(crate) fn diagnostics(next_model: &AppModel) -> Vec<jails_contracts::CompilerDiagnostic> {
+/// What the compiler noticed and would not refuse over, that this transition
+/// makes newly true.
+///
+/// **A warning is a thing said once, at the moment it becomes true.** Every
+/// diagnostic here is a fact about the *model* -- a resource with nowhere to
+/// keep its rows, a query no index can serve -- and the model states it in
+/// `.jails/model.jdl` for as long as it holds. Reprinting it on every later
+/// command says nothing the source does not, and it says it on `set`, on
+/// `rename`, on a `model plan` that changes nothing: two entities on a
+/// storage-less project put four lines in front of every command the reader
+/// runs, until the words stop being read at all.
+///
+/// So the same pass runs over the model this transition starts from, and a
+/// diagnostic already true of that one is not this command's news. Keyed on
+/// the code and the node it is about, because the *message* carries derived
+/// names -- rename an entity and the sentence changes while the fact does
+/// not.
+pub(crate) fn diagnostics(
+    previous_model: &AppModel,
+    next_model: &AppModel,
+) -> Vec<jails_contracts::CompilerDiagnostic> {
+    let already: std::collections::BTreeSet<(String, Option<String>)> = true_of(previous_model)
+        .into_iter()
+        .map(|diagnostic| (diagnostic.code, diagnostic.semantic_id))
+        .collect();
+    true_of(next_model)
+        .into_iter()
+        .filter(|diagnostic| {
+            !already.contains(&(diagnostic.code.clone(), diagnostic.semantic_id.clone()))
+        })
+        .collect()
+}
+
+/// Every diagnostic that holds of one model, whether or not it is news.
+fn true_of(next_model: &AppModel) -> Vec<jails_contracts::CompilerDiagnostic> {
     // **A resource with nowhere to keep its rows is worth saying out
     // loud.** Without a declared storage the scaffold still emits its
     // record, its port and an in-memory adapter -- a resource that runs
@@ -180,7 +213,7 @@ use repo for Task\n";
 
     fn codes(source: &str) -> Vec<String> {
         let model = jails_model::parse_jdl(source).expect("the fixture parses");
-        diagnostics(&model)
+        true_of(&model)
             .into_iter()
             .map(|diagnostic| diagnostic.code)
             .collect()
@@ -191,7 +224,7 @@ use repo for Task\n";
     #[test]
     fn a_query_no_index_can_serve_is_reported_with_the_command_that_fixes_it() {
         let model = jails_model::parse_jdl(MODEL).expect("the fixture parses");
-        let found = diagnostics(&model);
+        let found = true_of(&model);
         let reported = found
             .iter()
             .find(|diagnostic| diagnostic.code == "query-unindexed")
@@ -255,5 +288,36 @@ use repo for Task\n";
         let found = codes(&MODEL.replace("storage postgres", "storage none"));
         assert!(!found.contains(&"query-unindexed".to_string()));
         assert!(found.contains(&"storage-absent".to_string()));
+    }
+
+    /// The whole of I70.12: a fact the previous model already stated is not
+    /// this command's news, and one that only just became true is.
+    #[test]
+    fn a_diagnostic_is_news_only_on_the_transition_that_makes_it_true() {
+        let one = jails_model::parse_jdl(&MODEL.replace("storage postgres", "storage none"))
+            .expect("the fixture parses");
+        let two =
+            jails_model::parse_jdl(&MODEL.replace("storage postgres", "storage none").replace(
+                "use repo for Task\n",
+                "entity Note {\n id: uuid @pk\n}\nuse repo for Task\nuse repo for Note\n",
+            ))
+            .expect("the fixture parses");
+        let empty = jails_model::parse_jdl(
+            "jdl 1\napp Demo {\n pkg com.example.demo\n java 26\n platform plain\n build maven\n storage none\n}\n",
+        )
+        .expect("the fixture parses");
+
+        // Declaring the first stored-nowhere resource says it.
+        let first: Vec<String> = diagnostics(&empty, &one)
+            .into_iter()
+            .map(|diagnostic| diagnostic.code)
+            .collect();
+        assert_eq!(first, vec!["storage-absent".to_string()]);
+        // Running anything else over the same model says nothing.
+        assert!(diagnostics(&one, &one).is_empty());
+        // The second resource is news about the second resource only.
+        let second = diagnostics(&one, &two);
+        assert_eq!(second.len(), 1, "{second:?}");
+        assert!(second[0].message.contains("`Note`"), "{second:?}");
     }
 }

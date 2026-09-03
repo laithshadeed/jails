@@ -183,12 +183,15 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
     // that compile and run and are probably not what the reader meant, so
     // they belong on the way past rather than in a report they would have to
     // know to ask for.
-    if invocation.output == Output::Human {
-        for diagnostic in &draft.diagnostics {
-            eprintln!("jails: {}", diagnostic.message);
-            eprintln!("       fix: {}", diagnostic.fix);
-        }
-    }
+    // **Under the report, not over it.** The lines are about what the
+    // transition produced, so they belong where the reader is already
+    // looking when the command has finished, rather than above a file list
+    // that has not been printed yet. Kept here because `draft` is consumed
+    // by the materializer on the next line.
+    let notes = match invocation.output {
+        Output::Human => report::notice_lines(&draft.diagnostics),
+        _ => Vec::new(),
+    };
     let bundle = jails_workspace::materialize(
         &snapshot,
         input,
@@ -218,6 +221,9 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
     }
     if invocation.pretend || invocation.plan_out.is_some() {
         report_plan(&bundle, &invocation)?;
+        for line in &notes {
+            println!("{line}");
+        }
         if invocation.output == Output::Human {
             clock.report();
         }
@@ -292,6 +298,9 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
             for line in crate::model_command::preview_lines(&bundle) {
                 println!("{line}");
             }
+        }
+        for line in &notes {
+            println!("{line}");
         }
     } else {
         println!(

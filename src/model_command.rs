@@ -707,9 +707,8 @@ fn compile(
         Failure::diagnosed(error.code, format!("could not capture workspace: {error}"))
     })?;
     if notice == Notice::Print {
-        for diagnostic in &draft.diagnostics {
-            eprintln!("jails: {}", diagnostic.message);
-            eprintln!("       fix: {}", diagnostic.fix);
+        for line in crate::model_generate::report::notice_lines(&draft.diagnostics) {
+            println!("{line}");
         }
     }
     // Same capture, same model, same compiler: repair differs only in what

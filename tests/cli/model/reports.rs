@@ -555,3 +555,80 @@ fn model_status_lists_the_lock_and_tells_edited_from_missing() {
     assert!(shown.contains(&format!("edited   {RECORD}")), "{shown}");
     assert!(shown.contains(&format!("missing  {SERVICE}")), "{shown}");
 }
+
+/// A warning is news once, and the report says it without dressing as a
+/// refusal.
+///
+/// **The most-seen two lines in the tool used to be on every command.** A
+/// project that declares `storage none` -- which is what `jails new` writes,
+/// and what a reader who has not run `add db` yet has -- printed one
+/// `storage-absent` warning *per entity*, with the `jails:` prefix a failure
+/// wears, on stderr, above the report, on `set`, `unset`, `rename`, `model
+/// plan` and every `g`. The reader wrote `storage none`; the model states it;
+/// repeating it teaches them that the lines jails prints can be skipped.
+///
+/// Three things are asserted, because each is a different way for this to
+/// come back: the fact is said on the transition that makes it true, it is
+/// said about the *new* entity only when a second arrives, and no later
+/// command says it at all.
+#[test]
+fn a_storage_warning_is_said_once_and_never_wears_the_refusal_prefix() {
+    let root = model_project("warning-said-once", EMPTY_MODEL);
+    write_spring_fixture(&root);
+
+    let first = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Note", "id:uuid@pk", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let told = String::from_utf8_lossy(&first.stdout).to_string();
+    // A `note` row in the file list, in the same column as the file verbs.
+    assert!(
+        told.contains("  note    `Note` is stored in memory only"),
+        "{told}"
+    );
+    assert!(told.contains("fix: run `jails add db`"), "{told}");
+    assert!(
+        !String::from_utf8_lossy(&first.stderr).contains("jails:"),
+        "a shape jails generated on purpose is not a failure: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    // A second resource is news about the second resource, and only that.
+    let second = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Task", "id:uuid@pk", "name:string!"])
+        .output()
+        .unwrap();
+    let told = String::from_utf8_lossy(&second.stdout).to_string();
+    assert!(told.contains("`Task` is stored in memory only"), "{told}");
+    assert!(
+        !told.contains("`Note` is stored in memory only"),
+        "the model has said this since the last command: {told}"
+    );
+
+    // And every later command is quiet about a fact the source states.
+    for arguments in [
+        vec!["set", "server.port=8081"],
+        vec!["model", "plan"],
+        vec!["sync"],
+        vec!["g", "record", "Money", "amount:long"],
+    ] {
+        let later = jails_cmd(&root, None).args(&arguments).output().unwrap();
+        let stdout = String::from_utf8_lossy(&later.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&later.stderr).to_string();
+        assert!(
+            !stdout.contains("stored in memory only") && !stderr.contains("stored in memory only"),
+            "`jails {}` repeated a warning: {stdout}{stderr}",
+            arguments.join(" ")
+        );
+        assert!(
+            !stderr.contains("jails:"),
+            "`jails {}` printed a refusal prefix over a clean run: {stderr}",
+            arguments.join(" ")
+        );
+    }
+}

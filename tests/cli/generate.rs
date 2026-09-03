@@ -5914,8 +5914,15 @@ fn a_scaffold_leaves_an_unmanaged_schema_sql_alone_and_says_where_its_rows_live(
     // it is also what a reader who has not run `jails add db` yet gets, with
     // nothing else to tell the two apart. The diagnostic names the table the
     // reader does not have, which is the part that makes it actionable.
-    let told = String::from_utf8_lossy(&output.stderr).to_string();
-    assert!(output.status.success(), "{told}");
+    // On stdout, as a `note` row of the report: it is a remark about what was
+    // generated rather than a refusal, and it is said on the transition that
+    // makes it true and not again.
+    let told = String::from_utf8_lossy(&output.stdout).to_string();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(told.contains("stored in memory only"), "{told}");
     assert!(told.contains("create table tickets"), "{told}");
     assert!(told.contains("jails add db"), "{told}");

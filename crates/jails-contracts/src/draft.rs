@@ -346,5 +346,12 @@ pub struct PlanDraft {
     pub reader_document_intents: Vec<DocumentIntent>,
     pub follow_up_effects: Vec<EffectIntent>,
     pub summary: SemanticPlan,
+    /// What this transition makes newly true and would not refuse over.
+    ///
+    /// **Newly true, not merely true**: a shape the model already had is a
+    /// fact `.jails/model.jdl` states for as long as it holds, and a tool
+    /// that repeats it on every command teaches the reader to skip the lines
+    /// it prints. The compiler runs the same pass over the model the
+    /// transition starts from and keeps the difference.
     pub diagnostics: Vec<CompilerDiagnostic>,
 }

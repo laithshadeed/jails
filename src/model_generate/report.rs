@@ -81,6 +81,27 @@ pub(super) fn refuse_unconfirmed_deletions(
     Some(Ok(()))
 }
 
+/// What the compiler noticed, as report lines.
+///
+/// **A note is not a refusal, and must not dress as one.** These were written
+/// with the `jails:` prefix every failure wears, on stderr, above the report
+/// -- so a shape jails generated on purpose and a command that would not run
+/// looked identical, and the two lines the reader saw most often were the two
+/// that never meant anything had gone wrong. They are `note` rows in the file
+/// list now, beside the `note` a stranded reader reference already prints:
+/// same column, same stream, and the report is one thing again.
+pub(crate) fn notice_lines(diagnostics: &[jails_contracts::CompilerDiagnostic]) -> Vec<String> {
+    diagnostics
+        .iter()
+        .flat_map(|diagnostic| {
+            [
+                format!("  note    {}", diagnostic.message),
+                format!("          fix: {}", diagnostic.fix),
+            ]
+        })
+        .collect()
+}
+
 /// The tests this plan writes that will not run.
 ///
 /// **A test that does not run is worse than no test**, because the build is

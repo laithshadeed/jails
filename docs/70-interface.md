@@ -60,7 +60,7 @@ reopening a contract:
 
 | # | items | what a reader gets |
 |---|---|---|
-| 1 | I70.12 | the most-seen line in the tool stops printing on every command |
+| ~~1~~ | ~~I70.12~~ | ~~the most-seen line in the tool stops printing on every command~~ |
 | 2 | I70.1, I71.13 | the report is the delta; a manifest prints one report |
 | 3 | I71.35, I70.19, I70.20 | consent is `--yes`, nothing else, and JSON has no shortcut past it |
 | 4 | I70.13, I71.47, I71.16 | the model file reads like the specification's, and editing it by hand is the first path |
@@ -569,12 +569,6 @@ over stdio gives every editor completion of the closed sets, hover from
 
 ### Today
 
-**A warning on every command, per entity.** On a project whose `app`
-block says `storage none`, every command prints, on stderr with the
-`jails:` error prefix, one `storage-absent` warning per entity: two
-entities, two warnings, on `set`, `unset`, `rename`, `model plan`, `model
-check --frozen`, `eject`, every `g`. The reader wrote `storage none`.
-
 **The file list is not the change.** After `resource field add Note
 tags:string` the report says `10 files written` and lists 22 lines, 19 of
 them `write` over files git shows unchanged (two new files, the model and
@@ -667,11 +661,6 @@ jails g scaffold …`. `model explain Note` prints the five rows about
 `authenticated prepared transaction` appear nowhere.
 
 ### Change
-
-**I70.12 — say a warning once.** *Change* `storage-absent` (and the
-sequential-scan warning beside it) prints once, when it becomes true, and
-never with the `jails:` prefix a refusal wears; the model already states
-the fact. *Done when* the repeat run prints zero `jails:` lines.
 
 **I70.1 — print the delta, not the tree.** *Change* `create`, `delete`,
 `patch` and *changed* `write` lines only, one `unchanged <n>` line for the

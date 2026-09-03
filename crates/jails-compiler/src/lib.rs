@@ -406,7 +406,7 @@ impl Compiler {
             reader_document_intents.push(DocumentIntent::SetMavenMainClass { class });
         }
         let follow_up_effects = plan_effects::follow_up(&next_model, &generated, &baseline);
-        let diagnostics = plan_effects::diagnostics(&next_model);
+        let diagnostics = plan_effects::diagnostics(&snapshot.model.model, &next_model);
         let summary = SemanticPlan {
             model_nodes: next_model.node_count(),
             managed_files: generated.files.len(),
