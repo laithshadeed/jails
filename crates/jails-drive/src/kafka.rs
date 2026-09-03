@@ -25,6 +25,7 @@
 //! kafka send` is what makes that setting testable in one line.
 
 use jails_support::Result;
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::Command;
 
@@ -296,46 +297,69 @@ fn resolve_topic(root: &Path, given: Option<String>) -> Result<String> {
 }
 
 /// Topic names this project declares, read from `@KafkaListener` and from the
-/// `TOPIC` constants `jails g event` writes.
+/// `TOPIC` constants a hand-written consumer converges on.
 ///
 /// Textual, like the rest of jails' Java reading: it answers on a project
 /// that does not compile, which is exactly when someone is poking at a topic
-/// by hand.
+/// by hand. The tree it reads is the one answer to "where is the source", so
+/// the slice `jails g event` just wrote is in it.
 fn declared_topics(root: &Path) -> Vec<String> {
+    let roots = crate::inspect::roots::input_roots(root);
+    let properties = spring_properties(&roots);
     let mut found = Vec::new();
-    let mut stack = vec![root.join("src/main/java")];
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+    for path in crate::inspect::roots::source_files_in(&crate::inspect::roots::source_roots(
+        root,
+        crate::inspect::roots::SourceSet::Main,
+    )) {
+        let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-                continue;
-            }
-            if path.extension().is_none_or(|e| e != "java") {
-                continue;
-            }
-            let Ok(text) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            found.extend(topics_in(&text));
-        }
+        found.extend(topics_in(&text, &properties));
     }
     found.sort();
     found.dedup();
     found
 }
 
+/// `application.properties` as a key/value map, for resolving the one
+/// placeholder shape a `@KafkaListener` topic is spelled with.
+fn spring_properties(roots: &[crate::inspect::roots::InputRoot]) -> BTreeMap<String, String> {
+    let mut found = BTreeMap::new();
+    for input in roots
+        .iter()
+        .filter(|input| input.kind == crate::inspect::roots::RootKind::Resources)
+    {
+        let Ok(text) = std::fs::read_to_string(input.path.join("application.properties")) else {
+            continue;
+        };
+        for line in text.lines() {
+            let line = line.trim();
+            if line.starts_with('#') || line.starts_with('!') {
+                continue;
+            }
+            if let Some((key, value)) = line.split_once('=') {
+                found
+                    .entry(key.trim().to_string())
+                    .or_insert_with(|| value.trim().to_string());
+            }
+        }
+    }
+    found
+}
+
 /// Pull topic names out of one source file.
 ///
-/// A `String TOPIC = "..."` constant, which is the shape `jails g event`
-/// emits and the shape a hand-written consumer converges on. Deliberately
-/// not a parser: a `@KafkaListener(topics = TOPIC)` names a constant, not a
-/// literal, so following it would mean resolving symbols -- and the constant
-/// is in the same file anyway.
-fn topics_in(source: &str) -> Vec<String> {
+/// Two shapes, both written down in the file being read. A `String TOPIC =
+/// "..."` constant is what a hand-written consumer converges on. A
+/// `@KafkaListener(topics = "...")` is what `jails g event` emits, and its
+/// value is a property placeholder rather than a bare literal, so
+/// [`listener_topic`] resolves the one placeholder shape Spring resolves
+/// without a profile and skips anything it would have to guess at.
+///
+/// Deliberately not a parser: `@KafkaListener(topics = TOPIC)` names a
+/// constant, not a literal, so following it would mean resolving symbols --
+/// and the constant is in the same file anyway.
+fn topics_in(source: &str, properties: &BTreeMap<String, String>) -> Vec<String> {
     // `blanked` replaces comments *and literal contents* with spaces of the
     // same length. So it is the right thing to search for the declaration
     // (a commented-out constant simply is not there) and the wrong thing to
@@ -376,9 +400,72 @@ fn topics_in(source: &str) -> Vec<String> {
             found.push(value.to_string());
         }
     }
+    found.extend(listener_topics(source, &blanked, properties));
     found.sort();
     found.dedup();
     found
+}
+
+/// The topics every `@KafkaListener(topics = …)` in this file names.
+///
+/// `blanked` locates the annotation -- a commented-out listener simply is not
+/// there -- and the literal is read out of the original at the same offsets.
+fn listener_topics(
+    source: &str,
+    blanked: &str,
+    properties: &BTreeMap<String, String>,
+) -> Vec<String> {
+    const ANNOTATION: &str = "@KafkaListener";
+    let mut found = Vec::new();
+    let mut from = 0;
+    while let Some(at) = blanked[from..].find(ANNOTATION) {
+        let at = from + at;
+        from = at + ANNOTATION.len();
+        let Some(close) = blanked[from..].find(')') else {
+            continue;
+        };
+        let arguments = &source[from..from + close];
+        let Some(after_topics) = arguments.find("topics").map(|at| at + "topics".len()) else {
+            continue;
+        };
+        let Some(open) = arguments[after_topics..].find('"') else {
+            continue;
+        };
+        let value_start = after_topics + open + 1;
+        let Some(end) = arguments[value_start..].find('"') else {
+            continue;
+        };
+        found.extend(listener_topic(
+            &arguments[value_start..value_start + end],
+            properties,
+        ));
+    }
+    found
+}
+
+/// The topic a `@KafkaListener(topics = "…")` names.
+///
+/// **Exact or nothing.** A bare literal is the topic. `${key:default}` is the
+/// one placeholder shape Spring resolves with no profile set, so it is
+/// resolved -- the property when the project states one, the default
+/// otherwise. Anything else, a `${key}` with neither, is skipped rather than
+/// guessed at: a topic name jails invented is a `kafka consume` that reads an
+/// empty topic and reports that nothing arrived.
+fn listener_topic(raw: &str, properties: &BTreeMap<String, String>) -> Option<String> {
+    let Some(rest) = raw.strip_prefix("${") else {
+        return (!raw.is_empty() && !raw.contains('$') && !raw.ends_with(".DLT"))
+            .then(|| raw.to_string());
+    };
+    let placeholder = rest.strip_suffix('}')?;
+    let (key, default) = match placeholder.split_once(':') {
+        Some((key, default)) => (key, Some(default)),
+        None => (placeholder, None),
+    };
+    properties
+        .get(key.trim())
+        .cloned()
+        .or_else(|| default.map(str::to_string))
+        .filter(|topic| !topic.is_empty() && !topic.contains('$') && !topic.ends_with(".DLT"))
 }
 
 /// The consumer group: the one given, or `spring.kafka.consumer.group-id`.
@@ -404,6 +491,10 @@ fn resolve_group(root: &Path, given: Option<String>) -> Result<String> {
 mod tests {
     use super::*;
 
+    fn topics(source: &str) -> Vec<String> {
+        topics_in(source, &BTreeMap::new())
+    }
+
     #[test]
     fn a_topic_constant_is_read_out_of_the_source() {
         let source = r#"
@@ -411,7 +502,7 @@ mod tests {
                 public static final String TOPIC = "audit.events";
             }
         "#;
-        assert_eq!(topics_in(source), vec!["audit.events"]);
+        assert_eq!(topics(source), vec!["audit.events"]);
     }
 
     /// The DLT is derived from the source topic, so `jails kafka tail` with no
@@ -423,7 +514,7 @@ mod tests {
             public static final String TOPIC = "orders";
             public static final String DEAD_LETTER_TOPIC = "orders.DLT";
         "#;
-        assert_eq!(topics_in(source), vec!["orders"]);
+        assert_eq!(topics(source), vec!["orders"]);
     }
 
     /// `blanked()` is what keeps a commented-out constant from being read as
@@ -434,12 +525,68 @@ mod tests {
             // public static final String TOPIC = "old.topic";
             public static final String TOPIC = "new.topic";
         "#;
-        assert_eq!(topics_in(source), vec!["new.topic"]);
+        assert_eq!(topics(source), vec!["new.topic"]);
     }
 
     #[test]
     fn a_topic_constant_without_a_literal_is_skipped() {
         let source = "static final String TOPIC = someOtherConstant;";
-        assert!(topics_in(source).is_empty());
+        assert!(topics(source).is_empty());
+    }
+
+    /// The shape `jails g event` writes. Nothing in the slice declares a
+    /// `TOPIC` constant any more, so a scan that knows only that shape finds
+    /// nothing on the project the command just generated.
+    #[test]
+    fn a_listener_placeholder_resolves_to_its_default() {
+        let source = r#"
+            @KafkaListener(topics = "${topics.order-placed:order-placed}")
+            public void on(OrderPlacedEvent event) {}
+        "#;
+        assert_eq!(topics(source), vec!["order-placed"]);
+    }
+
+    /// The project stating the property is the project's answer, not the
+    /// template's default.
+    #[test]
+    fn a_property_the_project_sets_wins_over_the_default() {
+        let source = r#"@KafkaListener(topics = "${topics.order-placed:order-placed}")"#;
+        let properties = BTreeMap::from([("topics.order-placed".to_string(), "orders.v2".into())]);
+        assert_eq!(topics_in(source, &properties), vec!["orders.v2"]);
+    }
+
+    /// Exact or nothing: a placeholder with no default and no property would
+    /// have to be invented, and an invented topic is a `kafka tail` reading an
+    /// empty topic and reporting that nothing arrived.
+    #[test]
+    fn a_placeholder_with_nothing_behind_it_is_not_guessed_at() {
+        let source = r#"@KafkaListener(topics = "${topics.order-placed}")"#;
+        assert!(topics(source).is_empty());
+    }
+
+    #[test]
+    fn a_listener_literal_is_the_topic() {
+        let source = r#"@KafkaListener(topics = "orders", groupId = "notes")"#;
+        assert_eq!(topics(source), vec!["orders"]);
+    }
+
+    #[test]
+    fn a_commented_out_listener_is_not_read() {
+        let source = r#"
+            // @KafkaListener(topics = "old.topic")
+            @KafkaListener(topics = "new.topic")
+        "#;
+        assert_eq!(topics(source), vec!["new.topic"]);
+    }
+
+    /// `@KafkaListener(topics = TOPIC)` names a constant, and the constant is
+    /// in the same file: the other half of the scan reads it.
+    #[test]
+    fn a_listener_naming_a_constant_is_left_to_the_constant() {
+        let source = r#"
+            static final String TOPIC = "orders";
+            @KafkaListener(topics = TOPIC)
+        "#;
+        assert_eq!(topics(source), vec!["orders"]);
     }
 }

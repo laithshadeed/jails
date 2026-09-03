@@ -42,14 +42,12 @@ struct FileStamp {
 
 pub(super) fn fingerprint(root: &Path) -> Snapshot {
     let mut snapshot = Snapshot::default();
-    for dir in [
-        "src/main/java",
-        "src/main/resources",
-        "src/test/java",
-        "src/test/resources",
-        ".mvn",
-        "gradle",
-    ] {
+    // The source roots come from the one answer to "where is the source", so
+    // a watch cannot be blind to a tree the affected index can see.
+    for input in crate::inspect::roots::input_roots(root) {
+        collect_files(&input.path, &mut snapshot);
+    }
+    for dir in [".mvn", "gradle"] {
         collect_files(&root.join(dir), &mut snapshot);
     }
     for file in [

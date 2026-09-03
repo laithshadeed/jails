@@ -57,7 +57,18 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // 77 -> 76: S60.7 put managed output beside the reader's
                 // sources, so `doctor`'s storage check reads one test tree and
                 // the helper that listed two is gone.
-                ceiling: 76,
+                //
+                // 76 -> 77: `inspect::roots::input_roots` is a new containment
+                // boundary of exactly the allowed kind -- its whole subject is
+                // which directories hold this project's inputs -- and it was
+                // added so that the affected index, the watch fingerprint, the
+                // Kafka topic scan, `lint` and the editor handshake stop each
+                // keeping a list of their own. Five lists became one function,
+                // and the function threads nothing further down: every caller
+                // resolves the roots once and passes the resolved slice, which
+                // is what took `affected`'s five helpers off this row in the
+                // same change.
+                ceiling: 77,
                 // Withdrawn, not reached: the count includes modules whose
                 // subject *is* a path, so a target under the ceiling reads as
                 // a demand to stop writing modules. The row below is the

@@ -48,18 +48,19 @@ fn handshake(start: Option<&Path>) -> Result<()> {
         .ok()
         .and_then(|text| pom::release_level(&text))
         .unwrap_or(26);
-    let roots = [
-        ("main-java", "src/main/java"),
-        ("test-java", "src/test/java"),
-        ("main-resources", "src/main/resources"),
-        ("test-resources", "src/test/resources"),
-        ("generated", "target/generated-sources"),
-    ]
-    .into_iter()
-    .filter(|(_, path)| root.join(path).is_dir())
-    .map(|(kind, path)| format!("{{\"path\":{},\"kind\":{}}}", js(path), js(kind)))
-    .collect::<Vec<_>>()
-    .join(",");
+    // The project's own inputs come from the one answer to "where is the
+    // source", so an editor and the scanners inside the tool cannot be told
+    // two different trees. `target/generated-sources` is not one of them: it
+    // is a build *output* an annotation processor writes, which an editor
+    // indexes and no jails scanner reads.
+    let roots = inspect::roots::input_roots(root)
+        .into_iter()
+        .map(|input| (input.label(), input.relative))
+        .chain([("generated", "target/generated-sources")])
+        .filter(|(_, path)| root.join(path).is_dir())
+        .map(|(kind, path)| format!("{{\"path\":{},\"kind\":{}}}", js(path), js(kind)))
+        .collect::<Vec<_>>()
+        .join(",");
     println!(
         "{{\"schema\":\"jails.editor-handshake.v1\",\"editor_protocol\":1,\"cli_version\":{},\"command_result_schema\":\"jails.command-result.v2\",\"event_schema\":\"jails.event.v1\",\"project\":{{\"identity\":{},\"root_digest\":{},\"build_systems\":[{}],\"java_release\":{},\"new_project_default_java_release\":26,\"source_roots\":[{}]}},\"capabilities\":[\"completion-v1\",\"symbols-v1\",\"diagnostics-v1\",\"prepared-plans-v1\",\"test-watch-events-v1\",\"testd-v2\"]}}",
         js(env!("CARGO_PKG_VERSION")),

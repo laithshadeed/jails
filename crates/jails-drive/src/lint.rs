@@ -51,8 +51,13 @@ pub fn lint() -> Result<()> {
     let root = find_project_root()?;
     let mut findings = Vec::new();
     inspect_file(&root, &root.join("pom.xml"), &mut findings);
-    for tree in ["src/main/java", "src/test/java"] {
-        for path in crate::java::source_files(&root.join(tree)) {
+    for set in [
+        crate::inspect::roots::SourceSet::Main,
+        crate::inspect::roots::SourceSet::Test,
+    ] {
+        for path in
+            crate::inspect::roots::source_files_in(&crate::inspect::roots::source_roots(&root, set))
+        {
             inspect_file(&root, &path, &mut findings);
         }
     }

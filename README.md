@@ -878,9 +878,14 @@ there the unit is a whole service block rather than a setting.)
 - `jails kafka <topics|describe|send|poison|tail|dlt|lag|reset> [--no-start]`
   — the broker counterpart to `jails db`. Everything runs inside the compose
   broker container, so there is nothing to install: the Kafka CLI tools ship
-  in the image. The topic defaults to the one the source declares (a `TOPIC`
-  constant, read textually so it answers on a project that does not compile)
-  and the group to `spring.kafka.consumer.group-id`. `send` publishes one JSON
+  in the image. The topic defaults to the one the source declares — the
+  `@KafkaListener(topics = …)` `jails g event` writes, or a `TOPIC` constant,
+  both read textually so they answer on a project that does not compile. A
+  `${key:default}` placeholder resolves against `application.properties` and
+  falls back to the default; a placeholder with neither is refused rather than
+  guessed at, because an invented topic is a `tail` that reads an empty one and
+  reports that nothing arrived. The group defaults to
+  `spring.kafka.consumer.group-id`. `send` publishes one JSON
   record with a key — ordering is per partition and a null key round-robins;
   `poison` publishes an unparseable one so you can watch it reach the DLT
   rather than stall the partition; `dlt` tails the dead-letter topic with

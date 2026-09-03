@@ -649,6 +649,19 @@ this phase, and their refusals are worded by the caller that reports them.
   `notes`. Reads source, never a running context: instant, and works on a
   project that does not start. Anything decided at runtime is stated rather
   than hidden.
+- **`crates/jails-project/src/inspect/roots.rs` is the one answer to "where is
+  the source".** `input_roots(root)` returns the four directories a project's
+  own inputs live in, each with the project-relative name to print, the source
+  set and whether it holds Java or resources; `source_roots(root, set)` is its
+  Java projection. Every scanner asks it -- the affected index, the watch
+  fingerprint, the Kafka topic scan, `jails lint`, the editor handshake's
+  `source_roots` -- so a root that moves moves for all of them at once. Five
+  lists is how one scanner came to be told the generated tree did not exist
+  while the other four could see it. It stays a *function* rather than a
+  constant because the answer being uniform is not the same as it being asked
+  once: a build that states its own source set has one place to be read into.
+  A caller resolves the roots once and passes the resolved slice down; nothing
+  re-derives them per path.
 - **`crates/jails-drive/src/run.rs`** -- `test`, `build`, `clean`, `check`,
   `run`, `watch`. `jails check` is `mvn clean verify`: incremental `verify`
   leaves deleted tests in `target/` and Surefire runs the leftover `.class`.
@@ -719,8 +732,13 @@ this phase, and their refusals are worded by the caller that reports them.
 - **`crates/jails-drive/src/kafka.rs`** -- runs the image's own CLI tools
   inside the compose container. `BROKER` is `kafka:19092`, the inter-broker
   listener; `localhost:9092` works from inside the container only by accident.
-  `topics_in()` locates a `TOPIC` constant with `blanked()` and reads the value
-  from the original source.
+  `topics_in()` locates a `TOPIC` constant *and* a
+  `@KafkaListener(topics = ...)` with `blanked()` and reads the value from the
+  original source. The listener is the shape `g event` writes and its value is
+  a `${key:default}` placeholder, resolved against `application.properties`
+  with the default as the fallback; a placeholder with neither is skipped, not
+  guessed at, because an invented topic is a `tail` that reads an empty topic
+  and reports that nothing arrived.
 - **`crates/jails-drive/src/console.rs`** -- `db`/`dbconsole` (`psql` or
   `sqlite3`) and `console` (`jshell` over the project's runtime classpath,
   resolved by `run/application/classpath.rs` from `dependency:build-classpath`

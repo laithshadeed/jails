@@ -50,10 +50,9 @@ is within 2× on every row.
 **First, the structural change (§1): done.** Generated Java lives in
 `src/` like any other Java, nothing generated reads `.jails` at build or
 test time, and a project whose `.jails/` is gone builds, passes the same
-tests, and is told by the next `jails g` what it lost. What is left of §1
-is the four scanners that still keep their own list of source roots, and
-the lock's shape, which is §2's. S60.7 in `docs/60-abstraction.md` names
-the mechanism.
+tests, and is told by the next `jails g` what it lost. The scanners ask one
+`input_roots` now, so what is left of §1 is the lock's shape, which is §2's.
+S60.7 in `docs/60-abstraction.md` names the mechanism.
 
 **Then, in this order,** each one commit or one short series, none
 reopening a contract:
@@ -102,24 +101,13 @@ a `.gitignore` naming the two scratch entries, `run/` (a classpath cache,
 an affected-index file, the daemon's socket) when a daemon has run, and
 `app.toml` on manifest projects.
 
-**Five scanners read `src/` alone**, which was the whole blind spot while
-the generated tree was elsewhere. The move closed the first row -- `jails
-test --engine warm NoteTest` on a fresh scaffold attributes the generated
-test and reaches the daemon rather than refusing it -- and the remaining
-four are what I71.41, I71.40 and I71.24 are still about. **Every "what a
-reader sees" cell below was measured before the move and needs
-re-measuring with the item it belongs to**; the roots each scanner reads
-are current.
-
-| scanner | file | roots it reads | what a reader saw, pre-move |
-|---|---|---|---|
-| staleness fingerprint | `run/fingerprint.rs` | `src/{main,test}/{java,resources}`, build files | `test --fast` widens every generated test to Maven |
-| affected index | `affected.rs` | `src/main/java`, `src/test/java` | a comment appended to the generated `Note.java`, then `test --affected`: *no affected tests in epoch 1*, 27 ms, exit 0, nothing run |
-| Kafka topic scan | `kafka.rs` | `src/main/java` | `kafka describe` right after `g event OrderPlaced`: *no topic given, and none found in the source* |
-| editor handshake `source_roots` | the editor protocol | the same four `src/` roots | an editor is told the generated roots do not exist |
-
-The second row is the *green build proving nothing* README's own paragraph
-on `--affected` promises cannot happen.
+**The scanners now ask one question.** `inspect::roots::input_roots` is the
+one answer to "where is the source", and the affected index, the watch
+fingerprint, the Kafka topic scan, `jails lint` and the editor handshake all
+read it; a caller resolves the roots once and passes the slice down. What is
+left of the table is I71.40's row: a change under a root jails does not know
+is still hidden by the affected index's pathspec, and reads as *no affected
+tests* (2026-09-03).
 
 ### After
 
@@ -168,15 +156,6 @@ array of integers, 15× the tree it describes. *Change* the lock becomes a
 manifest of path, artifact id and digest, with the merge base beside it as
 a tree of files — which is I70.22 in §2, and is the whole of what remains
 here. *Done when* I70.22 is done.
-
-**I71.41 — one answer to "where is the source".** *Today* five scanners
-each keep a list. *Change* one `source_roots()` on the project, read from
-the build (the Gradle source set already names the roots, and `editor
-handshake` already prints the shape), consumed by all five. The list is
-the standard one now that the generated tree is under `src/`, and the
-function stays: the answer being uniform is not the same as it being
-asked once. *Done when* the table above has one row and `kafka describe`
-finds the topic `g event` wrote.
 
 **I71.40 — a change with no known root widens to everything.** *Today* a
 changed path under no known root selects nothing. *Change* it is

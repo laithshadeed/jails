@@ -31,7 +31,7 @@ pub mod testing;
 // it.
 pub(crate) use jails_codemod::dispatch::is_dispatcher;
 
-pub(crate) use jails_project::{classfile, compose, gradle, java, maven, project};
+pub(crate) use jails_project::{classfile, compose, gradle, inspect, java, maven, project};
 pub(crate) use jails_report::why;
 pub(crate) use jails_spec::build;
 pub(crate) use jails_spec::spec::paths::find_project_root;
