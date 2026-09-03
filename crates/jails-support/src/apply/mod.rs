@@ -564,6 +564,30 @@ fn derived(path: &Path) -> Result<()> {
     .into())
 }
 
+/// Remove a file from the scratch tree, the mirror of [`put_in_scratch`].
+///
+/// **Checked rather than promised**, the way `remove_derived` checks
+/// `target/`: the path has to be inside a `.jails/run` directory, and every
+/// other path is refused. What lives there is one run's state -- a daemon's
+/// socket metadata, the last applied plan `jails undo` reverses -- and a verb
+/// that could reach past it would be a delete with no transaction around it.
+pub fn remove_from_scratch(path: impl AsRef<Path>) -> Result<()> {
+    let path = path.as_ref();
+    let inside = path
+        .parent()
+        .is_some_and(|parent| parent.ends_with(".jails/run"));
+    if !inside {
+        return Err(format!(
+            "{} is not run state, so it may not be removed outside a transaction.\n       \
+             fix: this is a bug in jails, not something a project can cause -- please report \
+             the command.",
+            path.display()
+        )
+        .into());
+    }
+    remove(path)
+}
+
 /// Remove a file the build tool derived, once its source is gone.
 pub fn remove_derived(path: impl AsRef<Path>) -> Result<()> {
     let path = path.as_ref();

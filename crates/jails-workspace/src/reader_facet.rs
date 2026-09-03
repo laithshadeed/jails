@@ -134,7 +134,7 @@ pub(crate) fn materialize(
                             captured_mode(current),
                             blobs,
                         )?;
-                        operations.push(PlannedOperation::RemoveReaderFile {
+                        operations.push(PlannedOperation::RemoveFile {
                             path: path.clone(),
                             before,
                         });

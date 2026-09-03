@@ -75,7 +75,7 @@ pub(super) fn publish_authoring_source(
                 },
                 blobs,
             )?;
-            operations.push(PlannedOperation::RemoveReaderFile { path, before });
+            operations.push(PlannedOperation::RemoveFile { path, before });
         }
     }
     Ok(())

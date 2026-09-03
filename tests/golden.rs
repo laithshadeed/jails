@@ -69,7 +69,7 @@ const SNAPSHOTTED_PROJECT_FILES: [&str; 3] = ["model.jdl", "ledger.toml", "app.t
 /// The locks are excluded for a different reason: they are empty files whose
 /// presence depends on whether a run was interrupted, so they are not output
 /// at all.
-const EXECUTOR_STATE: [&str; 9] = [
+const EXECUTOR_STATE: [&str; 10] = [
     ".jails/objects/",
     ".jails/transactions/",
     ".jails/receipts/",
@@ -79,6 +79,11 @@ const EXECUTOR_STATE: [&str; 9] = [
     // are: a lock file's contents are never the point, and snapshotting one
     // records a byte count as though it were output.
     ".jails/apply.lock",
+    // One run's scratch, and the last applied plan inside it: a verbatim
+    // copy of every blob the scenario wrote, which is the same reason the
+    // compiler lock below is not snapshotted -- it would churn on every
+    // template edit and say nothing the generated files beside it do not.
+    ".jails/run/",
     // The compiler lock is goldened *as a format* in
     // `tests/protocol-golden/compiler-lock-v2.json`, with the projection's
     // file contents elided. Holding it here as well would put a second,

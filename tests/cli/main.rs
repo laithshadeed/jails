@@ -64,6 +64,13 @@ fn snapshot_tree(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
     };
     for entry in entries.flatten() {
         let path = entry.path();
+        // `.jails/run/` is one run's scratch -- the mutex, the daemon's
+        // socket metadata, the plan `jails undo` reverses -- and the state
+        // `.gitignore` says so. A test comparing a project before and after
+        // is comparing what the project *is*, and none of that is it.
+        if path.ends_with(".jails/run") {
+            continue;
+        }
         if path.is_dir() {
             out.extend(snapshot_tree(&path));
         } else if !path.ends_with(".jails/apply.lock") {

@@ -16,7 +16,7 @@
 //!
 //! The operation set is closed on purpose. `PublishMergedTree` is the managed
 //! tree, `ReplaceModelFile`/`ReplaceStateFile` are jails' own, `AppendMigration`
-//! is forward-only history, and `PatchReaderFile`/`RemoveReaderFile` are the
+//! is forward-only history, and `PatchReaderFile`/`RemoveFile` are the
 //! two ways anything reader-owned may move — each with a captured before-image.
 //! A new way to touch a project is a new variant here, which is a compile
 //! error in the executor until it is handled, rather than a new caller
@@ -72,6 +72,12 @@ impl PlanInput {
         .map_err(|error| format!("could not encode the plan input: {error}"))
     }
 
+    /// The inverse of an applied plan: nothing to compile, and the request
+    /// is the undoing itself.
+    pub fn undo() -> Self {
+        Self::of(br#"{"kind":"undo"}"#.to_vec())
+    }
+
     fn of(bytes: Vec<u8>) -> Self {
         Self {
             schema: Self::SCHEMA.to_string(),
@@ -90,7 +96,7 @@ pub struct ModelFileUpdate {
     /// The one caller is `model upgrade`, which writes `.jails/model.jdl` and
     /// retires `.jails/model.toml` in the *same* exact plan, because two
     /// editable model sources is the state the contracts forbid. It is a
-    /// `RemoveReaderFile` rather than a new operation because that is exactly
+    /// `RemoveFile` rather than a new operation because that is exactly
     /// what a retired source is, and a seventh operation for one caller would
     /// widen the vocabulary every executor and verifier has to cover.
     pub retire: Vec<ProjectPath>,
@@ -145,7 +151,16 @@ pub enum PlannedOperation {
         before: Option<FileImageRef>,
         after: FileImageRef,
     },
-    RemoveReaderFile {
+    /// Take a file away, whoever owned it.
+    ///
+    /// **Named for what it does, tagged for what it was.** It retires a
+    /// reader-owned file the model no longer patches, and it is also the
+    /// inverse of every operation that *created* one -- which is what
+    /// `jails undo` is made of, and why the name cannot say `reader`. The
+    /// wire tag stays `remove-reader-file` so a plan exported by an earlier
+    /// release still applies.
+    #[serde(rename = "remove-reader-file")]
+    RemoveFile {
         path: ProjectPath,
         before: FileImageRef,
     },

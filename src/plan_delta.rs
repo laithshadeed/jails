@@ -35,7 +35,7 @@ pub(crate) fn deleted_paths(
                 let now: std::collections::BTreeSet<_> = entries(after);
                 paths.extend(was.difference(&now).cloned());
             }
-            Op::RemoveReaderFile { path, .. } => paths.push(path.clone()),
+            Op::RemoveFile { path, .. } => paths.push(path.clone()),
             _ => {}
         }
     }
@@ -279,7 +279,7 @@ pub(crate) fn preview(bundle: &jails_contracts::PlanBundle) -> Delta {
                     path: path.as_str().to_string(),
                 }),
             },
-            Op::RemoveReaderFile { path, .. } => {
+            Op::RemoveFile { path, .. } => {
                 changes.push(Change {
                     verb: "delete",
                     path: path.as_str().to_string(),

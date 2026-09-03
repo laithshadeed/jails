@@ -53,6 +53,7 @@ mod rename_source;
 mod status;
 mod template_macro;
 mod tool_command;
+mod undo;
 
 // What the CLI accepts lives in `cli`; what it does is the match below.
 pub(crate) use cli::{
@@ -286,6 +287,7 @@ fn main() -> std::process::ExitCode {
         }
         Command::Sync { no_start } => model_command::ensure_owned(invocation.clone())
             .and_then(|()| model_command::sync(no_start, invocation)),
+        Command::Undo => undo::run(invocation),
         Command::Remove {
             capabilities,
             name,

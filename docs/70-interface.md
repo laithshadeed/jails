@@ -70,12 +70,12 @@ reopening a contract:
 | ~~9~~ | ~~I71.29~~, ~~I71.26~~, ~~I71.28~~ | ~~README, the specification and the binary agree~~ |
 | ~~10~~ | ~~I71.14~~ | ~~every mutation prints the JDL it wrote~~ |
 
-**Worth a prototype before a decision:** `jails undo` (I71.15), an LSP for
-the model (I71.19), an MCP server (I71.20), the manifest folded into the
-model (I71.21). Bare `jails` as status (I71.17) was built rather than
-prototyped: every fact in it was already computed somewhere, so the
-prototype and the implementation were the same work. `sync --watch` was
-prototyped and declined; §9 says why.
+**Worth a prototype before a decision:** an LSP for the model (I71.19), an
+MCP server (I71.20), the manifest folded into the model (I71.21). Two came
+off this list by being built rather than prototyped, for the same reason:
+every part of each already existed. Bare `jails` as status (I71.17) is
+facts other commands compute, and `jails undo` (I71.15) is the last plan
+read backwards. `sync --watch` was prototyped and declined; §9 says why.
 
 ---
 
@@ -298,14 +298,35 @@ lock is gone are the same capture), so the refusal now names both repairs
 rather than guessing, and `doctor` carries a `merge base` row for the
 condition before a mutation runs into it.
 
-**I71.15 — `jails undo` (prototype).** *Change* add `jails undo`, built
-on what exists: every planned operation carries a before-image (`before: Option<FileImageRef>` in `plan.rs`; blobs in the
-bundle), so the inverse plan is the same bundle with before and after
-swapped and the current after-images as preconditions. Keep the last
-applied bundle at `.jails/run/last-plan.json`; `undo` hands the inverse to
-the one executor, which refuses if anything moved. README already
-documents an `undo` that does not exist (§8). *Done when* `g scaffold X`
-then `jails undo` leaves `git status --short` empty.
+**I71.15 — `jails undo`.** *Landed.* Every applied operation carries the
+image it found beside the image it wrote -- that is what makes a plan
+reviewable -- so the inverse is that plan read backwards.
+`jails_workspace::invert` swaps the two images of every operation, turns a
+created file into a removal and an appended migration into one, publishes
+the tree the applied one replaced, and takes the applied plan's
+after-images as the inverse's preconditions. Nothing is recompiled and
+there is no reverse renderer: `g scaffold X` then `jails undo` leaves
+`git status --short` empty, which is the item's own measurement.
+
+The executor is what makes it safe. A managed file edited since, a second
+command in between, a `git checkout` -- each is a stale precondition and
+the whole thing refuses with nothing written. The refusal carries its own
+fix rather than the executor's: "run the command again" is right for a
+mutation, which would replan, and wrong for `undo`, which has one plan and
+cannot make another.
+
+One command deep, deliberately. The bundle is kept at
+`.jails/run/last-plan.json`, which the state `.gitignore` keeps out of
+every commit, and it is forgotten once reversed -- so a second `undo` says
+there is nothing to undo rather than refusing on a stale precondition and
+leaving the reader to work out which of the two it meant. `git` is what
+reverses more than one.
+
+Two things it does not do. It does not re-run follow-up effects: `add db`
+started a container, and removing the files does not stop it. And it is
+hidden from the first screen, like every command outside I70.8's twenty
+words, while `jails commands` lists it.
+
 
 ---
 
@@ -976,9 +997,9 @@ when* the second `jails run` on an unchanged tree answers in under 6 s.
 
 | the document says | the binary does | where |
 |---|---|---|
-| README: `jails history`, `jails show <transaction>`, `jails undo <transaction>` | none of the three exists | README line 839 against `jails commands --json` |
-| README, `jails g --help`, spec §9: collections are `list<T>` and `map<K,V>` | *unknown field type*, on the CLI and in a hand-written model | README line 1266; `docs/01-jdl-v1.md` line 924 |
-| spec §2, §17: `--package` is *the sole intentional refusal* | `--package util` writes `@package(util)` | `docs/01-jdl-v1.md` lines 89, 2122 |
+| ~~README: `jails history`, `jails show <transaction>`, `jails undo <transaction>`~~ | ~~none of the three exists~~ | *Closed.* `history` and `show` left the README with the receipts system; `undo` exists (I71.15) |
+| ~~README, `jails g --help`, spec §9: collections are `list<T>` and `map<K,V>`~~ | ~~*unknown field type*, on the CLI and in a hand-written model~~ | *Closed.* Collections exist (I71.26) |
+| ~~spec §2, §17: `--package` is *the sole intentional refusal*~~ | ~~`--package util` writes `@package(util)`~~ | *Closed.* §9.8 documents the attribute (I71.28) |
 | README `jails.toml`: `[project] capabilities` is what `sync` applies | `sync` reads the model; `new` writes no `jails.toml` | README line 1108 |
 | twelve messages: *declared under `[entities]`* and kin | the file has no such tables | `grep -rn 'declared under' src crates` |
 | README's testd numbers | no generated test is eligible (§1) | README line 936 |

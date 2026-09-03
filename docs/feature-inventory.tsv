@@ -21,6 +21,7 @@ generate	jails	project-mutation	model_generate_jdl::run
 add	jails	project-mutation	model_capability::add
 add dependency	jails	project-mutation	model_capability::add_dependency
 sync	jails	project-mutation	model_command::sync
+undo	jails	project-mutation	undo::run
 remove	jails	project-mutation	model_capability::remove
 remove dependency	jails	project-mutation	model_capability::remove_dependency
 remove fast-test	jails	project-mutation	model_capability::remove_fast_test

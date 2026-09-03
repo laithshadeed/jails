@@ -113,7 +113,7 @@ pub fn execute(root: &Path, bundle: &PlanBundle) -> Result<Execution, Diagnostic
                 write_atomic(root, path, bytes, after.mode)?;
                 written += 1;
             }
-            PlannedOperation::RemoveReaderFile { path, .. } => {
+            PlannedOperation::RemoveFile { path, .. } => {
                 let absolute = root.join(path.as_str());
                 crate::fault::trip(crate::fault::point::BEFORE_REMOVE)?;
                 match std::fs::remove_file(&absolute) {
@@ -281,6 +281,15 @@ const RUN_IT_AGAIN: &str = "run the command again so it plans against the projec
                             imported with `--plan-in` has to have been exported from this \
                             project";
 
+/// The one code for "the project moved under this plan".
+///
+/// **A constant because two commands answer it differently.** A mutation
+/// replans, so the executor's own fix is to run it again; `undo` has exactly
+/// one plan and cannot make another, so it says what a reader can actually
+/// do. Matching on the string in both places would be the second spelling
+/// this repository's gates exist to catch.
+pub const PRECONDITION_STALE: &str = "workspace-precondition-stale";
+
 fn verify_preconditions(root: &Path, bundle: &PlanBundle) -> Result<(), Diagnostic> {
     let desired = desired_files(bundle)?;
     let removed = removed_files(bundle)?;
@@ -306,7 +315,7 @@ fn verify_preconditions(root: &Path, bundle: &PlanBundle) -> Result<(), Diagnost
             _ => "its bytes changed after the plan",
         };
         return Err(Diagnostic::new(
-            "workspace-precondition-stale",
+            PRECONDITION_STALE,
             path.to_string(),
             format!(
                 "`{path}` no longer matches what this plan was reviewed against -- {observed}. \
@@ -533,7 +542,7 @@ fn desired_files(bundle: &PlanBundle) -> Result<BTreeMap<ProjectPath, DesiredFil
                     },
                 );
             }
-            PlannedOperation::RemoveReaderFile { .. } => {}
+            PlannedOperation::RemoveFile { .. } => {}
         }
     }
     Ok(files)
@@ -545,7 +554,7 @@ fn removed_files(bundle: &PlanBundle) -> Result<BTreeSet<ProjectPath>, Diagnosti
     let mut removed = BTreeSet::new();
     for operation in &bundle.plan.operations {
         match operation {
-            PlannedOperation::RemoveReaderFile { path, .. } => {
+            PlannedOperation::RemoveFile { path, .. } => {
                 removed.insert(path.clone());
             }
             PlannedOperation::PublishMergedTree { before, after, .. } => {

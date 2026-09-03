@@ -621,3 +621,90 @@ fn every_line_of_a_mutation_report_is_a_file_git_sees_change() {
         commit(&mutation.join(" "));
     }
 }
+
+/// **Undo is the last plan read backwards, and nothing else.**
+///
+/// Every applied operation carries the image it found beside the image it
+/// wrote -- that is what makes a plan reviewable -- so reversing one needs no
+/// reverse renderer, no file table and no second model. What it does need is
+/// the executor, whose preconditions are what the last command left: this
+/// asserts both halves, the restore and the refusal.
+#[test]
+fn undo_reverses_the_last_applied_plan_and_refuses_when_the_project_moved() {
+    let root = model_project("model-undo", EMPTY_MODEL);
+    // Paths and digests rather than the tree's bytes: the executor writes
+    // `.jails/.gitignore` and `.jails/.gitattributes` after every
+    // transaction, which is state about the project rather than anything the
+    // plan carried, so `undo` leaves them behind and should.
+    let shape = |root: &std::path::Path| {
+        snapshot_tree(root)
+            .into_iter()
+            .filter(|(path, _)| !path.to_string_lossy().contains("/.jails/.git"))
+            .map(|(path, bytes)| (path.to_string_lossy().to_string(), bytes.len()))
+            .collect::<Vec<_>>()
+    };
+    let before = shape(&root);
+
+    let generated = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Note", "id:uuid@pk", "title:string"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    assert_ne!(shape(&root), before, "the scaffold wrote nothing");
+
+    // What it would do, before it does it.
+    let preview = jails_cmd(&root, None)
+        .args(["--pretend", "undo"])
+        .output()
+        .unwrap();
+    assert!(
+        preview.status.success(),
+        "{}",
+        String::from_utf8_lossy(&preview.stderr)
+    );
+    let preview = String::from_utf8_lossy(&preview.stdout).to_string();
+    assert!(preview.contains("delete"), "{preview}");
+    assert!(preview.contains("Note.java"), "{preview}");
+    assert_ne!(shape(&root), before, "`--pretend` wrote something");
+
+    let undone = jails_cmd(&root, None).arg("undo").output().unwrap();
+    assert!(
+        undone.status.success(),
+        "{}",
+        String::from_utf8_lossy(&undone.stderr)
+    );
+    // The whole property, in one comparison: the model, the lock, the
+    // managed files and the build file are all back.
+    assert_eq!(shape(&root), before);
+
+    // One command deep: there is nothing behind it.
+    let again = jails_cmd(&root, None).arg("undo").output().unwrap();
+    assert!(!again.status.success());
+    let told = String::from_utf8_lossy(&again.stderr);
+    assert!(told.contains("there is no command to undo"), "{told}");
+
+    // And a project that moved under the plan refuses, with a fix a reader
+    // can act on rather than the "run it again" a mutation would get.
+    let generated = jails_cmd(&root, None)
+        .args(["g", "record", "Memo", "title:string"])
+        .output()
+        .unwrap();
+    assert!(generated.status.success());
+    let record = root.join("src/main/java/com/example/notes/domain/Memo.java");
+    let edited = format!("{}\n// mine\n", fs::read_to_string(&record).unwrap());
+    fs::write(&record, &edited).unwrap();
+    let refused = jails_cmd(&root, None).arg("undo").output().unwrap();
+    assert!(!refused.status.success());
+    let told = String::from_utf8_lossy(&refused.stderr);
+    assert!(told.contains("no longer matches"), "{told}");
+    assert!(told.contains("put that file back"), "{told}");
+    assert_eq!(
+        fs::read_to_string(&record).unwrap(),
+        edited,
+        "a refused undo wrote something"
+    );
+}

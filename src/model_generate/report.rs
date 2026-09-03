@@ -486,7 +486,7 @@ fn unified_diff(bundle: &jails_contracts::PlanBundle) -> Vec<String> {
             Op::AppendMigration { path, after } => {
                 show("create", path.as_str(), None, text(&after.blob));
             }
-            Op::RemoveReaderFile { path, before } => {
+            Op::RemoveFile { path, before } => {
                 show("delete", path.as_str(), text(&before.blob), None);
             }
         }

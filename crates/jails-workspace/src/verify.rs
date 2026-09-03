@@ -78,7 +78,7 @@ pub fn verify_bundle(bundle: &PlanBundle) -> Result<(), Diagnostic> {
                 }
                 verify_image(bundle, after)?;
             }
-            PlannedOperation::RemoveReaderFile { before, .. } => verify_image(bundle, before)?,
+            PlannedOperation::RemoveFile { before, .. } => verify_image(bundle, before)?,
             PlannedOperation::ReplaceStateFile { before, after, .. } => {
                 if let Some(before) = before {
                     verify_image(bundle, before)?;

@@ -534,7 +534,7 @@ fn materialize_document_intents(
             },
             blobs,
         )?;
-        operations.push(PlannedOperation::RemoveReaderFile {
+        operations.push(PlannedOperation::RemoveFile {
             path: source,
             before,
         });
@@ -661,7 +661,7 @@ pub(crate) fn plan_reader_document(
     if let Some(before) = before.clone()
         && after_bytes.iter().all(u8::is_ascii_whitespace)
     {
-        operations.push(PlannedOperation::RemoveReaderFile { path, before });
+        operations.push(PlannedOperation::RemoveFile { path, before });
         return Ok(());
     }
     let after = file_image(&after_bytes, mode, blobs)?;

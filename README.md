@@ -1246,6 +1246,15 @@ because `jails sync` acts on it.
   project changes nothing and says so. With `--pretend` it answers "what is
   this project missing?" without writing.
 
+- `jails undo [--pretend]` — reverse the last command that wrote something.
+  Every applied plan carries the image it found beside the image it wrote, so
+  the inverse is that plan read backwards: no reverse renderer and nothing
+  recompiled. It goes through the one executor, whose preconditions are what
+  the last command left, so a managed file edited since or a second command
+  in between makes it refuse with nothing written. One command deep and not
+  a history: the kept plan lives under `.jails/run/`, which is not committed,
+  and `git` is what reverses more than one.
+
 A capability name that jails does not know is an error listing the real ones,
 for the same reason a misspelled layer is: `postgress` sitting in the file
 would look declared and never sync. The names are the labels `add` uses, not

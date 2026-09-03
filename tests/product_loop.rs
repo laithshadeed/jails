@@ -2216,6 +2216,11 @@ fn private_executor_state(path: &Path) -> bool {
         ".jails/objects/",
         ".jails/transactions/",
         ".jails/receipts/",
+        // One run's scratch: the executor's mutex, a daemon's socket
+        // metadata, and the last applied plan `jails undo` reverses. The
+        // state `.gitignore` keeps all of it out of every commit, and a
+        // reader never sees any of it.
+        ".jails/run/",
     ]
     .iter()
     .any(|prefix| path.starts_with(prefix))

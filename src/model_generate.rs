@@ -364,6 +364,16 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
     let execution = jails_workspace::execute(&root, &bundle).map_err(|error| {
         Failure::diagnosed(error.code, format!("could not apply the plan: {error}"))
     })?;
+    // **Kept after the write, so what is on disk and what `undo` would put
+    // back cannot disagree.** A bundle written before the executor ran would
+    // describe a transition that a refused precondition then abandoned.
+    // `.jails/run/` is scratch the state `.gitignore` keeps out of every
+    // commit, which is the right shelf for it: undoing the last command is a
+    // convenience for the person who ran it, not a history the project
+    // carries.
+    if let Some(kept) = crate::undo::Kept::of(&invocation) {
+        kept.remember(&bundle);
+    }
     clock.mark("execute", || {
         format!(
             "{} written, {} deleted",

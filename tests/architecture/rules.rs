@@ -38,6 +38,9 @@ fn owns_terminal_output(path: &Path) -> bool {
         // Bare `jails`: the status is a report, and printing it is the whole
         // of what the module does.
         || relative == "src/status.rs"
+        // `undo` prints the inverse plan it is about to run, and the one
+        // line it prints after running it.
+        || relative == "src/undo.rs"
         || relative == "src/model_generate.rs"
         // The two halves `model_generate` was split into, and both are here for
         // its reason rather than a new one. `report` is the preview, the
@@ -425,6 +428,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-workspace", "reconcile", 6),
     ("jails-workspace", "relocate", 6),
     ("jails-workspace", "verify", 6),
+    ("jails-workspace", "invert", 6),
     // jails-protocol: the validated values every closed format is built from.
     // jails-state: `.jails/` and what a directory holds. Below the Java
     // project on purpose -- `jails-commit` needs both and neither is about Java.
@@ -503,6 +507,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails", "model_setting", 9),
     ("jails", "model_status", 9),
     ("jails", "status", 9),
+    ("jails", "undo", 9),
     ("jails", "model_ownership", 9),
     ("jails", "model_relocate", 9),
     ("jails", "model_migration", 9),

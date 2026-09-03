@@ -779,6 +779,11 @@ fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
             "apply.lock",
             "compiler.lock.json",
             "model.jdl",
+            // One run's scratch: the executor's lock lives beside it and the
+            // last applied plan inside it, which is what `jails undo`
+            // reverses. The state `.gitignore` keeps both out of every
+            // commit.
+            "run",
         ]
         .map(str::to_string)
         .into(),

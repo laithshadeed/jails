@@ -575,6 +575,18 @@ pub(crate) enum Command {
         #[arg(long)]
         no_start: bool,
     },
+    /// Reverse the last command that wrote something
+    ///
+    /// Every applied plan carries the image it found beside the image it
+    /// wrote, so the inverse is that plan read backwards -- no reverse
+    /// renderer, nothing recompiled. It goes through the one executor, whose
+    /// preconditions are what the last command left: a file edited since, or
+    /// a second command in between, makes it refuse with nothing written.
+    ///
+    /// One command deep. The kept plan lives under `.jails/run/`, which is
+    /// not committed; `git` is what reverses more than one.
+    #[command(hide = true)]
+    Undo,
     /// Remove what a matching add call would have created
     #[command(visible_alias = "rm")]
     #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]

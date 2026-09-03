@@ -811,6 +811,7 @@ fn every_fix_line_leads_with_something_the_reader_can_do() {
         "correct",
         "create",
         "declare",
+        "delete",
         "destroy",
         "drop",
         "edit",

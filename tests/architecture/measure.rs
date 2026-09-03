@@ -1085,6 +1085,7 @@ pub(crate) fn executor_bypasses(src: &[Source]) -> usize {
                 "apply::put_outside_project",
                 "apply::ensure_directory_outside_project",
                 "apply::put_in_scratch",
+                "apply::remove_from_scratch",
                 "apply::remove_derived",
                 "apply::ensure_derived_directory",
                 // Authenticated sockets and metadata under `.jails/run` are
