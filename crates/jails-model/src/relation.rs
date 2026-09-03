@@ -92,7 +92,12 @@ pub(crate) fn link(
             let sql_name = declaration
                 .sql_name
                 .unwrap_or_else(|| format!("fk_{}_{}", child.names.sql_table, label));
-            linker.sql_identifier(&sql_name, &format!("{path}.sql_name"));
+            // A relation is a foreign key, which only exists in a table.
+            linker.sql_identifier(
+                &sql_name,
+                &format!("{path}.sql_name"),
+                crate::linker::validate::SqlName::constraint(true),
+            );
             if let Some(first) = sql_names.insert(sql_name.clone(), path.clone()) {
                 linker.problem(
                     "model-sql-relation-collision",

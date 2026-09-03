@@ -5,7 +5,7 @@ mod enum_type;
 mod field;
 mod operation;
 mod unit;
-mod validate;
+pub(crate) mod validate;
 
 pub(crate) use validate::{Linker, collision};
 
@@ -136,8 +136,28 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
         let sql_table = entity
             .table
             .unwrap_or_else(|| crate::naming::plural_snake_case(&label));
+        // **Whether this entity reaches SQL at all**, which is what decides
+        // whether a reserved word can break anything: with no table there is
+        // no DDL to quote it in.
+        //
+        // Read off the *declarations* rather than the facets, because facets
+        // are filled in from the projections after this loop -- a JDL entity
+        // saying `use repo` still has an empty facet set here.
+        let stored =
+            entity.projections.iter().any(|projection| {
+                matches!(projection.kind.as_str(), "repo" | "search" | "scaffold")
+            }) || entity.facets.iter().any(|facet| {
+                matches!(
+                    facet,
+                    crate::model::Facet::Repository | crate::model::Facet::Search
+                )
+            });
         linker.java_type_and_variable(&java_type, &format!("{path}.java_name"));
-        linker.sql_identifier(&sql_table, &format!("{path}.table"));
+        linker.sql_identifier(
+            &sql_table,
+            &format!("{path}.table"),
+            crate::linker::validate::SqlName::table(stored),
+        );
         collision(
             &mut linker,
             &mut java_types,
@@ -183,7 +203,11 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
                 .unwrap_or_else(|| lower_camel_case(&field_label));
             let sql_column = field.column.unwrap_or_else(|| snake_case(&field_label));
             linker.java_member(&java_member, &format!("{field_path}.java_name"));
-            linker.sql_identifier(&sql_column, &format!("{field_path}.column"));
+            linker.sql_identifier(
+                &sql_column,
+                &format!("{field_path}.column"),
+                crate::linker::validate::SqlName::column(stored),
+            );
             collision(
                 &mut linker,
                 &mut java_members,
@@ -287,6 +311,7 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
             &fields,
             &field_labels,
             entity.constraints,
+            stored,
         );
         let explicit_primary_keys = constraints
             .values()
@@ -294,9 +319,12 @@ pub(crate) fn link(document: source::Document) -> Result<AppModel, Diagnostics> 
             .count();
         let indexes = crate::index::link(
             &mut linker,
-            &path,
-            &label,
-            &sql_table,
+            crate::index::Owner {
+                path: &path,
+                label: &label,
+                sql_table: &sql_table,
+                stored,
+            },
             &fields,
             &field_labels,
             entity.indexes,

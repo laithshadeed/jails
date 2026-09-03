@@ -384,9 +384,11 @@ brackets. *Done when* `g record Bag tags:list<string>` generates and
 `g scaffold Bag tags:list<string>` refuses naming the column.
 
 **I71.27 — the reserved-word check is about columns, on stored entities.**
-*Change* `model-sql-reserved` runs only for entities with storage and
-names the column, not a table. *Done when* `g record Timing when:instant` succeeds and the message on a
-stored entity says *column*.
+*Landed.* `SqlName` carries the noun and the guard together, so a call site
+cannot pass one and forget the other, and storage is read off the
+*declarations* rather than the facets -- facets are filled in from the
+projections after the entity loop, so a JDL entity saying `use repo` had an
+empty facet set at the point the check runs.
 
 **I71.28 — `--package` has one story.** *Change* keep the binary and fix
 the specification: `@package(name)` becomes a §9 attribute with a

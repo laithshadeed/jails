@@ -6,15 +6,33 @@ use crate::model::{Field, Index, IndexColumn, IndexDirection};
 use crate::source;
 use std::collections::{BTreeMap, BTreeSet};
 
+/// The entity an index belongs to, as the four things linking one needs.
+///
+/// **A parameter object, because the alternative was eight arguments.** The
+/// three names and the storage flag are one fact -- which entity this is --
+/// and passing them separately is how a call site ends up handing the label
+/// where the table belongs.
+pub(crate) struct Owner<'a> {
+    pub(crate) path: &'a str,
+    pub(crate) label: &'a str,
+    pub(crate) sql_table: &'a str,
+    /// Whether the entity reaches SQL at all; see `SqlName`.
+    pub(crate) stored: bool,
+}
+
 pub(crate) fn link(
     linker: &mut Linker,
-    entity_path: &str,
-    entity_label: &str,
-    sql_table: &str,
+    owner: Owner<'_>,
     fields: &[Field],
     field_labels: &BTreeMap<String, FieldId>,
     declarations: BTreeMap<String, source::Index>,
 ) -> BTreeMap<IndexId, Index> {
+    let Owner {
+        path: entity_path,
+        label: entity_label,
+        sql_table,
+        stored,
+    } = owner;
     let mut indexes = BTreeMap::new();
     let mut index_names = fields
         .iter()
@@ -35,7 +53,11 @@ pub(crate) fn link(
         let sql_name = index
             .name
             .unwrap_or_else(|| format!("idx_{sql_table}_{index_label}"));
-        linker.sql_identifier(&sql_name, &format!("{index_path}.name"));
+        linker.sql_identifier(
+            &sql_name,
+            &format!("{index_path}.name"),
+            crate::linker::validate::SqlName::index(stored),
+        );
         if let Some(first) = index_names.insert(sql_name.clone(), index_path.clone()) {
             linker.problem(
                 "model-sql-index-collision",

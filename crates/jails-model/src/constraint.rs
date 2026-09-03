@@ -30,6 +30,7 @@ pub(crate) fn link(
     fields: &[Field],
     field_labels: &BTreeMap<String, FieldId>,
     declarations: Vec<source::EntityConstraint>,
+    stored: bool,
 ) -> BTreeMap<ConstraintId, EntityConstraint> {
     let mut constraints = BTreeMap::new();
     let mut shapes = BTreeMap::<(ConstraintKind, Vec<FieldId>), String>::new();
@@ -109,7 +110,11 @@ pub(crate) fn link(
         let sql_name = declaration
             .name
             .unwrap_or_else(|| format!("{prefix}_{sql_table}_{columns}"));
-        linker.sql_identifier(&sql_name, &format!("{path}.name"));
+        linker.sql_identifier(
+            &sql_name,
+            &format!("{path}.name"),
+            crate::linker::validate::SqlName::constraint(stored),
+        );
         if let Some(first) = sql_names.insert(sql_name.clone(), path.clone()) {
             linker.problem(
                 "model-sql-constraint-collision",

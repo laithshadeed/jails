@@ -3,6 +3,50 @@
 //!
 use super::*;
 
+/// **A reserved word only matters where SQL is written.**
+///
+/// `g record Timing when:instant` on a project with no database used to be
+/// refused because `when` is reserved in PostgreSQL -- for a table that is
+/// never created, in a project with no DDL at all. And the message said
+/// *table* whichever name it was about, so a reader with a reserved column
+/// went looking for a table to rename.
+#[test]
+fn a_reserved_word_is_refused_on_a_stored_entity_and_named_by_what_it_is() {
+    let unstored = jdl_project("sql-reserved-unstored", NOTES_JDL);
+    let accepted = jails_cmd(&unstored, None)
+        .args(["g", "record", "Timing", "when:instant"])
+        .output()
+        .unwrap();
+    assert!(
+        accepted.status.success(),
+        "an entity with no storage has no table to quote a reserved word in: {}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+
+    let stored = jdl_project("sql-reserved-stored", MODEL);
+    write_spring_fixture(&stored);
+    let column = jails_cmd(&stored, None)
+        .args(["g", "scaffold", "Timing", "id:uuid@pk", "when:instant"])
+        .output()
+        .unwrap();
+    assert!(!column.status.success());
+    let told = String::from_utf8_lossy(&column.stderr);
+    assert!(
+        told.contains("derives the PostgreSQL column `when`"),
+        "the message names the column, not a table: {told}"
+    );
+    assert!(told.contains("pin the column with `@column`"), "{told}");
+
+    // And a reserved *table* still says table.
+    let table = jails_cmd(&stored, None)
+        .args(["g", "scaffold", "A", "id:uuid@pk"])
+        .output()
+        .unwrap();
+    assert!(!table.status.success());
+    let told = String::from_utf8_lossy(&table.stderr);
+    assert!(told.contains("derives the PostgreSQL table `as`"), "{told}");
+}
+
 #[test]
 fn canonical_database_query_keeps_the_iterative_loop_and_ejects_only_its_adapter() {
     let root = jdl_project("model-db-query-loop", NOTES_JDL);

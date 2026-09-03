@@ -152,6 +152,55 @@ pub(crate) struct Linker {
     ids: BTreeMap<String, String>,
 }
 
+/// Which SQL name is being checked, and whether it will be written at all.
+///
+/// **Two facts, and they travel together.** The reserved-word refusal is only
+/// right where DDL is emitted, and the message is only right when it names
+/// the thing the reader would go and rename. Carrying them as one value is
+/// what stops a call site passing the noun and forgetting the guard.
+#[derive(Clone, Copy)]
+pub(crate) struct SqlName {
+    /// `table`, `column`, `index` or `constraint`, for the message.
+    noun: &'static str,
+    /// Whether the declaration this name belongs to reaches the DDL.
+    reaches_sql: bool,
+    fix: &'static str,
+}
+
+impl SqlName {
+    pub(crate) fn table(stored: bool) -> Self {
+        Self {
+            noun: "table",
+            reaches_sql: stored,
+            fix: "choose a name whose plural is not reserved, or pin the table with `@table`",
+        }
+    }
+
+    pub(crate) fn column(stored: bool) -> Self {
+        Self {
+            noun: "column",
+            reaches_sql: stored,
+            fix: "rename the field, or pin the column with `@column`",
+        }
+    }
+
+    pub(crate) fn index(stored: bool) -> Self {
+        Self {
+            noun: "index",
+            reaches_sql: stored,
+            fix: "rename the index, or pin its name in the declaration",
+        }
+    }
+
+    pub(crate) fn constraint(stored: bool) -> Self {
+        Self {
+            noun: "constraint",
+            reaches_sql: stored,
+            fix: "rename the field the constraint is derived from",
+        }
+    }
+}
+
 impl Linker {
     pub(crate) fn problem(
         &mut self,
@@ -352,19 +401,26 @@ impl Linker {
         }
     }
 
-    pub(crate) fn sql_identifier(&mut self, value: &str, path: &str) {
+    pub(crate) fn sql_identifier(&mut self, value: &str, path: &str, name: SqlName) {
         // **A reserved word has to be quoted, and jails does not quote.**
         // `create table as (...)` is a syntax error, and the name is derived
         // -- `A` pluralizes to `as` -- so the reader has no way to see it
         // coming from what they typed.
-        if POSTGRES_RESERVED.contains(&value) {
+        //
+        // **Only where SQL is written.** An entity with no repository has no
+        // table, no column and no DDL, so a reserved word in it breaks
+        // nothing; refusing anyway made `jails g record Timing when:instant`
+        // impossible on a project with no database at all. And the message
+        // says which name it is about: a column called `when` is not a table.
+        if name.reaches_sql && POSTGRES_RESERVED.contains(&value) {
             self.problem(
                 "model-sql-reserved",
                 path,
                 format!(
-                    "`{value}` derives the PostgreSQL table `{value}`, which is a reserved word"
+                    "`{value}` derives the PostgreSQL {} `{value}`, which is a reserved word",
+                    name.noun
                 ),
-                "choose a name whose plural is not reserved, or pin the table with `@table`",
+                name.fix,
             );
             return;
         }
