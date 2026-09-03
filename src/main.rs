@@ -26,6 +26,7 @@ mod dispatch;
 mod editor_command;
 mod editor_complete;
 mod facade;
+mod lsp;
 mod mcp;
 mod model_capability;
 mod model_command;
@@ -290,6 +291,7 @@ fn main() -> std::process::ExitCode {
             .and_then(|()| model_command::sync(no_start, invocation)),
         Command::Undo => undo::run(invocation),
         Command::Mcp => mcp::run(),
+        Command::Lsp => lsp::run(),
         Command::Remove {
             capabilities,
             name,

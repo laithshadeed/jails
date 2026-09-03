@@ -409,3 +409,232 @@ fn editor_diagnostics_return_the_model_check_codes_with_a_line() {
         "{elsewhere}"
     );
 }
+
+// ---- `jails lsp`: the same answers, in the envelope every editor speaks ----
+
+/// One `Content-Length`-framed message, as a client writes it.
+fn framed(message: serde_json::Value) -> Vec<u8> {
+    let body = message.to_string();
+    format!("Content-Length: {}\r\n\r\n{body}", body.len()).into_bytes()
+}
+
+/// Speak to a real `jails lsp` process and split what it said back into
+/// messages, so a test reads the same stream a client does -- framing
+/// included, because the framing is the whole difference between this server
+/// and the one an agent connects to.
+fn converse(root: &Path, requests: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+    let mut child = jails_cmd(root, None)
+        .arg("lsp")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    for request in requests {
+        stdin.write_all(&framed(request)).unwrap();
+    }
+    drop(stdin);
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "server exited: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut rest = output.stdout.as_slice();
+    let mut messages = Vec::new();
+    while !rest.is_empty() {
+        let split = rest
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .expect("a message with no header");
+        let header = String::from_utf8_lossy(&rest[..split]).to_string();
+        let length: usize = header
+            .split(':')
+            .nth(1)
+            .expect("no Content-Length")
+            .trim()
+            .parse()
+            .unwrap();
+        let body = &rest[split + 4..split + 4 + length];
+        messages.push(serde_json::from_slice(body).unwrap());
+        rest = &rest[split + 4 + length..];
+    }
+    messages
+}
+
+fn uri_of(root: &Path) -> String {
+    format!("file://{}", root.join(".jails/model.jdl").display())
+}
+
+/// The four things a client does: handshake, open, type, and ask.
+#[test]
+fn an_editor_opens_the_model_types_an_at_sign_and_is_offered_the_attribute_list() {
+    let root = temp_dir("lsp-journey");
+    write_project_skeleton(&root);
+    // A modelled project, written by the tool rather than by hand, so the
+    // buffer under test is one a reader would actually be looking at.
+    let generated = jails_cmd(&root, None)
+        .args(["g", "record", "Note", "title:string"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    let uri = uri_of(&root);
+
+    // Put the cursor at the end of a field line and type `@`.
+    let lines: Vec<&str> = model.lines().collect();
+    let field = lines
+        .iter()
+        .position(|line| line.trim_start().starts_with("title:"))
+        .expect("no field line in the model the tool just wrote");
+    let mut edited: Vec<String> = lines.iter().map(|line| (*line).to_string()).collect();
+    edited[field].push_str(" @");
+    let column = edited[field].chars().count();
+    let typed = edited.join("\n");
+
+    let replies = converse(
+        &root,
+        vec![
+            serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize",
+                "params":{"rootUri": format!("file://{}", root.display()), "capabilities":{}}}),
+            serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}}),
+            serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didOpen",
+                "params":{"textDocument":{"uri": uri, "languageId":"jdl","version":1,"text": model}}}),
+            serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didChange",
+                "params":{"textDocument":{"uri": uri,"version":2},
+                          "contentChanges":[{"text": typed}]}}),
+            serde_json::json!({"jsonrpc":"2.0","id":2,"method":"textDocument/completion",
+                "params":{"textDocument":{"uri": uri},
+                          "position":{"line": field, "character": column}}}),
+            serde_json::json!({"jsonrpc":"2.0","id":3,"method":"textDocument/hover",
+                "params":{"textDocument":{"uri": uri},"position":{"line": 2,"character": 1}}}),
+            serde_json::json!({"jsonrpc":"2.0","id":4,"method":"shutdown"}),
+            serde_json::json!({"jsonrpc":"2.0","method":"exit"}),
+        ],
+    );
+
+    let answer = |id: i64| {
+        replies
+            .iter()
+            .find(|message| message["id"] == id)
+            .unwrap_or_else(|| panic!("no answer to {id}: {replies:#?}"))
+    };
+
+    // The capabilities are the contract, and `@` is what makes a client ask.
+    let capabilities = &answer(1)["result"]["capabilities"];
+    assert_eq!(capabilities["textDocumentSync"], 1);
+    assert!(
+        capabilities["completionProvider"]["triggerCharacters"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|character| character == "@"),
+        "{capabilities:#?}"
+    );
+
+    // **This is the item's own bar**: `@` on a field offers the field's
+    // attributes, and nothing that belongs to another declaration.
+    let items = answer(2)["result"]["items"].as_array().unwrap();
+    let labels: Vec<&str> = items
+        .iter()
+        .map(|item| item["label"].as_str().unwrap())
+        .collect();
+    for expected in ["pk", "unique", "notBlank", "index"] {
+        assert!(labels.contains(&expected), "{labels:?}");
+    }
+    assert!(!labels.contains(&"retired"), "an entity's own: {labels:?}");
+
+    // Hover is the same table `jails explain jdl` prints.
+    let hover = answer(3)["result"]["contents"]["value"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        hover.contains("app") || hover.contains("project"),
+        "{hover}"
+    );
+
+    // **A notification is answered with silence, except where it publishes.**
+    // Three notifications went in; the two document ones each publish, and
+    // `initialized` says nothing.
+    let published: Vec<&serde_json::Value> = replies
+        .iter()
+        .filter(|message| message["method"] == "textDocument/publishDiagnostics")
+        .collect();
+    assert_eq!(published.len(), 2, "{replies:#?}");
+    assert!(
+        published[0]["params"]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "the model the tool wrote does not parse: {:#?}",
+        published[0]
+    );
+    // A bare `@` is a syntax error, and every jails diagnostic carries its
+    // fix, which is the half an editor would otherwise drop.
+    let after = published[1]["params"]["diagnostics"].as_array().unwrap();
+    assert_eq!(after.len(), 1, "{after:#?}");
+    assert!(
+        after[0]["message"].as_str().unwrap().contains("fix:"),
+        "{after:#?}"
+    );
+    assert_eq!(after[0]["source"], "jails");
+}
+
+/// Go-to-definition on a declaration is every file it generated, read off
+/// the ids the lock already records rather than compiled again.
+#[test]
+fn go_to_definition_on_a_declaration_lands_on_the_files_it_generated() {
+    let root = temp_dir("lsp-definition");
+    write_project_skeleton(&root);
+    let generated = jails_cmd(&root, None)
+        .args(["g", "record", "Note", "title:string"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    let uri = uri_of(&root);
+    let line = model
+        .lines()
+        .position(|line| line.starts_with("component record Note"))
+        .unwrap_or_else(|| {
+            model
+                .lines()
+                .position(|line| line.contains("Note") && !line.trim_start().starts_with("title:"))
+                .expect("no declaration of Note")
+        });
+    let column = model.lines().nth(line).unwrap().find("Note").unwrap() + 1;
+
+    let replies = converse(
+        &root,
+        vec![
+            serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize",
+                "params":{"rootUri": format!("file://{}", root.display())}}),
+            serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didOpen",
+                "params":{"textDocument":{"uri": uri, "text": model}}}),
+            serde_json::json!({"jsonrpc":"2.0","id":2,"method":"textDocument/definition",
+                "params":{"textDocument":{"uri": uri},
+                          "position":{"line": line, "character": column}}}),
+            serde_json::json!({"jsonrpc":"2.0","method":"exit"}),
+        ],
+    );
+    let locations = replies.iter().find(|message| message["id"] == 2).unwrap()["result"]
+        .as_array()
+        .unwrap();
+    let uris: Vec<&str> = locations
+        .iter()
+        .map(|location| location["uri"].as_str().unwrap())
+        .collect();
+    assert!(
+        uris.iter().any(|uri| uri.ends_with("Note.java")),
+        "{uris:?}"
+    );
+}

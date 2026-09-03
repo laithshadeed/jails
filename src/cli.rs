@@ -595,6 +595,14 @@ pub(crate) enum Command {
     /// nothing an outside process can make jails load.
     #[command(hide = true)]
     Mcp,
+    /// Serve the model file to an editor over the Language Server Protocol
+    ///
+    /// `Content-Length`-framed JSON-RPC on stdio. Completion of the closed
+    /// sets, hover from the same table `explain jdl` prints, diagnostics from
+    /// the parse `model check` runs, and go-to-generated-file from the ids
+    /// the lock already records.
+    #[command(hide = true)]
+    Lsp,
     /// Remove what a matching add call would have created
     #[command(visible_alias = "rm")]
     #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]

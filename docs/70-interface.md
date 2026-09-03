@@ -70,15 +70,15 @@ reopening a contract:
 | ~~9~~ | ~~I71.29~~, ~~I71.26~~, ~~I71.28~~ | ~~README, the specification and the binary agree~~ |
 | ~~10~~ | ~~I71.14~~ | ~~every mutation prints the JDL it wrote~~ |
 
-**Worth a prototype before a decision:** an LSP for the model (I71.19),
-the manifest folded into the model (I71.21). Four came off this list
-without a prototype, for the same reason: every part of each already
-existed. Bare `jails` as status (I71.17) is facts other commands compute,
-`jails undo` (I71.15) is the last plan read backwards, the MCP server
-(I71.20) is the clap tree in a JSON-RPC envelope, and the second `jails
-run` (I71.22) was already skipping Maven -- what it needed was the
-measurement and a gate. `sync --watch` was prototyped and declined; §9
-says why.
+**Worth a prototype before a decision:** the manifest folded into the
+model (I71.21). Five came off this list without a prototype, for the same
+reason: every part of each already existed. Bare `jails` as status
+(I71.17) is facts other commands compute, `jails undo` (I71.15) is the
+last plan read backwards, the MCP server (I71.20) is the clap tree in a
+JSON-RPC envelope, the language server (I71.19) is `editor`'s own answers
+in the envelope editors already speak, and the second `jails run` (I71.22)
+was already skipping Maven -- what it needed was the measurement and a
+gate. `sync --watch` was prototyped and declined; §9 says why.
 
 ---
 
@@ -554,13 +554,50 @@ crawler.jdl` is a copy and one `sync`; `examples/*/.jails/app.toml` become
 *Done when* `new --app` accepts a `.jdl`, the examples carry one, and
 `app.toml` is refused by name like `model.toml`.
 
-**I71.19 — an LSP for the model (prototype).** *Change* add `jails lsp`,
-a Language Server Protocol server over stdio. `jails editor` already
-emits diagnostics and symbols as versioned JSON in 5 ms. A `jails lsp`
-over stdio gives every editor completion of the closed sets, hover from
-`explain`, spans from I71.11, go-to-generated-file from the artifact id;
-`jails.nvim` (926 lines) becomes thinner. *Done when* `jails lsp` answers
-`textDocument/completion` after `@` with the attribute list.
+**I71.19 — an LSP for the model.** *Landed, past the prototype.* `jails
+lsp` is a Language Server Protocol server over stdio, revision 3.17.
+`initialize` announces four things and the server does exactly those:
+completion, hover, go-to-definition and published diagnostics.
+`textDocument/completion` after `@` on a field returns that field's
+attribute list and nothing an entity or an operation owns — the item's own
+bar, held by `tests/cli/editor_protocol.rs`.
+
+**Framing is the whole difference from I71.20.** MCP is one JSON-RPC
+message per line and LSP is `Content-Length` and a blank line, over the
+same bodies. A client fed the wrong framing does not error, it hangs,
+so the header is read rather than assumed and a message without one is
+refused with what to do about it.
+
+**The buffer is the document.** `didOpen`, `didChange` and `didClose`
+keep the text, and every answer comes out of it, so an editor completes
+and diagnoses the unsaved edit rather than the last save. Diagnostics are
+the same `parse_jdl` `model check` runs, and the `fix:` line travels with
+the message, because an editor shows one string.
+
+**Two sources and no third.** The static half is
+`jails_model::jdl_grammar`, which is the table the parser refuses from and
+`jails explain jdl` prints, so a family that gains an attribute gains it in
+the editor in the same change. The other half is the buffer's own
+declarations, read off the text rather than a link — a document being typed
+into does not link, and the entity two lines up is exactly the one the
+reader is about to reference.
+
+Go-to-definition on a declaration returns every file it generated, looked
+up rather than compiled: each accepted file carries the semantic ids it
+came from, so the jump is exact in both directions — a file naming this
+entity's id is one this entity caused, and one that does not is not.
+
+Measured on the services toolbox: handshake, open, an edit and a
+completion together are **4.5 ms**; a definition round trip, which
+captures, is **16 ms**. The server is 841 lines against `jails.nvim`'s
+926, and it is the half every editor gets rather than one.
+
+*Deviation:* the item also named "spans from I71.11". They are there in
+the diagnostics, which is where a span is a position an editor moves a
+cursor to. Completion decides the enclosing family from the line's own
+first word and the indentation above it rather than from the CST, because
+a reader typing `@` is mid-declaration and the document does not parse
+yet — which is precisely when they want the list.
 
 ---
 

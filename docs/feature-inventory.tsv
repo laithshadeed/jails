@@ -23,6 +23,7 @@ add dependency	jails	project-mutation	model_capability::add_dependency
 sync	jails	project-mutation	model_command::sync
 undo	jails	project-mutation	undo::run
 mcp	jails	dispatch-only+external-process	mcp::run
+lsp	jails	read-only	lsp::run
 remove	jails	project-mutation	model_capability::remove
 remove dependency	jails	project-mutation	model_capability::remove_dependency
 remove fast-test	jails	project-mutation	model_capability::remove_fast_test

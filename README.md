@@ -219,6 +219,17 @@ source: the next change can be made by hand in the file and applied with
   runs, with the code, the model path as `subject` and a zero-based range in
   `.jails/model.jdl`. It refuses without `--output json`, because an adapter
   must never parse human output.
+- `jails lsp` — a Language Server Protocol server over stdio, for editors.
+  `Content-Length`-framed JSON-RPC, revision 3.17. It completes the model
+  file: `@` on a field offers that field's attributes, a colon offers the
+  builtin types beside the ones this model declares, and a blank indented
+  line offers the declarations valid there. Hover is the same table
+  `jails explain jdl` prints. Diagnostics come from the parse and link
+  `jails model check` runs, with the `fix:` line in the message, and they
+  are published on every keystroke because the buffer is the document,
+  unsaved edits included. Go-to-definition on a declaration lands on every
+  file it generated, read off the ids the lock already records rather than
+  compiled again.
 - `jails mcp` — a Model Context Protocol server over stdio, for agents. One
   JSON-RPC message per line in, one per line out; `initialize`, `ping`,
   `tools/list` and `tools/call`. The tools are the twenty subcommands the
