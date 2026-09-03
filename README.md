@@ -59,8 +59,8 @@ The compiler entry points:
 
 ```text
 jails model check [--manifest .jails/model.jdl] [--frozen]
-jails model plan  [--manifest .jails/model.jdl] [--bundle plan.json]
-jails model apply --bundle plan.json
+jails model plan  [--manifest .jails/model.jdl] [--plan-out plan.json]
+jails model apply --plan-in plan.json
 jails model eject <boundary>
 jails model status
 jails model relocate
@@ -303,7 +303,7 @@ their exit codes, so `jails doctor --json && deploy` behaves like
   `testcontainers-kafka` and `awaitility`, without which no test can touch a
   broker. Stacks with `add db` in one file; `remove kafka` takes only the
   broker back out.
-- `jails add|a <csv|sqlite|json|testkit|fake|http|format> [--name <Base>] [--dry-run]` — grows an
+- `jails add|a <csv|sqlite|json|testkit|fake|http|format> [--name <Base>] [--pretend]` — grows an
   existing project by a whole capability: the dependency (spliced into
   `pom.xml`, comments and formatting preserved), the code that uses it, and
   a passing test. Idempotent, so re-running reports what is already there.
@@ -320,7 +320,9 @@ their exit codes, so `jails doctor --json && deploy` behaves like
 answer. "It exists" is not ownership: a `CsvReader` you spent an afternoon on
 looks exactly like the stub jails generated. It does not refuse — `remove` is
 the documented inverse of `add` — but it will not delete your work without
-showing you the list first, and `--force` is how you say yes in advance.
+showing you the list first, and `--yes` is how you say yes in advance. That
+holds for `--output json` too: an encoding with nobody to ask refuses rather
+than proceeding.
 
 **A capability's settings in `application.properties` are owned one key at a
 time.** There are no `# jails:<capability>` markers around them: jails records
@@ -330,9 +332,9 @@ introduces goes with that key — unless you have edited it, in which case it is
 your prose and it stays too. (`compose.yaml` still uses marked blocks, because
 there the unit is a whole service block rather than a setting.)
 
-- `jails remove|rm <capability>... [--force]` — the inverse of `add`: unsplices
+- `jails remove|rm <capability>... [--yes]` — the inverse of `add`: unsplices
   the same dependencies, deletes the same files, removes compose services, and
-  stops their containers. Confirms unless `--force`.
+  stops their containers. Confirms unless `--yes`.
 - `jails remove fast-test` — take JUnit's console launcher back off the test
   classpath. `jails test --fast` puts it there, and records it as an entity
   jails owns rather than as a side effect of how the tests were run; this is
@@ -824,7 +826,7 @@ there the unit is a whole service block rather than a setting.)
   constructor dependency marked resolvable or not. A dependency naming a type
   this project declares but never registers is the static half of "required a
   bean of type … that could not be found", caught before the context starts.
-- `jails rename <Old> <New> [--dry-run] [--force]` — rename a type, its
+- `jails rename <Old> <New> [--pretend] [--yes]` — rename a type, its
   `Test`/`Tests`/`IT` companions, and every reference. Textual, and honest
   about it: it matches whole identifiers only (`Reward` never matches inside
   `RewardHistory`) and leaves string literals alone, reporting how many
@@ -899,7 +901,7 @@ there the unit is a whole service block rather than a setting.)
   preflight first and needs a terminal's confirmation or `--yes`. Absolute
   paths and `..` are refused: the script is trusted code and lives in the
   project.
-- `jails destroy|d <type> <Name> [--force]` — deletes exactly what the
+- `jails destroy|d <type> <Name> [--yes]` — deletes exactly what the
   matching `generate` call would have created.
 - `jails test [filter] [--failed] [--fail-fast] [--slowest N]` — uses `./mvnw`
   when present. The filter takes four shapes: a bare `Money` becomes
@@ -1163,12 +1165,12 @@ You do not maintain this. `jails add` records every capability it applies and
 project rather than one somebody has to remember to update — which matters,
 because `jails sync` acts on it.
 
-- `jails sync [--dry-run] [--no-start]` — apply every declared capability that
+- `jails sync [--pretend] [--no-start]` — apply every declared capability that
   is not there yet. A fresh clone becomes the project it claims to be in one
   command, instead of whoever set it up recalling which `add` calls they ran.
   It is also how a project takes a newer jails' output: every capability is
   idempotent and reports what is already there, so a sync over a correct
-  project changes nothing and says so. With `--dry-run` it answers "what is
+  project changes nothing and says so. With `--pretend` it answers "what is
   this project missing?" without writing.
 
 A capability name that jails does not know is an error listing the real ones,
@@ -1263,7 +1265,10 @@ Every command that writes also takes `--pretend` (`-p`): it runs every check
 and prints what would change, then stops without touching the project. Global
 on purpose — Rails puts it on every generator rather than on the few that
 looked risky, and the value is never having to remember which commands
-support it. `add`, `remove` and `rename` spell the same thing `--dry-run`.
+support it. One spelling per verb: `--dry-run` still parses for one release
+and is advertised nowhere, and so do `--force` (now `--yes`), `g field` (now
+`jails resource field add`), `model plan --bundle` (now `--plan-out`) and
+`model apply --bundle` (now `--plan-in`).
 
 - `jails generate|g handler <Name>` — an `HttpHandler` in `api/` for one
   resource: derives its path (`WorkItem` → `/work-items`), takes its service as

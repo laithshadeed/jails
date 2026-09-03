@@ -20,7 +20,15 @@ use std::path::Path;
 /// afternoon on looks exactly like the stub jails wrote. Refusing would make
 /// them unusable on the projects that got the most out of them; deleting
 /// silently is how an afternoon disappears. So the list is shown and the
-/// question is asked, and `--force` is the answer given in advance.
+/// question is asked, and `--yes` is the answer given in advance.
+///
+/// **The question is asked before the encoding is chosen.** `--output json`
+/// used to skip the whole check: `jails --output json destroy scaffold Task`
+/// deleted fourteen files and reported `"files_deleted": 14` without asking,
+/// because only the human report reached the prompt. Consent is about the
+/// files, not about how the answer is printed -- so an encoding that has
+/// nobody to ask refuses, in its own envelope, and `--yes` is how a script
+/// says yes.
 ///
 /// `None` means nothing is in the way. `Some` carries the whole outcome,
 /// including the successful "aborted" one -- a reader who says no got what
@@ -40,7 +48,7 @@ pub(super) fn refuse_unconfirmed_deletions(
         .command_path
         .first()
         .is_some_and(|command| command == "remove" || command == "destroy");
-    if !removal || invocation.force || invocation.output != Output::Human {
+    if !removal || invocation.consented {
         return None;
     }
     let deletions = crate::plan_delta::preview_lines(bundle)
@@ -49,6 +57,21 @@ pub(super) fn refuse_unconfirmed_deletions(
         .collect::<Vec<_>>();
     if deletions.is_empty() {
         return None;
+    }
+    // A machine encoding has no terminal behind it, and the envelope is the
+    // whole answer: the refusal names the files it would have deleted and the
+    // flag that authorises them.
+    if invocation.output != Output::Human {
+        return Some(Err(Failure::Told(format!(
+            "this deletes {} generated file{} and nothing has consented to it: {}.\n       fix: rerun with `--yes` to confirm in advance",
+            deletions.len(),
+            if deletions.len() == 1 { "" } else { "s" },
+            deletions
+                .iter()
+                .map(|line| line.split_whitespace().nth(1).unwrap_or_default())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))));
     }
     println!(
         "This removes {} generated file{}:",
@@ -66,12 +89,12 @@ pub(super) fn refuse_unconfirmed_deletions(
     // there is how a pipeline deletes something nobody saw; defaulting to a
     // silent *no* is nearly as bad, because the command then exits 0 having
     // done nothing and the script goes on believing it worked. So an
-    // unanswerable prompt is a refusal with an exit status, and `--force` is
+    // unanswerable prompt is a refusal with an exit status, and `--yes` is
     // how a script says yes in advance.
     let asked = std::io::stdin().lock().read_line(&mut answer);
     if matches!(&asked, Ok(0)) || asked.is_err() {
         return Some(Err(Failure::Told(
-            "this deletion needs an answer and nothing is connected to read one from.\n       fix: rerun with `--force` to confirm in advance".to_string(),
+            "this deletion needs an answer and nothing is connected to read one from.\n       fix: rerun with `--yes` to confirm in advance".to_string(),
         )));
     }
     if answer.trim().eq_ignore_ascii_case("y") {

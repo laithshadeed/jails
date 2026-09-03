@@ -311,6 +311,9 @@ pub(crate) fn run(command: ModelCommand, invocation: Invocation) -> Result<()> {
         ModelCommand::Fmt { check } => format(check, invocation),
         ModelCommand::Plan { manifest, bundle } => {
             let manifest = resolve_manifest(manifest.as_deref())?;
+            // `--plan-out` is the spelling; `--bundle` is the retired one,
+            // hidden and still parsed. Whichever was given names the file.
+            let bundle = bundle.or_else(|| invocation.plan_out.clone());
             plan(
                 &invocation.root()?,
                 &manifest,
@@ -318,7 +321,16 @@ pub(crate) fn run(command: ModelCommand, invocation: Invocation) -> Result<()> {
                 invocation.output,
             )
         }
-        ModelCommand::Apply { bundle } => apply(&bundle, invocation.output),
+        ModelCommand::Apply { bundle } => {
+            // `--plan-in` is the spelling; `--bundle` is the retired one.
+            let bundle = bundle.or_else(|| invocation.plan_in.clone()).ok_or_else(|| {
+                Failure::Told(
+                    "`jails model apply` needs the reviewed plan to apply.\n       fix: pass `--plan-in <file>`, the bundle a `--plan-out` run wrote"
+                        .to_string(),
+                )
+            })?;
+            apply(&bundle, invocation.output)
+        }
         ModelCommand::Eject { semantic_id } => crate::model_eject::run(semantic_id, invocation),
         ModelCommand::Explain { filter } => crate::model_explain::run(filter, invocation),
         ModelCommand::Status => crate::model_ownership::run(invocation),

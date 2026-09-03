@@ -28,14 +28,23 @@ pub(crate) enum ModelCommand {
         #[arg(long)]
         manifest: Option<PathBuf>,
         /// Write the complete portable plan bundle to this path
-        #[arg(long, value_name = "FILE")]
+        ///
+        /// **Hidden, because `--plan-out` is the spelling.** The global flag
+        /// writes the reviewed bundle on every mutation, and this asked the
+        /// same question of one command under a second name. It parses for
+        /// one release and `plan` reads whichever of the two was given.
+        #[arg(long, value_name = "FILE", hide = true)]
         bundle: Option<PathBuf>,
     },
     /// Apply one previously reviewed exact plan without recompiling
     Apply {
         /// Portable exact plan bundle written by `jails model plan`
-        #[arg(long, value_name = "FILE")]
-        bundle: PathBuf,
+        ///
+        /// **Hidden, because `--plan-in` is the spelling.** It is the same
+        /// question the global flag asks -- apply this reviewed bundle and do
+        /// not replan -- and it parses for one release beside it.
+        #[arg(long, value_name = "FILE", hide = true)]
+        bundle: Option<PathBuf>,
     },
     /// List the files the accepted projection owns, and whether each still matches it
     Status,

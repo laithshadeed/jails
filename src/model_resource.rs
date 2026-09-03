@@ -106,7 +106,7 @@ pub(crate) struct AddFieldRequest {
 pub(crate) fn add_generated_field(args: GenerateArgs, invocation: Invocation) -> Result<()> {
     if args.fields.len() != 1 {
         return Err(Failure::Told(
-            "canonical `g field` needs exactly one field spec\n       fix: run `jails g field Entity name:type`"
+            "adding a field takes exactly one field spec\n       fix: run `jails resource field add Entity name:type`"
                 .to_string(),
         ));
     }
@@ -154,7 +154,7 @@ pub(crate) fn add_field(request: AddFieldRequest, invocation: Invocation) -> Res
     // no migration and nothing to backfill -- the same answer the policy below
     // gives a project with no database at all. `has_database` alone is only
     // equivalent while every entity in a stored project is itself stored, and
-    // `g record` then `g field` must not depend on an unrelated project
+    // `g record` then `resource field add` must not depend on an unrelated project
     // property.
     let stored = has_database && entity.facets.contains(&Facet::Repository);
     entity.refuse_retired().map_err(Failure::Told)?;

@@ -262,3 +262,64 @@ fn canonical_destroy_refuses_while_operations_reference_the_entity() {
         .unwrap();
     assert!(frozen.status.success());
 }
+
+/// Consent is about the files, not about how the answer is printed.
+///
+/// **`--output json` used to walk past the whole check.** The prompt lived
+/// behind `output == Human`, so `jails --output json destroy scaffold Task`
+/// deleted fourteen files and reported `"files_deleted": 14` without asking
+/// anybody. A machine encoding has nobody to ask, which is a reason to refuse
+/// rather than a reason to proceed: `--yes` is how a script says yes in
+/// advance, and it is the same flag a person types.
+#[test]
+fn a_machine_encoding_has_no_shortcut_past_the_deletion_prompt() {
+    let root = model_project("json-consent", EMPTY_MODEL);
+    write_spring_fixture(&root);
+    let created = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Note", "id:uuid@pk", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(
+        created.status.success(),
+        "{}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let record = root.join("src/main/java/com/example/notes/domain/Note.java");
+    assert!(record.is_file());
+
+    let refused = jails_cmd(&root, None)
+        .args(["--output", "json", "destroy", "scaffold", "Note"])
+        .output()
+        .unwrap();
+    assert!(
+        !refused.status.success(),
+        "{}",
+        String::from_utf8_lossy(&refused.stdout)
+    );
+    let envelope: serde_json::Value = serde_json::from_slice(&refused.stdout)
+        .unwrap_or_else(|error| panic!("a JSON envelope: {error}"));
+    assert_eq!(envelope["status"], "refused", "{envelope}");
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("`--yes`"),
+        "{envelope}"
+    );
+    assert!(
+        record.is_file(),
+        "the JSON encoding deleted a file nobody consented to"
+    );
+
+    // And with consent, the same command in the same encoding goes through.
+    let removed = jails_cmd(&root, None)
+        .args(["--output", "json", "destroy", "scaffold", "Note", "--yes"])
+        .output()
+        .unwrap();
+    assert!(
+        removed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&removed.stderr)
+    );
+    assert!(!record.exists());
+}

@@ -1336,3 +1336,82 @@ fn blank_span(span: &str, out: &mut String) {
         out.push(if byte == b'\n' { '\n' } else { ' ' });
     }
 }
+
+/// One spelling per verb, on the surface the tool advertises.
+///
+/// **Five questions had two answers each.** Three ways to add a field (`g
+/// field`, `resource field add`, a longer `g scaffold`); two ways to skip a
+/// prompt (`--force` here, `--yes` on `console` and `runner`); two renames;
+/// `--dry-run` beside `--pretend`; `model plan --bundle` beside `--plan-out`.
+/// Every one of them made a reader learn two words for one thing, and every
+/// one of them was in `--help`, in this catalog and in the shell completion.
+///
+/// The retired spelling is not deleted -- a script that types it keeps
+/// working for a release -- it is *hidden*, which is exactly what this
+/// asserts: `commands --json` walks the same `clap::Command` that parses
+/// arguments and skips what is hidden, so a `visible_alias` creeping back
+/// fails here.
+#[test]
+fn one_spelling_per_verb_is_what_the_surface_advertises() {
+    let surface = jails_cmd(&temp_dir("one-spelling"), None)
+        .args(["commands", "--json"])
+        .output()
+        .unwrap();
+    assert!(surface.status.success());
+    let surface: serde_json::Value = serde_json::from_slice(&surface.stdout).unwrap();
+    let rendered = surface.to_string();
+
+    // The five retired spellings, each with the one that replaced it.
+    for (retired, kept) in [
+        ("dry-run", "pretend"),
+        ("force", "yes"),
+        ("bundle", "plan-out"),
+    ] {
+        assert!(
+            !rendered.contains(&format!("\"--{retired}\"")),
+            "`--{retired}` is still advertised; `--{kept}` is the spelling"
+        );
+        assert!(
+            rendered.contains(&format!("\"--{kept}\"")),
+            "`--{kept}` is not on the surface at all"
+        );
+    }
+    let kinds: Vec<&str> = surface["kinds"]
+        .as_array()
+        .expect("the catalog lists the generator kinds")
+        .iter()
+        .map(|kind| kind["name"].as_str().unwrap_or_default())
+        .collect();
+    assert!(kinds.contains(&"scaffold"), "{kinds:?}");
+    assert!(
+        !kinds.contains(&"field"),
+        "`g field` is still advertised; `jails resource field add` is the spelling"
+    );
+
+    // Hidden, not gone: each retired spelling still parses for one release.
+    let root = temp_dir("one-spelling-aliases");
+    write_spring_fixture(&root);
+    let generated = jails_cmd(&root, None)
+        .args(["g", "field", "--help"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "`g field` must still parse for one release: {}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    let previewed = jails_cmd(&root, None)
+        .args(["--dry-run", "g", "record", "Note", "id:uuid"])
+        .output()
+        .unwrap();
+    assert!(
+        previewed.status.success(),
+        "`--dry-run` must still parse for one release: {}",
+        String::from_utf8_lossy(&previewed.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&previewed.stdout).contains("nothing was written"),
+        "{}",
+        String::from_utf8_lossy(&previewed.stdout)
+    );
+}

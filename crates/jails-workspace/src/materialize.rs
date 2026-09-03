@@ -96,7 +96,7 @@ pub enum Restore {
     /// **The other half of the same guard.** A file the compiler no longer
     /// renders and the reader has edited is a refusal for the same reason a
     /// deleted one is: jails does not throw away bytes it did not write.
-    /// `remove --force` and `destroy --force` are the reader saying the edits
+    /// `remove --yes` and `destroy --yes` are the reader saying the edits
     /// can go; without this the refusal's fix line ("move the custom code to
     /// reader source") would be the only route out of a capability they had
     /// touched.

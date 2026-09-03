@@ -39,6 +39,14 @@ pub enum ArtifactKind {
     Record,
     /// Add one component to an existing record and safely refresh unchanged
     /// derived files; edited files are reported, never overwritten
+    ///
+    /// **Hidden, because `jails resource field add` is the spelling.** Three
+    /// ways to add a field is two too many, and the other two are already
+    /// answered: re-running `g scaffold` with a longer list refuses and names
+    /// `resource field add`, and this parses for one release so a script that
+    /// types it keeps working. `skip` would take it out of clap entirely,
+    /// which is a removal rather than a deprecation.
+    #[cfg_attr(feature = "cli", value(hide = true))]
     Field,
     /// A fluent test-data builder for an existing record
     Factory,

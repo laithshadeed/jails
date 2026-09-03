@@ -293,7 +293,7 @@ fn reconcile_artifact(
                     "workspace-managed-file-edited-and-removed",
                     live_path.to_string(),
                     format!("`{live_path}` was edited by you but removed by the generator"),
-                    "move the custom code to reader source, keep the model component, or repeat with `--force` to discard the edits; nothing was written",
+                    "move the custom code to reader source, keep the model component, or repeat with `--yes` to discard the edits; nothing was written",
                 ));
             }
             // `resource repair` is the one plan that writes it back. A

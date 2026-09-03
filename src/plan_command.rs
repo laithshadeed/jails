@@ -114,7 +114,7 @@ pub(crate) fn invocation() -> Result<Option<Invocation>> {
         no_start: false,
         batch_effects: false,
         batch_report: None,
-        force: false,
+        consented: false,
     }))
 }
 

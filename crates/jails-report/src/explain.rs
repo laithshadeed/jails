@@ -129,7 +129,7 @@ const EXPLANATIONS: &[Explanation] = &[
                not. It needs `version:long` or `version:int` -- the compare-and-set column is \
                what makes the update safe under concurrency rather than last-write-wins.\n\n\
                A ported schema that has no such column grows one: \
-               `jails g field Loan version:long --default-literal 0`, then this command.\n\n\
+               `jails resource field add Loan version:long --default-literal 0`, then this command.\n\n\
                The guard travels as `If-Match` and comes back as an `ETag`, and it is \
                required by default -- an update with no compare-and-set is a lost update \
                nothing reports. `--if-match optional` says the guarantee is available and \

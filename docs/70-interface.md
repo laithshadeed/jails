@@ -62,7 +62,7 @@ reopening a contract:
 |---|---|---|
 | ~~1~~ | ~~I70.12~~ | ~~the most-seen line in the tool stops printing on every command~~ |
 | ~~2~~ | ~~I70.1, I71.13~~ | ~~the report is the delta; a manifest prints one report~~ |
-| 3 | I71.35, I70.19, I70.20 | consent is `--yes`, nothing else, and JSON has no shortcut past it |
+| ~~3~~ | ~~I71.35, I70.19, I70.20~~ | ~~consent is `--yes`, nothing else, and JSON has no shortcut past it~~ |
 | 4 | I70.13, I71.47, I71.16 | the model file reads like the specification's, and editing it by hand is the first path |
 | 5 | I70.22, I71.3, I71.4, I71.5 | the lock is 1× the tree, a scaffold is a 20-line diff, a mutation at a hundred entities is under 100 ms |
 | 6 | I71.40, I71.41, I71.24 | every scanner sees every source root; `test --affected` never selects nothing and passes |
@@ -588,15 +588,14 @@ colliding `set` answers *conflicts with model value `beans`; fix: remove
 the duplicate setting or give it the capability-required value …; nothing
 was written*, and `remove json` over a hand edit answers *edited by you but
 removed by the generator; fix: move the custom code to reader source, keep
-the model component, or repeat with `--force`*. `g record Bad ref:Missing`
+the model component, or repeat with `--yes`*. `g record Bad ref:Missing`
 answers *`Missing` is neither in this model nor in your own sources; fix:
 declare it with `jails g record Missing …`*. Against that: outside a
 project the same situation is reported three ways (*this directory is not
 a Java project…*, *no pom.xml (or build.gradle, …)*, *could not read
 application model*), one with a fix line; twelve messages point at
 `[entities]`, `[capabilities]`, `[settings]` or `[dependencies]`, tables
-of a format the tree refuses by name; `remove db` says *retire every table
-through an explicit schema policy* and names no command; `kafka lag` on a
+of a format the tree refuses by name; `kafka lag` on a
 fresh group prints a raw `GroupIdNotFoundException` with exit 0; `doctor`
 prints `ok psql executable … Can't exec "--version"`. Of 713 `fix:` lines,
 70 name a `jails` command and 18 a file. `"sample-bodie"` appears in the
@@ -695,8 +694,7 @@ thirteen commands print byte-identical refusals outside a project.
 **I70.5 and I71.39 — every refusal is fact, fix, nothing written.**
 *Change* rewrite the twelve `[entities]`-style messages; every `fix:`
 line names a `jails` command, a file, or gives an imperative sentence;
-`remove db` lists the `destroy scaffold <Entity> --storage preserve|drop`
-lines it needs; a gate scans `fix:` lines the way
+a gate scans `fix:` lines the way
 `every_command_a_message_tells_the_reader_to_run_is_one_that_exists`
 scans commands. *Done when* `grep -rn 'declared under \`\[' src crates`
 is empty and the gate is green.
@@ -740,20 +738,7 @@ census above as a test. *Done when* the six read 0 in both columns.
 | of the 45, global-flag boilerplate | 33 |
 | README lines / command bullets | 1,758 / 98 |
 
-**Two spellings, five times.** Three ways to add a field (`g field`,
-`resource field add`, re-running `g scaffold` with a longer list, which
-refuses naming the second); two ways to skip a prompt (`--force` on
-`destroy`, `rename`, `remove`; `--yes` on `console`, `runner`); two
-`rename`s; `--dry-run` beside `--pretend`; `model plan --bundle` beside
-`--plan-out`; `app plan` beside `app apply --pretend`. `--force` on
-`destroy` reads as *ignore the guard* and cannot (the operation-edge
-refusal stands regardless).
-
-**Consent.** `destroy scaffold Todo` with no terminal refuses (*this
-deletion needs an answer*) and names `--force`. `jails --output json
-destroy scaffold Task` deletes fourteen files and prints
-`"files_deleted": 14` without asking: only the human report reaches the
-prompt in `model_generate/report.rs`.
+**Two spellings, still.** `app plan` beside `app apply --pretend`.
 
 **`--pretend` where it means nothing.** `jails test --pretend NoteTest`
 runs Maven for 7.3 s, Gradle for 48 s; `check --pretend` runs the build.
@@ -795,20 +780,6 @@ without `--yes` refuses. `jails test --pretend` refuses in 5 ms. `<TAB>`
 completes kinds, capabilities, entities, fields and markers.
 
 ### Change
-
-**I70.19 and I70.20 — one spelling per verb, and consent is `--yes`.**
-*Change* keep `resource field add`, `--yes`, `rename resource`,
-`--pretend`, `--plan-out`; the others are hidden aliases for one release,
-then go; `g field` leaves the kind list. *Done when* `jails commands
---json` shows one flag for each of the five questions and no `field`
-kind, and `destroy` and `remove db` name the exact command in their
-refusals.
-
-**I71.35 — JSON has no shortcut past consent.** *Change* the consent check
-runs before the output encoding is chosen; without `--yes` and without a
-terminal to ask, every encoding refuses, JSON with `status: refused` in
-the envelope. *Done when* `jails --output json destroy scaffold X`
-without `--yes` deletes nothing.
 
 **I71.6 — `--pretend` refuses where it means nothing.** *Change* on `test`,
 `run`, `check`, `build`, `clean`, `mvn`, `gradle`, `console`, `bench`,

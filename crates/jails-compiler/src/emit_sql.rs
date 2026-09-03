@@ -62,11 +62,12 @@ pub(crate) fn derive(
             .flat_map(|model| model.entities.values())
             .any(|entity| entity.facets.contains(&Facet::Repository));
         if stored || !snapshot.migration_history.records.is_empty() {
-            return Err(Diagnostic::new(
-                "compile-storage-abandoned",
-                "$.capabilities.db",
-                "removing canonical `db` would abandon accepted storage",
-                "retire every table through an explicit schema policy before removing `db`",
+            return Err(crate::refuse::storage_abandoned(
+                accepted
+                    .iter()
+                    .flat_map(|model| model.entities.values())
+                    .filter(|entity| entity.facets.contains(&Facet::Repository))
+                    .map(|entity| entity.names.java_type.as_str()),
             ));
         }
         return Ok(rendered);

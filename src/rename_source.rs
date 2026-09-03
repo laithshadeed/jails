@@ -29,7 +29,7 @@ use jails_support::{Failure, Result, apply};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-pub(crate) fn run(old: &str, new: &str, force: bool, invocation: Invocation) -> Result<()> {
+pub(crate) fn run(old: &str, new: &str, consented: bool, invocation: Invocation) -> Result<()> {
     validate(old, new)?;
     let root = crate::model_command::root()?;
     refuse_declared(&root, old, new)?;
@@ -110,9 +110,9 @@ pub(crate) fn run(old: &str, new: &str, force: bool, invocation: Invocation) -> 
         println!("nothing was written.");
         return Ok(());
     }
-    if !force {
+    if !consented {
         return Err(Failure::Told(
-            "a textual rename cannot be undone by jails, and jdt.ls understands scope where this does not.\n       fix: re-run with `--force` once the list above is what you meant".to_string(),
+            "a textual rename cannot be undone by jails, and jdt.ls understands scope where this does not.\n       fix: re-run with `--yes` once the list above is what you meant".to_string(),
         ));
     }
 

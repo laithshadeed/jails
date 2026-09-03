@@ -396,3 +396,36 @@ pub(crate) fn broken_link(path: impl Into<String>, message: impl Into<String>) -
         "repair the linked model before compiling",
     )
 }
+
+/// Removing `db` while the accepted schema still holds tables.
+///
+/// **The fix names the command, not the policy.** "Retire every table through
+/// an explicit schema policy" is true and leaves the reader to find out which
+/// command spells a policy; the entities holding the tables are known here, so
+/// the line is the command they type, per entity, with the two policies it
+/// takes. Three at most, because a fix line is one sentence and a project with
+/// forty tables does not need forty commands to see the shape of the answer.
+pub(crate) fn storage_abandoned<'a>(holders: impl Iterator<Item = &'a str>) -> Diagnostic {
+    let holders: Vec<&str> = holders.collect();
+    let named = &holders[..holders.len().min(3)];
+    let commands = match named.is_empty() {
+        true => "`jails destroy scaffold <Entity> --storage drop`".to_string(),
+        false => named
+            .iter()
+            .map(|entity| format!("`jails destroy scaffold {entity} --storage drop`"))
+            .collect::<Vec<_>>()
+            .join(", "),
+    };
+    let rest = match holders.len() - named.len() {
+        0 => String::new(),
+        more => format!(" and {more} more"),
+    };
+    Diagnostic::new(
+        "compile-storage-abandoned",
+        "$.capabilities.db",
+        "removing canonical `db` would abandon accepted storage",
+        format!(
+            "retire each accepted table first -- {commands}{rest}, or `--storage preserve` to keep the rows -- then remove `db`"
+        ),
+    )
+}

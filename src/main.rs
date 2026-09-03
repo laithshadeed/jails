@@ -85,7 +85,7 @@ fn main() -> std::process::ExitCode {
         plan_out: cli.plan_out,
         plan_in: cli.plan_in,
         command_path: cli::command_path_from_env(),
-        force: false,
+        consented: false,
         // **Only `add` starts a service, and that is the CLI's own shape.**
         // `--no-start` exists on the commands that install or run something;
         // `jails g scaffold` on a project that already declares a database
@@ -182,11 +182,11 @@ fn main() -> std::process::ExitCode {
         Command::Remove {
             capabilities,
             name,
-            force,
+            yes,
             package,
             undeclare,
         } => {
-            let invocation = invocation.forcing(force);
+            let invocation = invocation.consenting(yes);
             let result =
                 model_command::ensure_owned(invocation.clone()).and_then(|()| match undeclare {
                     None => model_capability::remove(capabilities, name, package, invocation),
@@ -195,8 +195,8 @@ fn main() -> std::process::ExitCode {
                             model_capability::remove_dependency(coordinate, invocation)
                         })
                     }
-                    Some(Undeclare::FastTest { force }) => {
-                        model_capability::remove_fast_test(invocation.forcing(force))
+                    Some(Undeclare::FastTest { yes }) => {
+                        model_capability::remove_fast_test(invocation.consenting(yes))
                     }
                 });
             return dispatch::finish_invocation(result, failure_output, &failure_path);
@@ -212,7 +212,7 @@ fn main() -> std::process::ExitCode {
             command,
             old,
             new,
-            force,
+            yes,
         } => {
             // **Two different operations under one verb, and they stay
             // apart.** `rename resource` moves a *declared* resource -- the
@@ -228,7 +228,7 @@ fn main() -> std::process::ExitCode {
                     ));
                     return dispatch::finish_invocation(result, failure_output, &failure_path);
                 };
-                let result = rename_source::run(&old, &new, force, invocation);
+                let result = rename_source::run(&old, &new, yes, invocation);
                 return dispatch::finish_invocation(result, failure_output, &failure_path);
             }
             let result =
@@ -240,7 +240,7 @@ fn main() -> std::process::ExitCode {
                         table,
                         api,
                         route,
-                        force: _,
+                        yes: _,
                     }) => model_rename::run(
                         model_rename::Request {
                             from,
@@ -259,7 +259,7 @@ fn main() -> std::process::ExitCode {
         Command::Destroy {
             kind,
             name,
-            force,
+            yes,
             package,
             storage,
             confirm_table,
@@ -268,10 +268,10 @@ fn main() -> std::process::ExitCode {
         } => {
             // Canonical removal is model subtraction plus an explicit storage
             // policy, so the migration flags are refused and `--storage drop`
-            // is the confirmation. `--force` has a narrower meaning -- the
+            // is the confirmation. `--yes` has a narrower meaning -- the
             // reader saying that edits to the files being removed may go with
             // them.
-            let invocation = invocation.forcing(force);
+            let invocation = invocation.consenting(yes);
             let result = model_command::ensure_owned(invocation.clone()).and_then(|()| {
                 model_destroy::run(
                     model_destroy::Request {

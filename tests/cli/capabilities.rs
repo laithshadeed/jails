@@ -2093,9 +2093,14 @@ fn dry_run_remove_names_edited_files() {
     )
     .unwrap();
 
-    // A dry run reports what would happen, and what would happen is a
+    // A preview reports what would happen, and what would happen is a
     // refusal: jails does not throw away bytes it did not write. The file is
     // named, and so is the flag that authorises losing the edits.
+    //
+    // **Typed with the retired spellings on purpose.** `--dry-run` and
+    // `--force` are hidden aliases for one release -- `--pretend` and `--yes`
+    // are the spellings, and they are what the message teaches -- so this is
+    // where a script that has not been updated is proved still to work.
     let refused = jails_cmd(&root, None)
         .args(["remove", "csv", "--dry-run"])
         .output()
@@ -2103,10 +2108,10 @@ fn dry_run_remove_names_edited_files() {
     assert!(!refused.status.success());
     let told = String::from_utf8_lossy(&refused.stderr);
     assert!(told.contains("CsvReader.java"), "{told}");
-    assert!(told.contains("`--force`"), "{told}");
+    assert!(told.contains("`--yes`"), "{told}");
     assert!(generated.is_file(), "--dry-run deleted the file");
 
-    // And with the authorisation, the same dry run names it before it goes.
+    // And with the authorisation, the same preview names it before it goes.
     let output = jails_cmd(&root, None)
         .args(["remove", "csv", "--dry-run", "--force"])
         .output()

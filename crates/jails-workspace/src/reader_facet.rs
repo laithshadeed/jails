@@ -219,7 +219,7 @@ fn reconcile_managed_file(
             "workspace-facet-file-edited-and-removed",
             path.to_string(),
             format!("`{path}` was edited by you but removed by the generator"),
-            "move the custom content to another file, keep the model component, or repeat with `--force` to discard the edits; nothing was written",
+            "move the custom content to another file, keep the model component, or repeat with `--yes` to discard the edits; nothing was written",
         )),
         (Some(_), None, None) | (None, None, None) | (None, Some(_), None) => {
             Ok(ManagedFileMerge::Unchanged)

@@ -9,6 +9,14 @@
 //! `String` matched by hand, because that is the only way `clap_complete` can
 //! emit a static completion list; and an alias meant to be typed is a
 //! `visible_alias`, because a hidden one is invisible to the bash generator.
+//!
+//! **A plain `alias` is therefore a deprecation and nothing else.** One
+//! spelling per verb is the bar, and a second visible one puts both in
+//! `--help`, in `commands --json` and in the completion, so every reader
+//! learns two. A spelling being retired keeps parsing for one release under
+//! `alias` -- typed by a script that has not been updated, advertised
+//! nowhere -- and then goes. `--dry-run`, `--force`, `model plan --bundle`
+//! and the two-name `jails rename Old New` are the four in flight.
 
 mod generate_args;
 pub(crate) use generate_args::GenerateArgs;
@@ -92,12 +100,18 @@ pub(crate) struct Cli {
     // one boolean reaching two implementations, which lets `--pretend` and
     // apply disagree about what would be written. One flag, one value, every
     // command.
+    //
+    // **Hidden rather than visible, and hidden rather than gone.** One
+    // spelling per verb is the rule, and a `visible_alias` is a second
+    // spelling: it is in `--help`, in `commands --json` and in the shell
+    // completion, so every reader learns both. Deprecating means one release
+    // where the old spelling still parses and nothing advertises it.
     /// Run, but write nothing -- print what would change and stop.
     ///
     /// Global on purpose: Rails puts `--pretend` on every generator rather
     /// than on the few that seemed risky, and the value is that you never
     /// have to remember which commands support it.
-    #[arg(long, short = 'p', global = true, visible_alias = "dry-run")]
+    #[arg(long, short = 'p', global = true, alias = "dry-run")]
     pub(crate) pretend: bool,
 
     /// How a command reports: readable, current JSON, or frozen v1 JSON
@@ -335,10 +349,10 @@ pub(crate) struct Invocation {
     pub(crate) debug: bool,
     /// The reader has authorised discarding edits to files being removed.
     ///
-    /// `--force` on `remove` and `destroy`. Presentation in the same sense as
-    /// `pretend`: it changes what the plan is allowed to do about one
+    /// `--yes` on `remove`, `destroy` and `rename`. Presentation in the same
+    /// sense as `pretend`: it changes what the plan is allowed to do about one
     /// divergence, not what the model says.
-    pub(crate) force: bool,
+    pub(crate) consented: bool,
 
     /// Leave the plan's follow-up effects for the reader to start.
     ///
@@ -456,8 +470,8 @@ impl Invocation {
     }
 
     /// The same invocation, allowed to discard edits to what it removes.
-    pub(crate) fn forcing(self, force: bool) -> Self {
-        Self { force, ..self }
+    pub(crate) fn consenting(self, consented: bool) -> Self {
+        Self { consented, ..self }
     }
 
     /// The same invocation, acting on a project the caller has resolved.
@@ -496,7 +510,7 @@ impl Invocation {
             plan_in: None,
             command_path: vec!["new".to_string()],
             root: Some(root),
-            force: false,
+            consented: false,
             // `jails new --app` seeds a project rather than standing in one,
             // and its own `--no-start` is the request's, applied once the
             // whole manifest is in.
@@ -664,9 +678,9 @@ pub(crate) enum Command {
         /// Base name for the generated class (default: the capability's own)
         #[arg(long)]
         name: Option<String>,
-        /// Skip the confirmation prompt
-        #[arg(long)]
-        force: bool,
+        /// Answer the confirmation prompt yes in advance
+        #[arg(long, alias = "force")]
+        yes: bool,
         /// Subpackage the generated code was placed in, relative to the base
         /// package -- must match the `--package` passed to `add`.
         #[arg(long)]
@@ -879,20 +893,28 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: Option<RenameCommand>,
         /// Legacy current simple type name
+        ///
+        /// The two-name spelling is the retired one: `jails rename resource
+        /// <Old> <New>` is the rename that keeps the entity's identity, and
+        /// this is a textual sweep of the sources. Hidden for one release
+        /// rather than removed, so a script that still types it keeps working.
+        #[arg(hide = true)]
         old: Option<String>,
         /// Legacy replacement simple type name
+        #[arg(hide = true)]
         new: Option<String>,
-        /// Skip the confirmation prompt
-        #[arg(long)]
-        force: bool,
+        /// Answer the confirmation prompt yes in advance
+        #[arg(long, alias = "force")]
+        yes: bool,
     },
     /// Delete the file(s) a matching generate call would have created
     #[command(visible_alias = "d")]
     Destroy {
         kind: ArtifactKind,
         name: String,
-        #[arg(long)]
-        force: bool,
+        /// Answer the confirmation prompt yes in advance
+        #[arg(long, alias = "force")]
+        yes: bool,
         /// Subpackage to place the generated code in, relative to the base
         /// package -- overrides the conventional one for the kind. Pass an
         /// empty string to write straight into the base package.
@@ -1141,14 +1163,14 @@ pub(crate) enum Undeclare {
     /// the failure the ownership model exists to prevent.
     #[command(name = "fast-test")]
     FastTest {
-        /// Skip the confirmation prompt
+        /// Answer the confirmation prompt yes in advance
         ///
-        /// Its own flag rather than the parent's: clap resolves `--force`
+        /// Its own flag rather than the parent's: clap resolves `--yes`
         /// against the subcommand once one is named, so `jails remove
-        /// fast-test --force` never reaches `Remove::force` and a caller who
+        /// fast-test --yes` never reaches the parent's flag and a caller who
         /// cannot answer the prompt has no way to consent.
-        #[arg(long)]
-        force: bool,
+        #[arg(long, alias = "force")]
+        yes: bool,
     },
 }
 

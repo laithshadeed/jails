@@ -321,7 +321,7 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
                 }
             } else if added.is_empty() || !unchanged {
                 return Err(Failure::Told(format!(
-                    "canonical entity `{}` is already declared with a different shape.\n       fix: evolve it with `jails g field`, `jails resource field`, or `jails rename resource`",
+                    "canonical entity `{}` is already declared with a different shape.\n       fix: evolve it with `jails resource field add` or `jails rename resource`",
                     args.name
                 )));
             }

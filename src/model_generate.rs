@@ -206,7 +206,7 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
             retire: Vec::new(),
         }),
         jails_compiler::COMPILER_VERSION,
-        if invocation.force {
+        if invocation.consented {
             jails_workspace::Restore::EditedAndRemoved
         } else {
             jails_workspace::Restore::Refuse
@@ -310,7 +310,7 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
                 // cannot describe the transition differently.
                 //
                 // A deleted file is the one that most needs saying -- it
-                // leaves nothing behind, and with `--force` it may have
+                // leaves nothing behind, and with `--yes` it may have
                 // carried an afternoon of edits -- and a migration is the
                 // other: it is append-only, so the moment to read it is
                 // before it reaches a database.

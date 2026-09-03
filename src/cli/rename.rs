@@ -75,8 +75,8 @@ pub(crate) enum RenameCommand {
         /// Target route prefix; valid only with `--api rename`
         #[arg(long, requires = "api")]
         route: Option<String>,
-        /// Skip the confirmation prompt
-        #[arg(long)]
-        force: bool,
+        /// Answer the confirmation prompt yes in advance
+        #[arg(long, alias = "force")]
+        yes: bool,
     },
 }
