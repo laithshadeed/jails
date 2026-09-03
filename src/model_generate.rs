@@ -7,7 +7,7 @@ pub(crate) mod profile;
 mod effects;
 pub(crate) mod report;
 
-pub(crate) use effects::{run_follow_up_effects, run_owed_format};
+pub(crate) use effects::run_follow_up_effects;
 use report::refuse_unconfirmed_deletions;
 pub(crate) use report::{report_plan, write_bundle};
 
@@ -66,13 +66,10 @@ pub(crate) struct PreparedMutation {
 /// `nothing to do`. A frontend that can tell *before* preparing a patch --
 /// `g association`, where re-issuing `AddRelation` fails on the id rather than
 /// reconciling -- returns early instead, and says the same thing from here so
-/// the sentence lives with the rest of this module's output, in a report or
-/// filed as one row of a replay.
+/// the sentence lives with the rest of this module's output.
 pub(crate) fn report_already_declared(name: &str, invocation: &Invocation) {
-    let line = format!("  {name:<22}  nothing to do");
-    if !invocation.file_row(line) {
-        println!("nothing to do: the project already matches the model ({name})");
-    }
+    let _ = invocation;
+    println!("nothing to do: the project already matches the model ({name})");
 }
 
 /// Where the wall clock went, under `--timing` (and under `--debug`, which
@@ -182,25 +179,6 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
         true => jails_model::format_jdl_v1(&next_source).unwrap_or(next_source),
         false => next_source,
     };
-    // **A row that declares something the model already has does no work,
-    // and finding that out costs a pipeline.** Capture reads the whole
-    // project, the compiler renders every file and the materializer hashes
-    // them, all to produce a plan with nothing in it: on a twelve-row
-    // manifest replayed over its own output that was 255 ms of discovering
-    // twelve times that there was nothing to do. The edited source being the
-    // source it started from is the whole test -- a frontend that changed
-    // one byte is not this case -- and what makes skipping safe is the pass
-    // `app apply` runs afterwards, which is an ordinary mutation over the
-    // finished source and repairs anything a skipped row would have.
-    if invocation.defer_unchanged
-        && next_source == current.source
-        && evolution.is_empty()
-        && authored_migration.is_none()
-        && reader_paths.is_empty()
-    {
-        invocation.file_row(format!("  {name:<22}  already declared"));
-        return Ok(());
-    }
     // **The model is what the edited source links to**, decided once here
     // and nowhere else: the frontend wrote the bytes, and the linker says
     // what they mean.
@@ -396,27 +374,7 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
         // them apart cannot tell a no-op from a command that silently did not
         // run.
         let idle = execution.files_written == 0 && execution.files_deleted == 0;
-        // **A row of a replay files a line; a command prints a report.** Every
-        // row is the same pipeline, so this is the one place that difference
-        // is spelled, and neither half can grow a report the other lacks.
-        if invocation.batch_report.is_some() {
-            let filed = match idle {
-                true => format!("  {name:<22}  nothing to do"),
-                false => format!("  {name:<22}  {}", delta.summary()),
-            };
-            // **The replay's closing pass is not one of its rows.** It is the
-            // one batched mutation the manifest did not ask for -- it exists
-            // because the rows that skipped their own pipeline rely on it --
-            // so it files what it did and leaves the count to the rows.
-            if invocation.defer_unchanged {
-                invocation.file_row(filed);
-            } else {
-                invocation.file_note(filed);
-            }
-            for line in stranded.into_iter().chain(notes) {
-                invocation.file_note(line);
-            }
-        } else {
+        {
             for line in &stranded {
                 eprintln!("{line}");
             }

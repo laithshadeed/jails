@@ -1,0 +1,86 @@
+jdl 1
+
+app Demo {
+  pkg com.example.demo
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+
+cap api
+cap cors
+cap json
+cap testkit
+
+// written by jails new; yours to edit or delete
+dep org.jspecify:jspecify @version("1.0.0")
+prop spring.threads.virtual.enabled = "false"
+prop spring.mvc.problemdetails.enabled = "true"
+prop server.max-http-request-header-size = "16KB"
+prop server.shutdown = "graceful"
+prop spring.lifecycle.timeout-per-shutdown-phase = "30s"
+
+enum MessageDirection {
+  TO_USER
+  FROM_USER
+}
+
+entity User {
+  use scaffold
+  use seed
+
+  id:        long @default(identity()) @pk
+  email:     string @notBlank @unique
+  createdAt: instant @default(now())
+  updatedAt: instant @default(now()) @updated
+
+  command EnsureUser(email) {
+    conflict on [email]
+    route POST "/customer_api/ping"
+  }
+}
+
+entity Message {
+  use scaffold
+
+  id:        long @default(identity()) @pk
+  userId:    long @index
+  body:      string @notBlank
+  isRead:    boolean
+  timeStamp: instant @index
+  direction: MessageDirection
+  version:   long @version @nonnegative
+  createdAt: instant @default(now())
+  updatedAt: instant @default(now()) @updated
+
+  index [user_id, time_stamp desc]
+
+  relation messageUser to User {
+    map userId -> id
+  }
+
+  command SendMessage(user_id, body, direction, is_read, time_stamp) {
+    route POST "/api/send"
+  }
+  transition MarkAsRead(is_read, version) {
+    select [id]
+    update [is_read]
+    if-match required
+    route PUT "/api/read/{id}"
+  }
+  query Conversation(user_id) {
+    route GET "/api/conversation"
+  }
+  query UnreadForEmail(user.email, is_read) {
+    order by [time_stamp desc]
+    limit 20
+    join User as user on user_id -> user.id
+    route GET "/customer_api/read"
+  }
+  query MessagesByDirection(user_id, direction?) {
+    order by [time_stamp desc]
+  }
+}
+
+component presence Admin {}

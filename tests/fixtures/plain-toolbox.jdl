@@ -1,0 +1,119 @@
+jdl 1
+
+app Demo {
+  pkg com.example.demo
+  java 26
+  platform plain
+  build maven
+  storage none
+}
+
+cap csv
+cap json
+cap sqlite
+cap testkit
+cap format
+cap fake
+cap http
+
+// written by jails new; yours to edit or delete
+dep org.assertj:assertj-core @version("3.27.7") @scope(test)
+dep org.jspecify:jspecify @version("1.0.0")
+dep org.junit.jupiter:junit-jupiter @version("6.1.2") @scope(test)
+
+enum MatchOutcome {
+  MATCHED
+  AMOUNT_DIFFERS
+  DATE_DIFFERS
+  UNMATCHED
+}
+
+enum Currency {
+  GBP
+  EUR
+}
+
+entity Money {
+  amountMinor: long
+  currency:    string @notBlank
+}
+
+entity Entry {
+  reference: string @notBlank
+  postedAt:  date
+  amount:    Money
+  memo:      string?
+}
+
+entity MatchCandidate {
+  sourceEntry: Entry
+  targetEntry: Entry
+}
+
+entity Tally {
+  hits:  int @nonnegative
+  total: long @nonnegative
+}
+
+entity SourceRef {
+  system:     string
+  externalId: string
+}
+
+entity CanonicalTransaction {
+  id:          string @notBlank
+  date:        date
+  amountMinor: long
+  currency:    Currency
+  source:      SourceRef
+  note:        string?
+}
+
+entity Stamped {
+  at:     string @notBlank
+  result: Outcome
+}
+
+entity Transaction {
+  id:     uuid
+  amount: long
+}
+
+entity Reward {
+  id:     uuid
+  amount: long
+}
+
+component sealed LedgerError {
+  variant MalformedRow
+  variant UnknownCurrency
+  variant DuplicateReference
+}
+
+component strategy MatchRule {
+  on match_candidate
+  yields match_outcome
+  variant ExactReference
+  variant AmountAndDate
+  variant FuzzyMemo
+}
+
+component cli Ledger {}
+
+component command Reconcile {
+  on ledger
+}
+
+component class MoneyMoved {}
+
+component sealed Outcome {
+  variant Accepted
+  variant Rejected
+}
+
+component strategy Eligibility {
+  on transaction
+  variant Domestic
+}
+
+component integration-test Checkout {}

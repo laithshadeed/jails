@@ -1,0 +1,89 @@
+jdl 1
+
+app Demo {
+  pkg com.example.demo
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+
+cap api
+cap actuator
+cap observability
+cap security
+cap cors
+cap json
+cap testkit
+cap kafka
+cap docker
+cap ci
+
+// written by jails new; yours to edit or delete
+dep org.jspecify:jspecify @version("1.0.0")
+prop spring.threads.virtual.enabled = "false"
+prop spring.mvc.problemdetails.enabled = "true"
+prop server.max-http-request-header-size = "16KB"
+prop server.shutdown = "graceful"
+prop spring.lifecycle.timeout-per-shutdown-phase = "30s"
+
+enum CrawlStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+entity CrawlRun {
+  use scaffold
+
+  id:           uuid @pk
+  seedUrl:      uri
+  status:       CrawlStatus @default(QUEUED) @index
+  pagesVisited: long @default(0) @nonnegative
+  startedAt:    instant?
+  finishedAt:   instant?
+  createdAt:    instant @default(now())
+  updatedAt:    instant @default(now()) @updated
+
+  index [status, id]
+
+  command QueueCrawl(id, seed_url) {
+  }
+  query CrawlRunsByStatus(status) {
+  }
+}
+
+entity CrawledPage {
+  use scaffold
+
+  id:           uuid @pk
+  crawlRunId:   uuid @index
+  url:          uri
+  statusCode:   int
+  discoveredAt: instant @default(now())
+  createdAt:    instant @default(now())
+  updatedAt:    instant @default(now()) @updated
+
+  index [crawl_run_id, discovered_at desc]
+
+  command RecordCrawledPage(id, crawl_run_id, url, status_code) {
+  }
+  query PagesByCrawlRun(crawl_run_id) {
+  }
+}
+
+component fetcher Page {}
+
+component http-workflow SiteTraversal {
+  on page
+}
+
+event PageDiscovered(id: uuid, crawl_run_id: uuid, url: uri, occurred_at: instant) {
+}
+
+component durable-job CrawlDispatcher(id: uuid, seedUrl: uri) {
+  on queue_crawl
+  yields crawl_run
+}

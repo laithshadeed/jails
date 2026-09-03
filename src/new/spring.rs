@@ -307,7 +307,6 @@ fn complete(
         }
         git_init(tree, debug);
     }
-    let applied = seed(&publication, app, request.no_start, debug)?;
 
     let staged = publication.staged_files();
     publication.publish()?;
@@ -317,7 +316,7 @@ fn complete(
     }
     crate::new::seed::report_unasked_files(&staged);
     println!("next: cd {name} && jails run");
-    reported(applied)
+    Ok(())
 }
 
 pub(super) fn offline_dependencies(deps: &str) -> Result<String> {

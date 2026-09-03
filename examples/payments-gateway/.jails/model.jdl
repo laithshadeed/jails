@@ -1,0 +1,122 @@
+jdl 1
+
+app Demo {
+  pkg com.example.demo
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+
+cap api
+cap actuator
+cap observability
+cap security
+cap cors
+cap json
+cap testkit
+cap kafka
+cap docker
+cap ci
+
+// written by jails new; yours to edit or delete
+dep org.jspecify:jspecify @version("1.0.0")
+prop spring.threads.virtual.enabled = "false"
+prop spring.mvc.problemdetails.enabled = "true"
+prop server.max-http-request-header-size = "16KB"
+prop server.shutdown = "graceful"
+prop spring.lifecycle.timeout-per-shutdown-phase = "30s"
+
+enum PaymentStatus {
+  AUTHORISED
+  CAPTURED
+  REFUNDED
+  REVERSED
+  DECLINED
+  FAILED
+}
+
+enum PaymentMethod {
+  CARD
+  BANK_TRANSFER
+  WALLET
+}
+
+entity Merchant {
+  use scaffold
+
+  id:          uuid @pk @scope
+  reference:   string @notBlank @unique
+  displayName: string @notBlank
+  createdAt:   instant @default(now())
+  updatedAt:   instant @default(now()) @updated
+}
+
+entity Payment {
+  use scaffold
+
+  id:             uuid @pk
+  merchantId:     uuid @index @scope
+  idempotencyKey: string @notBlank @unique
+  amountMinor:    long @positive
+  currency:       string @notBlank
+  method:         PaymentMethod
+  status:         PaymentStatus @default(AUTHORISED) @index
+  version:        long @version @nonnegative
+  authorisedAt:   instant?
+  capturedAt:     instant?
+  createdAt:      instant @default(now())
+  updatedAt:      instant @default(now()) @updated
+
+  index [merchant_id, created_at desc]
+  index [status, created_at]
+
+  relation paymentMerchant to Merchant {
+    map merchantId -> id
+  }
+
+  command AuthorisePayment(id, idempotency_key, amount_minor, currency, method) {
+    emit payment_authorised
+    deliver outbox
+  }
+  transition CapturePayment(id, status, version) {
+    select [id]
+    update [status]
+    if-match required
+  }
+  query PaymentsByMerchant() {
+  }
+  query PaymentsByStatus(status) {
+  }
+}
+
+entity Refund {
+  use scaffold
+
+  id:          uuid @pk
+  merchantId:  uuid @index @scope
+  paymentId:   uuid @index
+  amountMinor: long @positive
+  reason:      string?
+  createdAt:   instant @default(now())
+  updatedAt:   instant @default(now()) @updated
+
+  index [payment_id, created_at]
+
+  relation refundPayment to Payment {
+    map paymentId -> id
+  }
+
+  command RefundPaymentRequest(id, payment_id, amount_minor) {
+  }
+}
+
+event PaymentAuthorised(id: uuid, merchant_id: uuid, payment_id: uuid, occurred_at: instant) {
+}
+
+component fetcher Acquirer {}
+
+component http-sink AcquirerSettlement {
+  on authorise_payment
+  yields payment_authorised
+}

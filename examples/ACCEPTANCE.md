@@ -6,10 +6,10 @@ workspace-, payment-, or ledger-named branch belongs in Jails core.
 
 ## Shared generated-application contract
 
-A claim is complete only when a fresh directory produced from a manifest,
+A claim is complete only when a fresh directory produced from a model file,
 with no hand-edited Java or SQL, proves it. Every Spring application must:
 
-- apply the same manifest twice without changing generated output;
+- sync the same model twice without changing generated output;
 - compile every generated source file;
 - run Flyway migrations against PostgreSQL and execute repository/query tests;
 - execute generated HTTP use cases through Spring MVC and persist the result;
@@ -29,7 +29,7 @@ must *not* need. Its own contract is below.
 
 ## Web crawler contract
 
-From `examples/web-crawler/.jails/app.toml`, Jails must produce a runnable
+From `examples/web-crawler/.jails/model.jdl`, Jails must produce a runnable
 application that can accept a seed URL, durably resume a crawl after restart,
 fetch an exact-host finite page graph, store each canonical URL once, and
 report status/pages through generated APIs. Its executable adversarial tests
@@ -40,7 +40,7 @@ and a hard maximum-page/depth bound.
 
 ## Support inbox contract
 
-From `examples/support-inbox/.jails/app.toml`, Jails must produce a runnable
+From `examples/support-inbox/.jails/model.jdl`, Jails must produce a runnable
 application that creates workspaces, contacts, conversations, and messages;
 creates members and inboxes, relates members to inboxes, assigns and reassigns
 conversations; lists those resources through tenant-scoped queries; and
@@ -52,7 +52,7 @@ and terminal delivery failure is inspectable.
 
 ## Payments gateway contract
 
-From `examples/payments-gateway/.jails/app.toml`, Jails must produce a runnable
+From `examples/payments-gateway/.jails/model.jdl`, Jails must produce a runnable
 application that authorises a payment under a merchant scope, stages the
 authorisation event and the business row in one transaction, captures it under
 an optimistic version, records refunds against an existing payment, and lists
@@ -63,13 +63,13 @@ rather than trusted from a JWT claim. Money is minor units in a `long`; no
 
 ## Ledger CLI contract -- the control
 
-From `examples/ledger-cli/.jails/app.toml`, Jails must produce a runnable
+From `examples/ledger-cli/.jails/model.jdl`, Jails must produce a runnable
 plain-Maven application with **no Spring, no web server and no PostgreSQL**:
 a value object with its own validation, an enum, a sealed result set, a
 record, an open strategy with one bean-free implementation per variant, a
 second CLI dispatcher, and a subcommand registered into the dispatcher the
-manifest names. `mvn clean verify` must pass offline against the local
-repository, including the formatter the manifest asks for.
+model names. `mvn clean verify` must pass offline against the local
+repository, including the formatter the model asks for.
 
 The clause that makes it a control: **standing it up must not add a line to
 `src/`**. A generator that only works because the project is a Spring Boot

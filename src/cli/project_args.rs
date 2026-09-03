@@ -69,26 +69,24 @@ pub(crate) struct NewArgs {
     /// `bootJar` archive version. Gradle only, and only with `--jar-name`
     #[arg(long, value_name = "VERSION")]
     pub(crate) jar_version: Option<String>,
-    /// Start the new project from this model or manifest
+    /// Start the new project from this model file
     ///
-    /// A `.jdl` is copied in as the project's own `.jails/model.jdl` and
-    /// compiled, under the identity `new` just wrote: the file's `pkg`,
-    /// `java`, `platform` and `build` give way to the ones this command
-    /// chose, and every declaration in it is kept. A `.toml` is an
-    /// application manifest whose rows are replayed as commands. The path is
-    /// read relative to where you are standing, and the extension decides
-    /// which it is.
+    /// The `.jdl` is copied in as the project's own `.jails/model.jdl` and
+    /// compiled -- a copy and one `sync`. The identity `new` just wrote
+    /// wins: the file's `pkg`, `java`, `platform` and `build` give way to
+    /// the ones this command chose, and every other declaration, `storage`
+    /// included, is kept verbatim. The path is read relative to where you
+    /// are standing.
     #[arg(long, visible_alias = "app", value_name = "FILE")]
     pub(crate) model: Option<std::path::PathBuf>,
-    /// Write Compose services but do not start them
+    /// Accepted and ignored: `--model` starts no service
     ///
-    /// `--app` is `jails app apply` inside the publication, so it takes
-    /// that command's flag too. Without it a manifest declaring `db` or
-    /// `kafka` makes project creation depend on a container engine being
-    /// up, and a failed start is now reported truthfully -- which turns
-    /// "generate this project" into a command that fails on a machine
-    /// whose port is already taken.
-    #[arg(long)]
+    /// It was the manifest replay's flag, and a model is compiled into one
+    /// plan whose external effects are its own. A project declaring `db` or
+    /// `kafka` gets the Compose services written and not started either way,
+    /// so creation never depends on a container engine being up. Kept so a
+    /// script that passes it keeps working, and hidden so nobody learns it.
+    #[arg(long, hide = true)]
     pub(crate) no_start: bool,
 }
 
@@ -112,25 +110,23 @@ pub(crate) struct NewCliArgs {
     /// Skip `git init` and the .gitignore it normally sets up
     #[arg(long)]
     pub(crate) no_git: bool,
-    /// Start the new project from this model or manifest
+    /// Start the new project from this model file
     ///
-    /// A `.jdl` is copied in as the project's own `.jails/model.jdl` and
-    /// compiled, under the identity `new` just wrote: the file's `pkg`,
-    /// `java`, `platform` and `build` give way to the ones this command
-    /// chose, and every declaration in it is kept. A `.toml` is an
-    /// application manifest whose rows are replayed as commands. The path is
-    /// read relative to where you are standing, and the extension decides
-    /// which it is.
+    /// The `.jdl` is copied in as the project's own `.jails/model.jdl` and
+    /// compiled -- a copy and one `sync`. The identity `new` just wrote
+    /// wins: the file's `pkg`, `java`, `platform` and `build` give way to
+    /// the ones this command chose, and every other declaration, `storage`
+    /// included, is kept verbatim. The path is read relative to where you
+    /// are standing.
     #[arg(long, visible_alias = "app", value_name = "FILE")]
     pub(crate) model: Option<std::path::PathBuf>,
-    /// Write Compose services but do not start them
+    /// Accepted and ignored: `--model` starts no service
     ///
-    /// `--app` is `jails app apply` inside the publication, so it takes
-    /// that command's flag too. Without it a manifest declaring `db` or
-    /// `kafka` makes project creation depend on a container engine being
-    /// up, and a failed start is now reported truthfully -- which turns
-    /// "generate this project" into a command that fails on a machine
-    /// whose port is already taken.
-    #[arg(long)]
+    /// It was the manifest replay's flag, and a model is compiled into one
+    /// plan whose external effects are its own. A project declaring `db` or
+    /// `kafka` gets the Compose services written and not started either way,
+    /// so creation never depends on a container engine being up. Kept so a
+    /// script that passes it keeps working, and hidden so nobody learns it.
+    #[arg(long, hide = true)]
     pub(crate) no_start: bool,
 }

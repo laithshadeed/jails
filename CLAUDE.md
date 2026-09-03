@@ -102,12 +102,13 @@ preimage the form `serde` derives -- so a lock written by any release still
 verifies. Rewriting text into an array to decode it cost 95 ms of a 122 ms
 capture at a hundred entities.
 
-**`.jails/model.jdl` is the one editable source.** `model_command::read_source`
-is the funnel every mutation reads its model through; it refuses anything
-else by name. `app plan|apply` reads a manifest and writes declarations into
-the model, one way -- that is not a second editable source, because the model
-is what every later command reads. `app init` writes the manifest and is the
-one subcommand that refuses on a modelled project.
+**`.jails/model.jdl` is the one editable source, and there is no second.**
+`model_command::read_source` is the funnel every mutation reads its model
+through; it refuses anything else by name -- the retired `.jails/model.toml`,
+and `.jails/app.toml`, the application manifest I71.21 deleted. `jails new
+<name> --model <file.jdl>` starts a project from one: the file is copied in
+and compiled, with `pkg`, `java`, `platform` and `build` taken from the
+project `new` just wrote and every other declaration kept verbatim.
 
 **Managed output lives beside the reader's sources under `src/`, and the lock
 says what is managed.** `jails_contracts::SourceRoot` is JDL v1 §9.7's
@@ -440,7 +441,7 @@ and `jails.toml` name, `declarable_in_source` for what a JDL `cap` may spell
 (JDL v1 §12 makes `db` and `h2` selections of `app.storage`).
 
 `label()` exists where a *file* stores the word: `CapabilityKind` has one
-because `jails.toml`, `app.toml` and JDL all write it. `ArtifactKind`
+because `jails.toml` and JDL both write it. `ArtifactKind`
 deliberately has none -- nothing stores a generator kind, so clap's canonical
 name is the only spelling and a hand-written table beside `value(name = ...)`
 would be the second copy.
@@ -543,19 +544,15 @@ this phase, and their refusals are worded by the caller that reports them.
   (`Invocation::for_new` pins it; `Invocation::root` is the one walk) and
   every model function takes the invocation or the root it resolved --
   `materialize_seed(root)` is the seed's entry, not a second walk.
-- **`src/app.rs`** -- `jails app plan|apply`: a closed manifest at
-  `.jails/app.toml` (`schema`, `capabilities`, `[[generate]]` rows of
-  `kind`/`name`/`fields`/`timestamps`/`indexes`/`package`/`on`/`yields`, with
-  `strategy_on`/`strategy_yields` as deprecated aliases; both spellings at once
-  is an error). A `[[generate]]` row *is* a `GenerateArgs`, replayed row by row
-  through the same frontends `jails g` and `jails add` use; every frontend is
-  idempotent, so an interrupted replay is repaired by running it again.
-  **Deliberately domain-blind**: a crawler, a support inbox and a payments
-  gateway are three lists of the same generic intents, and none of them gets a
-  command, branch, enum or template in core. A capability wires its own
-  integration points (`DocumentIntent::ReconcileSpringTestImport` puts the
-  container import in the tests that need it), so no second reconcile pass
-  is needed.
+- **`src/new/seed.rs`** -- what every new project gets, and `--model`.
+  `Supplied::of` decides by extension and refuses by name; `adopted` swaps the
+  supplied file's identity lines for the seed's and keeps the rest, so one
+  model file starts any project. **Deliberately domain-blind**: a crawler, a
+  support inbox and a payments gateway are three lists of the same generic
+  declarations, and none of them gets a command, branch, enum or template in
+  core. A capability wires its own integration points
+  (`DocumentIntent::ReconcileSpringTestImport` puts the container import in
+  the tests that need it), so no second reconcile pass is needed.
 - **`crates/jails-support/src/apply/`** -- **the only module that writes.**
   `fs::write` appears nowhere else and `tests/architecture/` fails when it
   does, and fails on a direct `apply::` call from anywhere that is not the
@@ -896,8 +893,9 @@ this phase, and their refusals are worded by the caller that reports them.
 - **`crates/jails-report/src/source.rs`** -- `jails src <Type>`: where a type
   is. Deliberately requires no build file, lists every match rather than
   picking, and reads the package off the `package` line rather than the path.
-- **`examples/`** -- the proof applications: manifests built from the same
-  generic intents, with `ACCEPTANCE.md` as the done/not-done contract and
+- **`examples/`** -- the proof applications: one `.jails/model.jdl` each,
+  built from the same generic declarations, with `ACCEPTANCE.md` as the
+  done/not-done contract and
   `proof-policy.tsv` naming the gate for each. **Never hand-edit a generated
   proof app to make it pass**; a manual edit is evidence for the next generic
   improvement.
@@ -1069,9 +1067,11 @@ The rules, each measured rather than guessed:
   startup, not containers, not the product binary (median invocation ~70 ms)
   -- *unless the product spawns one*. The plain toolbox spent 162 of its
   165 s in `mvn spotless:apply`, one per mutation, because the `format`
-  capability's follow-up effect ran after every row of a manifest replay;
-  it runs once per replay now and never after an execution that wrote
-  nothing, and the toolbox is one manifest (`tests/fixtures/plain-toolbox.app.toml`).
+  capability's follow-up effect ran after every row of a manifest replay.
+  The manifest is gone: the toolbox is one model
+  (`tests/fixtures/plain-toolbox.jdl`) compiled in one plan, so the formatter
+  runs once because there is one execution, and never after one that wrote
+  nothing.
   The way to find the next one is `JAILS_TEST_PROFILE=1` with the per-fixture
   timeline: a `jails` invocation measured in seconds is a JVM it started.
   `docs/40-gates-and-ci.md` records the levers already measured and declined

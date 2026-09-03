@@ -1,0 +1,33 @@
+jdl 1
+
+app Spring {
+  pkg com.intercom.spring
+  java 21
+  platform spring
+  build gradle
+  storage h2
+}
+
+cap cors
+
+// written by jails new; yours to edit or delete
+dep org.jspecify:jspecify @version("1.0.0")
+prop server.max-http-header-size = "16KB"
+prop server.shutdown = "graceful"
+prop spring.lifecycle.timeout-per-shutdown-phase = "30s"
+
+entity Verification {
+  success: boolean
+}
+
+component controller Foo {
+  on verification
+  yields verification
+  route POST "/foo"
+}
+
+component controller Bar {
+  on verification
+  yields verification
+  route POST "/bar"
+}

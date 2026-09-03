@@ -1,8 +1,8 @@
 //! What every new project gets, whichever path created it.
 //!
 //! `mise.toml`, `AGENTS.md`, the fixtures directory, `.gitignore`, `git init`
-//! — and `--app`, which seeds `.jails/app.toml` and replays it into the model
-//! before the tree is published.
+//! — and `--model`, which seeds a supplied `.jdl` as the project's own
+//! `.jails/model.jdl` before the tree is published.
 //!
 //! Its own file rather than a section of either: neither [`super::spring`]
 //! nor [`super::plain`] owns these, and a helper that both call from a file
@@ -10,50 +10,6 @@
 
 use super::*;
 
-/// Seed a freshly created project with a manifest and apply it.
-///
-/// `new` + `mkdir .jails` + `cp app.toml` + `app apply` is four steps that
-/// only ever appear together. The manifest path is resolved against the
-/// directory the *user* is standing in, not the project just created, because
-/// that is where they are pointing from.
-pub fn seed_manifest(
-    tree: &publish::Tree<'_>,
-    manifest: &Path,
-    no_start: bool,
-    debug: bool,
-) -> Result<crate::app::Applied> {
-    let source = std::fs::read_to_string(manifest).map_err(|error| {
-        format!(
-            "failed to read the application manifest {}: {error}\n       \
-             fix: pass `--app <path>` pointing at a readable `.jails/app.toml`.",
-            manifest.display()
-        )
-    })?;
-    tree.put(".jails/app.toml", &source)?;
-    println!("  manifest {}", manifest.display());
-    // A seeded model means the manifest replays into it through the same
-    // frontends `jails g` uses, at the root of the tree being published --
-    // never the process directory, which is this project's parent.
-    // `no_start` is not passed on because the canonical path has no external
-    // service effects to suppress; `sync` refuses the flag by name for the
-    // same reason.
-    let _ = no_start;
-    crate::app::replay(
-        None,
-        crate::Invocation::for_new(tree.root().to_path_buf(), debug),
-    )?;
-    Ok(crate::app::Applied::Clean)
-}
-
-/// Whether the manifest run left a failure the caller still has to report.
-///
-/// `jails new --app` publishes by rename, so an error thrown out of the apply
-/// discards the whole scratch tree -- which is right for a manifest that could
-/// not be applied and wrong for one that *was*. A compose service that will
-/// not start, on a machine where an unrelated container already holds `:5432`,
-/// is a post-*commit* effect; it must not be able to unmake the commit, still
-/// less the project the commit is in, or the reader is left with no project
-/// and no way to tell which of the two happened.
 /// The files a reader did not ask for, named once at creation.
 ///
 /// **`Created ./demo` and nothing else leaves a reader to find the rest with
@@ -87,62 +43,32 @@ pub(super) fn report_unasked_files(staged: &[String]) {
     }
 }
 
-pub(super) fn reported(applied: crate::app::Applied) -> Result<()> {
-    match applied {
-        crate::app::Applied::Clean => Ok(()),
-    }
-}
-
-/// Apply `--app <manifest>` to the project being created, before it is
-/// published.
+/// Which of the two things `--model` was pointed at.
 ///
-/// The manifest is inside the publication rather than after it: `new --app`
-/// is one command, and a destination holding a project whose manifest
-/// half-applied is exactly the state publication-by-rename exists to remove.
-/// The manifest path is resolved against the directory the *user* is standing
-/// in, which is why it is read before anything is written.
-pub(super) fn seed(
-    publication: &publish::Publication,
-    app: Option<&Path>,
-    no_start: bool,
-    debug: bool,
-) -> Result<crate::app::Applied> {
-    match app {
-        // A model was already seeded as the project's own
-        // `.jails/model.jdl` and compiled by `seed_canonical_model`, which
-        // is the whole of "a copy and one sync". Only a manifest has a
-        // second phase, because its rows are commands rather than a model.
-        Some(supplied) if Supplied::of(supplied)? == Supplied::Model => {
-            Ok(crate::app::Applied::Clean)
-        }
-        Some(manifest) => seed_manifest(&publication.tree(), manifest, no_start, debug),
-        None => Ok(crate::app::Applied::Clean),
-    }
-}
-
-/// Which of the two things `--app`/`--model` was pointed at.
-///
-/// **Decided by name, and refused by name.** A manifest is replayed as
-/// commands and a model is copied and compiled; they are not
-/// interchangeable, and a file read as the wrong one fails somewhere deep
-/// with a parse error about a syntax the reader never wrote.
+/// **Decided by name, and refused by name.** The one editable source is a
+/// `.jdl`, and the `.toml` manifest that used to be a second one is gone --
+/// a project pointed at one is told what happened rather than left with a
+/// parse error about a syntax it never wrote.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum Supplied {
     /// `.jdl`: the one editable source, copied in and compiled.
     Model,
-    /// `.toml`: a manifest of `[[generate]]` rows, replayed as commands.
-    Manifest,
 }
 
 impl Supplied {
     pub(super) fn of(path: &Path) -> Result<Self> {
         match path.extension().and_then(|extension| extension.to_str()) {
             Some("jdl") => Ok(Self::Model),
-            Some("toml") => Ok(Self::Manifest),
+            Some("toml") => Err(jails_support::Failure::Told(format!(
+                "`{}` is an application manifest, and jails has one editable source\n       \
+                 fix: write the declarations as `jdl 1` in a `.jdl` file and pass that; \
+                 `jails model explain` and `jails explain jdl` are the language, and every \
+                 `jails g` command prints the declaration it wrote",
+                path.display()
+            ))),
             _ => Err(jails_support::Failure::Told(format!(
-                "`{}` is neither a model nor a manifest\n       fix: point `--model` at a \
-                 `.jdl` file, which is copied in and compiled, or `--app` at a `.toml` \
-                 manifest, whose rows are replayed as commands",
+                "`{}` is not a model\n       fix: point `--model` at a `.jdl` file, which \
+                 is copied in as this project's `.jails/model.jdl` and compiled",
                 path.display()
             ))),
         }

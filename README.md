@@ -30,8 +30,7 @@ own sources under `src/`, and `.jails/compiler.lock.json` is what says which
 files are jails': on the next generation, disjoint hand edits survive and
 overlapping edits refuse before anything is written.
 
-`jails new`, `jails new-cli`, `jails new --app` and `jails new --model` all seed
-the model. A project
+`jails new`, `jails new-cli` and `jails new --model` all seed the model. A project
 jails did not create reaches it through `jails model init`, and `jails adopt`
 first records the project's layout in `jails.toml`.
 
@@ -83,7 +82,7 @@ jails model fmt [--check]
 jails sync
 ```
 
-`.jails/` holds four things and nothing else: `model.jdl` and `app.toml`, the
+`.jails/` holds four things and nothing else: `model.jdl`, the
 input; `compiler.lock.json`, what the last applied plan accepted; `base/`,
 the merge base that lock names, one file per managed path holding exactly the
 bytes the next generation diffs against; and two scratch entries a
@@ -1151,100 +1150,71 @@ edit there is a restart — that is devtools working, not failing. And `jails
 check` stays `mvn clean verify`: an incremental compile cannot see that a
 deleted method left a stale caller.
 
-## Declarative applications: `jails app`
+## Declarative applications: a model file
 
-`.jails/app.toml` composes the same generic capabilities and generators the
-CLI exposes. It is a reproducible command sequence, not a domain-specific
-plugin or a second programming language:
+`.jails/model.jdl` composes the same generic capabilities and generators the
+CLI exposes. There is one editable source, and this is it — the CLI is sugar
+that writes these declarations, and every mutation prints the JDL it wrote.
 
-```toml
-schema = 1
-capabilities = ["db", "api", "actuator", "security", "docker", "ci"]
+```
+jdl 1
 
-[[generate]]
-kind = "enum"
-name = "TaskStatus"
-fields = ["PENDING", "RUNNING", "DONE"]
+app Crawler {
+  pkg com.example.crawler
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
 
-[[generate]]
-kind = "scaffold"
-name = "Task"
-fields = ["id:uuid@pk", "status:TaskStatus@index", "createdAt:instant"]
-indexes = ["status, created_at desc"]
+cap api
+cap actuator
+cap docker
 
-[[generate]]
-kind = "usecase"
-name = "CreateTask"
-fields = []
-on = "Task"
+enum CrawlStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+}
 
-[[generate]]
-kind = "query"
-name = "TasksByStatus"
-fields = ["status:TaskStatus"]
-on = "Task"
+entity CrawlRun {
+  use scaffold
+
+  id:      uuid @pk
+  seedUrl: uri
+  status:  CrawlStatus @default(QUEUED) @index
+
+  index [status, id]
+
+  command QueueCrawl(id, seed_url) {
+  }
+}
 ```
 
-`usecase` generates a typed command, application port, transactional
-implementation, POST adapter, and mock-free tests over an existing scaffold.
-It only derives conservative values (identity, timestamp, status default,
-empty optional/collection, zero counter, or false); if a required value cannot
-be proven, generation stops and asks for that field. With
-`strategy_yields = "SomeEvent"` (CLI: `--yields SomeEvent`), the event must
-already be generated; Jails wraps the use case with a PostgreSQL transactional
-outbox, an ordered sink port, Kafka adapter, leased bounded-retry relay, stable
-event identity, and a real database/broker test. Optional `http-sink` intents
-join that same delivery chain; the relay marks success only after every
-configured sink acknowledges the event. `association` declares ordered
-child-to-parent field mappings as persisted composite tenant/ownership
-invariants. `http-workflow` composes a generated safe fetcher into durable,
-bounded traversal without adding a domain-specific app command. `query`
-generates a typed read port, visible named-parameter JDBC SQL, POST adapter, and
-a real PostgreSQL test. Its first contract deliberately accepts only required
-scalar equality filters, orders by a stable key, and caps the result window at
-100 instead of guessing null, list, keyset, or sort semantics.
-`transition` generates a scope-aware optimistic update: `id`, `@scope` fields,
-and `version` match the row; remaining fields update and version increments in
-one statement.
+- `jails sync [--pretend] [--no-start]` compiles the model and applies the
+  exact plan; `--pretend` shows what it would change and writes nothing.
+- `jails new <name> --model <file.jdl>` and `jails new-cli <name> --model
+  <file.jdl>` create the project and compile the model into it — one command
+  from an empty directory to a project that passes `mvn clean verify`. The
+  path is read relative to where you are standing, not to the project being
+  created, and the identity `new` wrote wins over the file's.
 
-- `jails app plan [--manifest <path>]` validates the manifest and shows its
-  capability and generation intents without writing.
-- `jails app apply [--manifest <path>] [--no-start]` installs capabilities in
-  declaration order, then applies generation intents in declaration order.
-- global `--pretend` turns `app apply` into the same read-only plan.
-- `jails new <name> --app <manifest>` and `jails new-cli <name> --app
-  <manifest>` create the project, seed the manifest into `.jails/app.toml`, and
-  apply it — one command from an empty directory to a project that passes
-  `mvn clean verify`. The manifest path is read relative to where you are
-  standing, not to the project being created.
-- `jails new <name> --model <file.jdl>` is the same one command over the one
-  editable source: the file is copied in as the project's own
-  `.jails/model.jdl` and compiled, which is a copy and one `sync`. The
-  extension decides which of the two you get, and anything else is refused by
-  name. The project's own identity wins over the file's — its `pkg`, `java`,
-  `platform` and `build` are the ones this command just wrote, so a model
-  written for one project starts another without leaving a package no
-  directory holds. Every other declaration, `storage` included, is kept
-  verbatim.
+`sync` is one capture, one compile and one plan for the whole model, however
+many declarations it carries, and a converged project is recognised as one
+before a pipeline is built. Editing a declaration is an update to a known
+node: identity is the stable id, its fields are content, so the regenerated
+result is three-way merged over whatever you have edited by hand and a
+conflict refuses rather than overwrites.
 
-`apply` replays the manifest row by row into the model through the same
-frontends `jails g` and `jails add` use. Every frontend is idempotent, so an
-interrupted apply is repaired by running it again. Changing an already-applied
-row is an update to a known entity: an intent is identified by kind, name and
-package, and its fields are content, so the regenerated result is three-way
-merged over whatever you have edited by hand and a conflict refuses rather than
-overwrites.
+[`examples/`](examples) carries one model file per proof application, and
+[`examples/ACCEPTANCE.md`](examples/ACCEPTANCE.md) is the executable
+done/not-done boundary for them.
 
-The manifest is intentionally a closed schema: `schema`, `capabilities`, and
-`[[generate]]` entries with `kind`, `name`, `fields`, `timestamps`, `indexes`,
-`package`, `on`, and `yields`. Unknown keys fail instead of being silently
-ignored.
-
-`on` and `yields` are the reference keys — the entity an intent acts on, and
-what it produces. `strategy_on` and `strategy_yields` parse as deprecated
-aliases; setting the same reference under both names is an error rather than a
-coin toss. [`examples/ACCEPTANCE.md`](examples/ACCEPTANCE.md) is the executable
-done/not-done boundary for the example applications.
+**`.jails/app.toml` was the second declarative source and is gone.** Its
+`[[generate]]` rows were CLI calls, and everything they said, JDL says. A
+project that still carries one is refused by name rather than passed over,
+because a file declaring capabilities that nothing applies is worse than no
+file.
 
 ## `jails.toml`
 
@@ -1550,8 +1520,8 @@ thing that says which files are jails' is the accepted projection in
 resources. Open the project in any IDE and there is exactly the tree it
 expects.
 
-`.jails/` is the **input**: `.jails/model.jdl`, the lock that reproduces a
-merge base, and `.jails/app.toml` if you keep a manifest. The two things in
+`.jails/` is the **input**: `.jails/model.jdl` and the lock that reproduces a
+merge base. The two things in
 there that are not input — `apply.lock`, a mutex, and `run/`, a daemon socket
 beside two caches — are covered by a `.jails/.gitignore` jails writes itself,
 so neither reaches a commit or a diff whatever your own `.gitignore` says.
@@ -1916,8 +1886,8 @@ body. `handler` writes a whole CRUD surface rather than one route, and
 `webhook` reads the raw bytes *before* the signature is checked, which is the
 bug that kind exists to avoid; both refuse the flag by name.
 
-Recorded on the intent, so `jails sync` and `jails app apply` regenerate the
-same shape, and changing it is an edit to a known entity rather than a new one.
+Recorded on the declaration, so `jails sync` regenerates the same shape, and
+changing it is an edit to a known entity rather than a new one.
 
 **The names on the wire follow the project, not jails.** Set
 `spring.jackson.property-naming-strategy=SNAKE_CASE` (`jails set` owns the key)

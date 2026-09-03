@@ -129,14 +129,12 @@ pub fn new_cli(request: &Request<'_>) -> Result<()> {
         tree.put(".gitignore", GITIGNORE)?;
         git_init(&tree, debug);
     }
-    let applied = seed(&publication, app, request.no_start, debug)?;
-
     let staged = publication.staged_files();
     publication.publish()?;
     println!("Created ./{name} (package: {package}, Java {java})");
     crate::new::seed::report_unasked_files(&staged);
     println!("next: cd {name} && jails run");
-    reported(applied)
+    Ok(())
 }
 
 pub(super) fn ensure_enforcer(tree: &publish::Tree<'_>, java: &str) -> Result<()> {

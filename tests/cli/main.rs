@@ -17,7 +17,6 @@
 mod common;
 
 mod agent_protocol;
-mod app;
 mod behavior_matrix;
 mod capabilities;
 mod developer_tools;
@@ -82,24 +81,24 @@ fn snapshot_tree(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
     out
 }
 
-/// The proof applications, as (name, manifest). One list, read by both gates
+/// The proof applications, as (name, model). One list, read by both gates
 /// below: a second copy is how one of them quietly stops covering an app.
 ///
 /// The ledger CLI is **not** here -- it is the control, has no Spring parent,
-/// and needs the plain fixture. `ledger_cli_manifest_builds_without_spring`
-/// is its gate.
-const SPRING_APP_MANIFESTS: &[(&str, &str)] = &[
+/// and needs the plain fixture. `the_ledger_model_builds_without_spring` is
+/// its gate.
+const SPRING_APP_MODELS: &[(&str, &str)] = &[
     (
         "web-crawler",
-        include_str!("../../examples/web-crawler/.jails/app.toml"),
+        include_str!("../../examples/web-crawler/.jails/model.jdl"),
     ),
     (
         "support-inbox",
-        include_str!("../../examples/support-inbox/.jails/app.toml"),
+        include_str!("../../examples/support-inbox/.jails/model.jdl"),
     ),
     (
         "payments-gateway",
-        include_str!("../../examples/payments-gateway/.jails/app.toml"),
+        include_str!("../../examples/payments-gateway/.jails/model.jdl"),
     ),
 ];
 
@@ -156,20 +155,16 @@ fn verified_plain_toolbox(path: &str) -> &'static std::path::PathBuf {
     static VERIFIED: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
     VERIFIED.get_or_init(|| {
         let workdir = temp_dir("plain-toolbox-verified");
-        // Everything the shared project proves, as one manifest: the ledger
+        // Everything the shared project proves, as one model: the ledger
         // control application plus the plain kinds listed in the fixture.
-        // Applied *at creation*, not after: `--app` is the route that applies
-        // a manifest inside the publication, and one replay formats the
-        // tree once rather than once per row.
-        let manifest = workdir.join("plain-toolbox.app.toml");
-        fs::write(
-            &manifest,
-            include_str!("../fixtures/plain-toolbox.app.toml"),
-        )
-        .unwrap();
+        // Seeded *at creation*, not after: `--model` copies the file in
+        // inside the publication and compiles it once, so the formatter --
+        // a Maven JVM -- runs once over the whole tree.
+        let model = workdir.join("plain-toolbox.jdl");
+        fs::write(&model, include_str!("../fixtures/plain-toolbox.jdl")).unwrap();
         let status = jails_cmd_with_path(&workdir, path)
-            .args(["new-cli", "demo", "--app"])
-            .arg(&manifest)
+            .args(["new-cli", "demo", "--model"])
+            .arg(&model)
             .status()
             .unwrap();
         assert!(status.success(), "new-cli failed for the plain toolbox");
@@ -185,7 +180,7 @@ fn verified_plain_toolbox(path: &str) -> &'static std::path::PathBuf {
             .unwrap();
         assert!(status.success(), "generate cases failed in plain toolbox");
 
-        // The ledger manifest makes LedgerCli the executable dispatcher.
+        // The ledger model makes LedgerCli the executable dispatcher.
         // Generate this command afterwards and target that dispatcher so the
         // shared runtime gate proves the final application registration.
         let status = jails_cmd_with_path(&root, path)
@@ -617,16 +612,16 @@ fn generated_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::
     static GENERATED: std::sync::OnceLock<Vec<(&'static str, std::path::PathBuf)>> =
         std::sync::OnceLock::new();
     GENERATED.get_or_init(|| {
-        let cache_salt = SPRING_APP_MANIFESTS.iter().fold(
+        let cache_salt = SPRING_APP_MODELS.iter().fold(
             PROOF_APP_CACHE_SCHEMA.to_string(),
-            |mut salt, (name, manifest)| {
-                salt.push_str(&format!("\n{name}:{}\n{manifest}", manifest.len()));
+            |mut salt, (name, model)| {
+                salt.push_str(&format!("\n{name}:{}\n{model}", model.len()));
                 salt
             },
         );
         let (parent, fresh) = cached_toolchain_dir_with_salt("proof-apps", &cache_salt);
         if !fresh {
-            let generated: Vec<_> = SPRING_APP_MANIFESTS
+            let generated: Vec<_> = SPRING_APP_MODELS
                 .iter()
                 .map(|(name, _)| (*name, parent.join(name)))
                 .collect();
@@ -637,19 +632,19 @@ fn generated_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::
         }
         let mut generated = Vec::new();
         std::thread::scope(|scope| {
-            let handles: Vec<_> = SPRING_APP_MANIFESTS
+            let handles: Vec<_> = SPRING_APP_MODELS
                 .iter()
-                .map(|&(name, manifest)| {
+                .map(|&(name, model)| {
                     let parent = &parent;
                     scope.spawn(move || {
                         let root = parent.join(name);
                         fs::create_dir_all(&root).unwrap();
                         write_spring_fixture(&root);
                         fs::create_dir_all(root.join(".jails")).unwrap();
-                        fs::write(root.join(".jails/app.toml"), manifest).unwrap();
+                        fs::write(root.join(".jails/model.jdl"), model).unwrap();
 
                         let output = jails_cmd_with_path(&root, path)
-                            .args(["app", "apply", "--no-start"])
+                            .args(["sync", "--no-start"])
                             .output()
                             .unwrap();
                         assert!(
@@ -814,7 +809,7 @@ fn verified_app_fixtures(path: &str) -> &'static Vec<(&'static str, std::path::P
                 );
             }
         };
-        let names = SPRING_APP_MANIFESTS
+        let names = SPRING_APP_MODELS
             .iter()
             .map(|(name, _)| *name)
             .collect::<Vec<_>>();

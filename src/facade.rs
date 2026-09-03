@@ -6,4 +6,4 @@ pub(crate) use jails_project::template;
 pub(crate) use jails_project::{compose, inspect, pom, project};
 pub(crate) use jails_report::{commands, explain, source, why};
 pub(crate) use jails_spec::release;
-pub(crate) use jails_spec::spec::suffix::{recorded_name, strip_redundant_suffix};
+pub(crate) use jails_spec::spec::suffix::strip_redundant_suffix;

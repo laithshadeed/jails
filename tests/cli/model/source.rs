@@ -1079,38 +1079,30 @@ fn canonical_sync_recompiles_model_state_without_the_legacy_store() {
     );
 }
 
+/// A canonical project fails closed before a legacy mutation route.
+///
+/// The textual rename is not routed anywhere -- it is a different operation,
+/// and it works. What it refuses is a type the *model* declares, because
+/// carrying only the Java would leave the next compilation rendering the old
+/// name back. `adopt` and `modernize` are not refused: both run *before* a
+/// project has a model and neither claims anything a later command
+/// reconciles, so they write directly.
 #[test]
 fn canonical_projects_fail_closed_before_legacy_mutation_routes() {
     let root = model_project("model-no-legacy-routes", MODEL);
     apply_canonical_model(&root, "initial-no-legacy-routes");
-    for case in [
-        // The textual rename is not routed anywhere -- it is a different
-        // operation, and it works. What it refuses is a type the *model*
-        // declares, because carrying only the Java would leave the next
-        // compilation rendering the old name back.
-        (
-            "rename Note Memo",
-            vec!["rename", "Note", "Memo"],
-            "declared in this project's application model",
-        ),
-        // `fmt`, `app plan` and `app apply` all work on a modelled project:
-        // `a_canonical_project_runs_its_own_formatter` and
-        // `a_manifest_replays_into_the_model_and_converges` hold them. `init`
-        // refuses: it *writes* the manifest, which beside a model is a second
-        // editable source.
-        ("app init", vec!["app", "init"], "one editable source"),
-    ] {
-        // `adopt` and `modernize` are not refused: both run *before* a project
-        // has a model and neither claims anything a later command reconciles,
-        // so they write directly.
-        let (label, arguments, told) = case;
-        let before = snapshot_tree(&root);
-        let output = jails_cmd(&root, None).args(&arguments).output().unwrap();
-        assert!(!output.status.success(), "{label} unexpectedly passed");
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(stderr.contains(told), "{label}: {stderr}");
-        assert_eq!(snapshot_tree(&root), before, "{label} wrote files");
-    }
+    let before = snapshot_tree(&root);
+    let output = jails_cmd(&root, None)
+        .args(["rename", "Note", "Memo"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "`rename` unexpectedly passed");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("declared in this project's application model"),
+        "{stderr}"
+    );
+    assert_eq!(snapshot_tree(&root), before, "the refusal wrote files");
 }
 
 /// A command run from a subdirectory is about the same project.
@@ -1235,44 +1227,30 @@ fn a_project_that_only_recorded_its_layout_can_still_become_canonical() {
     );
 }
 
-/// `.jails/app.toml` is an import format, not a second editable source.
+/// A model is one pipeline, whatever it declares.
 ///
-/// A `[[generate]]` row is a `GenerateArgs` -- the same value `jails g`
-/// parses -- so every row goes through the frontend that already knows how to
-/// declare it, and the manifest's own syntax is the only thing its parser
-/// knows that the CLI does not.
-///
-/// Row by row rather than one transition, which costs atomicity and buys
-/// convergence: each frontend is idempotent, so an interrupted replay
-/// converges by being run again.
-/// **A replay that changes nothing runs one pipeline, not one per row.**
-///
-/// Every row of an already-applied manifest produces the source it was
-/// handed, and discovering that used to cost a capture, a compile and a
-/// materialize each: twelve rows of the crawler's manifest were 255 ms of
-/// finding twelve times over that there was nothing to do. A row whose
-/// declaration is already in the model now skips its pipeline and the
-/// command runs one closing pass over the finished source.
-///
-/// The measurement is the point, so it is asserted rather than described:
-/// `--timing` prints one line per phase per pipeline, and a converged replay
-/// has exactly one `capture`.
+/// **The manifest replay this replaced ran a pipeline per row** -- capture the
+/// whole project, render every file, hash them -- to discover row by row that
+/// there was nothing to do, and twelve rows over their own output were 255 ms
+/// of that. One model is one capture, one compile and one plan, and a second
+/// run is none of them.
 #[test]
-fn a_converged_replay_captures_once() {
-    let root = temp_dir("manifest-one-capture");
+fn a_model_is_one_pipeline_whatever_it_declares() {
+    let root = temp_dir("model-one-capture");
     write_spring_fixture(&root);
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
-        root.join(".jails/app.toml"),
-        "schema = 1\ncapabilities = []\n\n\
-         [[generate]]\nkind = \"record\"\nname = \"Note\"\nfields = [\"title:string\"]\n\n\
-         [[generate]]\nkind = \"record\"\nname = \"Tag\"\nfields = [\"label:string\"]\n\n\
-         [[generate]]\nkind = \"enum\"\nname = \"Colour\"\nfields = [\"RED\", \"GREEN\"]\n",
+        root.join(".jails/model.jdl"),
+        "jdl 1\n\napp Demo {\n  pkg com.example.demo\n  java 26\n  platform spring\n  \
+         build maven\n  storage none\n}\n\n\
+         entity Note {\n  title: string\n}\n\n\
+         entity Tag {\n  label: string\n}\n\n\
+         enum Colour {\n  RED\n  GREEN\n}\n",
     )
     .unwrap();
 
     let applied = jails_cmd(&root, None)
-        .args(["app", "apply"])
+        .args(["--timing", "sync"])
         .output()
         .unwrap();
     assert!(
@@ -1280,136 +1258,62 @@ fn a_converged_replay_captures_once() {
         "{}",
         String::from_utf8_lossy(&applied.stderr)
     );
+    let printed = String::from_utf8_lossy(&applied.stdout).to_string();
+    // **One plan, not one per declaration.** Three declarations produce one
+    // digest line, and the replay this replaced produced three of them.
+    assert_eq!(
+        printed.matches("synchronized sha256:").count(),
+        1,
+        "three declarations produced more than one plan:\n{printed}"
+    );
 
-    let again = jails_cmd(&root, None)
-        .args(["--timing", "app", "apply"])
-        .output()
-        .unwrap();
+    // And what it declared is on disk, which is what makes the count worth
+    // anything: a pipeline that captured once and wrote nothing would pass
+    // the assertion above and fail the reader.
+    let record = root.join("src/main/java/com/example/demo/domain/Note.java");
+    assert!(record.is_file());
+
+    // The second run writes nothing and says so in one line: a converged
+    // project is recognised as one, which is the saving the replay used to
+    // chase row by row and never quite reached.
+    let again = jails_cmd(&root, None).arg("sync").output().unwrap();
     assert!(
         again.status.success(),
         "{}",
         String::from_utf8_lossy(&again.stderr)
     );
     let printed = String::from_utf8_lossy(&again.stdout).to_string();
-    assert_eq!(
-        printed.matches("timing  capture").count(),
-        1,
-        "a converged replay captured more than once:\n{printed}"
+    assert!(
+        printed.contains("nothing to do"),
+        "a converged project did not say so:\n{printed}"
     );
-    assert_eq!(printed.matches("already declared").count(), 3, "{printed}");
-    assert!(printed.contains("applied 3 manifest rows"), "{printed}");
-
-    // And the closing pass is what makes the skip safe: a managed file that
-    // the rows would have written is written by it, once, at the end.
-    let record = root.join("src/main/java/com/example/demo/domain/Note.java");
-    assert!(record.is_file());
+    assert!(!printed.contains("sha256:"), "{printed}");
 }
 
+/// A project still carrying the retired manifest is told, not ignored.
+///
+/// **The file declares capabilities and generation rows.** A reader who left
+/// one beside the model believes those are being applied, so passing over it
+/// silently is the one answer that cannot be right -- the same reason
+/// `.jails/model.toml` is refused by name rather than skipped.
 #[test]
-fn a_manifest_replays_into_the_model_and_converges() {
-    let root = jdl_project(
-        "jdl-v1-app-replay",
-        r#"jdl 1
-app Books {
- pkg com.example.books
- java 26
- platform plain
- build maven
- storage none
-}
-"#,
-    );
-    write_plain_fixture(&root);
+fn a_project_still_carrying_the_retired_manifest_is_refused_by_name() {
+    let root = model_project("model-beside-a-manifest", MODEL);
     fs::write(
         root.join(".jails/app.toml"),
-        r#"schema = 1
-capabilities = ["json"]
-
-[[generate]]
-kind = "record"
-name = "Loan"
-fields = ["id:uuid", "days:int"]
-
-[[generate]]
-kind = "enum"
-name = "Shelf"
-fields = ["OPEN", "CLOSED"]
-"#,
+        "schema = 1\ncapabilities = [\"json\"]\n",
     )
     .unwrap();
-
-    let applied = jails_cmd(&root, None)
-        .args(["app", "apply"])
-        .output()
-        .unwrap();
-    assert!(
-        applied.status.success(),
-        "{}",
-        String::from_utf8_lossy(&applied.stderr)
-    );
-    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
-    for declaration in ["cap json", "entity Loan", "enum Shelf"] {
-        assert!(
-            model.contains(declaration),
-            "the manifest's rows should reach the model, missing `{declaration}`:\n{model}"
-        );
-    }
-    assert!(
-        root.join("src/main/java/com/example/books/domain/Loan.java")
-            .is_file(),
-        "and be compiled into the managed tree"
-    );
-    assert!(
-        !root.join(".jails/ledger.toml").exists(),
-        "a canonical replay must not create a legacy ledger"
-    );
-
-    // Convergent: every row is already declared, so nothing is written.
-    let again = jails_cmd(&root, None)
-        .args(["app", "apply"])
-        .output()
-        .unwrap();
-    let again = String::from_utf8_lossy(&again.stdout).to_string();
-    // One report for the whole replay: a row files its line, and the summary
-    // under them is the command's own. A row whose declaration is already in
-    // the model says so and skips its pipeline; the closing pass is the one
-    // that captures, and it is the line that says there was nothing to do.
-    assert!(
-        again.matches("  already declared").count() >= 3,
-        "a second replay declares nothing new:\n{again}"
-    );
-    assert!(
-        again.contains("nothing to do"),
-        "the closing pass files what it found:\n{again}"
-    );
-    assert_eq!(
-        again.matches("applied").count(),
-        1,
-        "one command is one report:\n{again}"
-    );
-
-    // `plan` is the same replay, pretending.
-    let planned = jails_cmd(&root, None)
-        .args(["app", "plan"])
-        .output()
-        .unwrap();
-    assert!(
-        planned.status.success(),
-        "{}",
-        String::from_utf8_lossy(&planned.stderr)
-    );
-
-    // `app init` refuses: it writes the manifest, and a manifest beside a
-    // model is a second editable source.
+    let before = snapshot_tree(&root);
     let refused = jails_cmd(&root, None)
-        .args(["app", "init"])
+        .args(["g", "record", "Note", "title:string"])
         .output()
         .unwrap();
-    assert!(
-        !refused.status.success()
-            && String::from_utf8_lossy(&refused.stderr).contains("one editable source"),
-        "`app init` writes a second editable source and must still refuse"
-    );
+    assert!(!refused.status.success());
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains(".jails/app.toml"), "{stderr}");
+    assert!(stderr.contains("fix:"), "{stderr}");
+    assert_eq!(snapshot_tree(&root), before, "the refusal wrote files");
 }
 
 /// `resource index add` writes a declaration its own parser accepts: v1 reads

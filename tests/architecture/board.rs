@@ -68,7 +68,12 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // resolves the roots once and passes the resolved slice, which
                 // is what took `affected`'s five helpers off this row in the
                 // same change.
-                ceiling: 77,
+                //
+                // 77 -> 76: I71.21 deleted the application manifest, and with
+                // it `app::replay`'s own root-taking entry -- the second
+                // declarative source was also a second walk to the project it
+                // was about.
+                ceiling: 76,
                 // Withdrawn, not reached: the count includes modules whose
                 // subject *is* a path, so a target under the ceiling reads as
                 // a demand to stop writing modules. The row below is the

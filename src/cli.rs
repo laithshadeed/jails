@@ -23,7 +23,6 @@ pub(crate) use generate_args::GenerateArgs;
 
 use crate::ArtifactKind;
 use crate::CapabilityKind;
-use crate::app;
 use crate::arguments;
 use crate::compose::Runtime;
 use crate::kafka;
@@ -197,17 +196,6 @@ impl From<TypeChangeStrategy> for jails_spec::spec::policy::TypeChangeStrategy {
     }
 }
 
-/// What the mutations of one replay filed instead of each printing a report.
-///
-/// The rows are counted rather than derived from the line count, because a
-/// mutation may file a note beside its summary and a total that counted those
-/// would disagree with the list a reader can see.
-#[derive(Clone, Default)]
-pub(crate) struct BatchReport {
-    pub(crate) lines: Vec<String>,
-    pub(crate) rows: usize,
-}
-
 /// Everything a mutation needs that is not the mutation.
 ///
 /// A parameter object rather than global presentation and execution flags
@@ -233,39 +221,6 @@ pub(crate) struct Invocation {
     /// rides here rather than being threaded through the frontends that never
     /// look at it.
     pub(crate) no_start: bool,
-    /// Defer the formatter to the caller, which runs it once.
-    ///
-    /// A manifest replay is many mutations in one process, and the formatter
-    /// is a Maven run: one per row is one JVM per row over a tree the next
-    /// row rewrites. The rows still declare the effect on their plans; the
-    /// replay runs it once after the last of them, over everything at once.
-    pub(crate) batch_effects: bool,
-    /// Whether a mutation that changes nothing may skip the pipeline.
-    ///
-    /// **Only a replay sets this, and only because a replay ends with a pass
-    /// that would have done the same work.** A row whose declaration is
-    /// already in the model produces the source it was handed, and capturing,
-    /// compiling and materializing to discover that costs about thirty
-    /// milliseconds a row -- twelve rows of an unchanged manifest were 255 ms
-    /// of finding twelve times over that there was nothing to do. What makes
-    /// the skip safe is not that the model is unchanged: it is that
-    /// `app apply` runs one ordinary mutation over the finished source
-    /// afterwards, so a file a skipped row would have repaired is repaired
-    /// there.
-    pub(crate) defer_unchanged: bool,
-    /// Where a row of a replay files its report, instead of printing one.
-    ///
-    /// **One command is one report.** Fifteen rows each printing a header, a
-    /// digest and a file list is 887 lines for `jails new --app`, and the
-    /// reader wanted to know what the application now has. A row files one
-    /// summary line here and the replay prints them together with its own
-    /// `applied` line under them.
-    ///
-    /// Shared by cloning the `Arc`: `batching()` opens it, every row's
-    /// invocation is a clone, and the replay reads the same vector back. A
-    /// process-wide collector would answer the same question and would be a
-    /// second owner of it.
-    pub(crate) batch_report: Option<std::sync::Arc<std::sync::Mutex<BatchReport>>>,
     pub(crate) output: Output,
     pub(crate) diff: bool,
     pub(crate) ast: bool,
@@ -285,81 +240,10 @@ pub(crate) struct Invocation {
 }
 
 impl Invocation {
-    /// The same invocation, writing nothing.
-    ///
-    /// `app plan` is `app apply --pretend` under another name, and this is
-    /// where that is said once rather than at both call sites.
-    pub(crate) fn pretending(self) -> Self {
-        Self {
-            pretend: true,
-            ..self
-        }
-    }
-
     /// The same invocation, leaving the plan's effects for the reader.
     ///
     /// `--no-start` is declared on the subcommands that can have an effect
     /// rather than globally, so it arrives after the invocation is built.
-    /// The invocation for one row of a replay: its formatter is owed to the
-    /// replay rather than run here.
-    pub(crate) fn batching(self) -> Self {
-        Self {
-            batch_effects: true,
-            defer_unchanged: true,
-            batch_report: Some(std::sync::Arc::new(std::sync::Mutex::new(
-                BatchReport::default(),
-            ))),
-            ..self
-        }
-    }
-
-    /// File one mutation's summary line, or answer that this is not a batch.
-    pub(crate) fn file_row(&self, line: String) -> bool {
-        self.file(line, true)
-    }
-
-    /// File a remark a mutation made, which is not a row of its own.
-    pub(crate) fn file_note(&self, line: String) -> bool {
-        self.file(line, false)
-    }
-
-    fn file(&self, line: String, row: bool) -> bool {
-        let Some(collected) = &self.batch_report else {
-            return false;
-        };
-        // A poisoned lock here means a row panicked mid-report, which `main`
-        // is already reporting; taking the value back is strictly better than
-        // a second panic naming neither.
-        let mut collected = collected
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        collected.lines.push(line);
-        collected.rows += usize::from(row);
-        true
-    }
-
-    /// What the rows filed, in the order they ran.
-    pub(crate) fn filed_report(&self) -> BatchReport {
-        self.batch_report
-            .as_ref()
-            .map(|collected| {
-                collected
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .clone()
-            })
-            .unwrap_or_default()
-    }
-
-    /// The replay's closing pass: batched like a row, and the one mutation
-    /// that must not be skipped, because it is what the skipped rows rely on.
-    pub(crate) fn applying_deferred(self) -> Self {
-        Self {
-            defer_unchanged: false,
-            ..self
-        }
-    }
-
     pub(crate) fn without_starting(self, no_start: bool) -> Self {
         Self { no_start, ..self }
     }
@@ -369,49 +253,12 @@ impl Invocation {
         Self { consented, ..self }
     }
 
-    /// The same invocation, acting on a project the caller has resolved.
-    pub(crate) fn at(self, root: std::path::PathBuf) -> Self {
-        Self {
-            root: Some(root),
-            ..self
-        }
-    }
-
     /// Where this command acts: the caller's answer, or the walk up from the
     /// process directory that every typed command wants.
     pub(crate) fn root(&self) -> jails_support::Result<std::path::PathBuf> {
         match &self.root {
             Some(root) => Ok(root.clone()),
             None => crate::model_command::root(),
-        }
-    }
-
-    /// The invocation for a command that does not take the global flags.
-    ///
-    /// `jails new` builds its own request from `--debug`/`--pretend` rather
-    /// than taking an `Invocation`, and `--app` replays a manifest through
-    /// the canonical frontends, which do. Everything else is a presentation
-    /// flag with a sensible absence.
-    pub(crate) fn for_new(root: std::path::PathBuf, debug: bool) -> Self {
-        Self {
-            pretend: false,
-            debug,
-            timing: debug,
-            batch_effects: false,
-            defer_unchanged: false,
-            batch_report: None,
-            output: Output::Human,
-            diff: false,
-            ast: false,
-            plan_out: None,
-            plan_in: None,
-            command_path: vec!["new".to_string()],
-            root: Some(root),
-            consented: false,
-            // `jails new --app` seeds a project rather than standing in one,
-            // and its own `--no-start` is the request's, applied once the
-            // whole manifest is in.
-            no_start: true,
         }
     }
 }
@@ -430,12 +277,6 @@ pub(crate) enum Command {
     /// Create a new plain Maven CLI project
     #[command(hide = true)]
     NewCli(NewCliArgs),
-    /// Plan or apply a generic declarative application manifest
-    #[command(hide = true)]
-    App {
-        #[command(subcommand)]
-        command: app::AppCommand,
-    },
     /// Check, plan, apply, or transfer ownership in the application model
     #[command(hide = true)]
     Model {

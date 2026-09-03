@@ -17,7 +17,6 @@
 //! `jails: ` line under a formatted one.
 
 mod adopt;
-mod app;
 mod arguments;
 mod canonical_support;
 mod cli;
@@ -192,9 +191,6 @@ fn main() -> std::process::ExitCode {
         // effects would. The `Add` arm reads the flag; everything else leaves
         // what is running alone.
         no_start: true,
-        batch_effects: false,
-        defer_unchanged: false,
-        batch_report: None,
     };
     let failure_output = invocation.output;
     let failure_path = invocation.command_path.clone();
@@ -212,7 +208,6 @@ fn main() -> std::process::ExitCode {
         Command::About { json } => project::about(json),
         Command::New(args) => new::new(new::request(&args, debug, pretend)),
         Command::NewCli(args) => new::new_cli(&new::cli_request(&args, debug, pretend)),
-        Command::App { command } => app::run(command, invocation),
         Command::Model { command } => model_command::run(command, invocation),
         Command::Editor { command } => editor_command::run(command, invocation),
         Command::Contract { command } => contract_command::run(command, invocation),

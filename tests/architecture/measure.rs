@@ -923,7 +923,11 @@ pub(crate) const SCRATCH_RS: &str = "jails-support/src/scratch.rs";
 /// 82 -> 80: I70.4 gave "you are not standing in a project" one answer,
 /// decided in `model_command::root` where the one walk is. Two of the four
 /// wordings it replaced named no next step at all.
-pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 80;
+/// 80 -> 69: I71.21 deleted the application manifest. Eleven of its
+/// refusals were about the manifest's own closed schema -- an unknown key,
+/// a row with no kind, both spellings of one reference -- and a file that no
+/// longer exists needs no next step.
+pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 69;
 
 /// A refusal that builds a message and does not say what to do next.
 ///

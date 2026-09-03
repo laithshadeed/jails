@@ -3589,25 +3589,25 @@ fn generate_idempotency_produces_tests_that_run_and_pass() {
 
 /// Reading is not writing.
 ///
-/// `app plan`, `--pretend` and inspection all reach the store, and a reader
-/// that also tidied up would make asking jails what it would do change what it
-/// had done.
+/// `sync --pretend`, `--pretend` and inspection all reach the store, and a
+/// reader that also tidied up would make asking jails what it would do change
+/// what it had done.
 #[test]
 fn planning_pretending_and_inspecting_leave_machine_state_byte_for_byte() {
     let root = temp_dir("read-purity");
     write_spring_fixture(&root);
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
-        root.join(".jails/app.toml"),
-        "schema = 1\ncapabilities = []\n\n[[generate]]\nkind = \"record\"\nname = \"Note\"\n\
-         fields = [\"title:string!\"]\n",
+        root.join(".jails/model.jdl"),
+        "jdl 1\n\napp Demo {\n  pkg com.example.demo\n  java 26\n  platform spring\n  \
+         build maven\n  storage none\n}\n\nentity Note {\n  title: string @notBlank\n}\n",
     )
     .unwrap();
 
     // A project with no store yet. No read may create one -- an empty `.jails`
     // would make a project that has never been touched look like one that has.
     let arguments = [
-        vec!["app", "plan"],
+        vec!["sync", "--pretend"],
         vec!["destroy", "record", "Note", "--pretend", "--force"],
         vec!["generate", "record", "Other", "title:string!", "--pretend"],
         vec!["routes"],
@@ -3630,7 +3630,7 @@ fn planning_pretending_and_inspecting_leave_machine_state_byte_for_byte() {
     // The same once there *is* a store, which is the case with something to
     // lose: a read that rewrote it would move the generation nothing committed.
     let applied = jails_cmd(&root, None)
-        .args(["app", "apply", "--no-start"])
+        .args(["sync", "--no-start"])
         .output()
         .unwrap();
     assert!(
@@ -3795,13 +3795,13 @@ fn generated_http_sink_delivers_typed_json_with_a_stable_idempotency_key() {
     write_spring_fixture(&root);
     fs::create_dir_all(root.join(".jails")).unwrap();
     fs::write(
-        root.join(".jails/app.toml"),
-        include_str!("../../examples/support-inbox/.jails/app.toml"),
+        root.join(".jails/model.jdl"),
+        include_str!("../../examples/support-inbox/.jails/model.jdl"),
     )
     .unwrap();
 
     let output = jails_cmd_with_path(&root, &path)
-        .args(["app", "apply", "--no-start"])
+        .args(["sync", "--no-start"])
         .output()
         .unwrap();
     assert!(

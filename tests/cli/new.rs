@@ -208,56 +208,51 @@ fn new_refuses_a_project_name_that_maven_cannot_use() {
 }
 
 #[test]
-fn new_cli_with_an_app_manifest_is_one_command_from_an_empty_directory() {
-    // `new` + `mkdir .jails` + `cp app.toml` + `app apply` is four steps that
-    // only ever appear together, so `--app` is one command.
-    let workspace = temp_dir("new-app-manifest");
+fn new_cli_with_a_model_is_one_command_from_an_empty_directory() {
+    // `new` + `mkdir .jails` + `cp model.jdl` + `sync` is four steps that
+    // only ever appear together, so `--model` is one command.
+    let workspace = temp_dir("new-model-file");
     fs::create_dir_all(&workspace).unwrap();
-    let manifest = workspace.join("app.toml");
+    let model = workspace.join("ledger.jdl");
     fs::write(
-        &manifest,
-        "schema = 1
-
-[[generate]]
-kind = \"record\"
-name = \"Entry\"
-fields = [\"id:uuid\", \"label:string!\"]
-",
+        &model,
+        "jdl 1\n\napp Demo {\n  pkg com.example.demo\n  java 26\n  platform plain\n  \
+         build maven\n  storage none\n}\n\n\
+         entity Entry {\n  id:    uuid\n  label: string\n}\n",
     )
     .unwrap();
 
-    let created = std::process::Command::new(env!("CARGO_BIN_EXE_jails"))
-        .current_dir(&workspace)
-        .args(["new-cli", "demo", "--no-git", "--app"])
-        .arg(&manifest)
+    let created = jails_cmd(&workspace, None)
+        .args(["new-cli", "demo", "--no-git", "--model"])
+        .arg(&model)
         .output()
         .unwrap();
     assert!(
         created.status.success(),
-        "{}",
+        "{}{}",
+        String::from_utf8_lossy(&created.stdout),
         String::from_utf8_lossy(&created.stderr)
     );
 
     let root = workspace.join("demo");
-    // The manifest is seeded where `app apply` will find it next time...
-    assert!(root.join(".jails/app.toml").is_file());
-    // ...and the project it created holds a model, like every other project
-    // `new-cli` makes. A manifest is not a second editable source because it
-    // replays *into* the model; nothing is written outside the managed tree.
+    // The model is the project's own, at the one path every later command
+    // reads, and nothing is written beside it: the second declarative source
+    // is gone rather than hidden.
+    assert!(root.join(".jails/model.jdl").is_file());
     assert!(
-        root.join(".jails/model.jdl").is_file(),
-        "a manifest-driven project should be canonical like any other"
+        !root.join(".jails/app.toml").exists(),
+        "a model-seeded project must not carry a manifest"
     );
     assert!(
         !root.join(".jails/ledger.toml").exists(),
         "and must not also carry a legacy ledger"
     );
-    // ...and its rows are already applied, against the project that was just
-    // created rather than whatever encloses the process CWD.
+    // ...and it is compiled, against the project that was just created rather
+    // than whatever encloses the process CWD.
     assert!(
         root.join("src/main/java/com/example/demo/domain/Entry.java")
             .is_file(),
-        "the manifest's row should have been applied into the project"
+        "the model's declaration should have been compiled into the project"
     );
     assert!(
         root.join("src/test/java/com/example/demo/domain/EntryTest.java")
@@ -266,25 +261,25 @@ fields = [\"id:uuid\", \"label:string!\"]
 }
 
 #[test]
-fn new_with_an_unreadable_app_manifest_says_so_with_a_fix() {
+fn new_with_an_unreadable_model_says_so_with_a_fix() {
     let workspace = temp_dir("new-app-missing");
     fs::create_dir_all(&workspace).unwrap();
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_jails"))
         .current_dir(&workspace)
-        .args(["new-cli", "demo", "--no-git", "--app", "nope.toml"])
+        .args(["new-cli", "demo", "--no-git", "--model", "nope.jdl"])
         .output()
         .unwrap();
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("application manifest"), "{stderr}");
+    assert!(stderr.contains("could not read the model"), "{stderr}");
     assert!(stderr.contains("fix:"), "{stderr}");
 
     // The destination is absent or complete. Everything `new-cli` writes goes
-    // into a scratch sibling and becomes real in one rename, so a manifest
-    // that cannot be read leaves nothing that reads like a project.
+    // into a scratch sibling and becomes real in one rename, so a model that
+    // cannot be read leaves nothing that reads like a project.
     assert!(
         !workspace.join("demo").exists(),
-        "a refused `new-cli --app` leaves no half-written project behind"
+        "a refused `new-cli --model` leaves no half-written project behind"
     );
     let leftovers: Vec<String> = fs::read_dir(&workspace)
         .unwrap()
@@ -989,9 +984,10 @@ fn new_from_a_model_file_keeps_its_declarations_and_this_project_identity() {
     assert!(!rendered.contains("  create  src/"), "{rendered}");
 }
 
-/// Neither file is read as the other, and the refusal says which is which.
+/// A file that is not a model is refused by name, and the refusal says what
+/// one is.
 #[test]
-fn a_file_that_is_neither_a_model_nor_a_manifest_is_refused_by_name() {
+fn a_file_that_is_not_a_model_is_refused_by_name() {
     let parent = temp_dir("new-from-neither");
     let file = parent.join("crawler.yaml");
     fs::write(&file, "nothing: here\n").unwrap();
@@ -1007,12 +1003,9 @@ fn a_file_that_is_neither_a_model_nor_a_manifest_is_refused_by_name() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+    assert!(rendered.contains("is not a model"), "{rendered}");
     assert!(
-        rendered.contains("neither a model nor a manifest"),
-        "{rendered}"
-    );
-    assert!(
-        rendered.contains(".jdl") && rendered.contains(".toml"),
+        rendered.contains(".jdl") && rendered.contains("model.jdl"),
         "{rendered}"
     );
 }

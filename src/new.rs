@@ -26,7 +26,7 @@ mod write;
 pub use plain::new_cli;
 pub use spring::new;
 
-use seed::{git_init, previewed, reported, seed, write_agents, write_fixtures_dir, write_mise};
+use seed::{git_init, previewed, write_agents, write_fixtures_dir, write_mise};
 use spring::write_devtools_defaults;
 
 use jails_support::Result;
@@ -61,7 +61,6 @@ pub struct Request<'a> {
     pub jar_version: Option<&'a str>,
     pub app: Option<&'a Path>,
     /// Write the manifest's Compose services without starting them.
-    pub no_start: bool,
     pub debug: bool,
     pub pretend: bool,
 }
@@ -86,7 +85,6 @@ pub fn request<'a>(args: &'a crate::cli::NewArgs, debug: bool, pretend: bool) ->
         jar_name: args.jar_name.as_deref(),
         jar_version: args.jar_version.as_deref(),
         app: args.model.as_deref(),
-        no_start: args.no_start,
         debug,
         pretend,
     }
@@ -110,7 +108,6 @@ pub fn cli_request<'a>(
         java: &args.release,
         git: !args.no_git,
         app: args.model.as_deref(),
-        no_start: args.no_start,
         debug,
         pretend,
         deps: "",
@@ -355,7 +352,6 @@ mod tests {
             java: crate::release::TARGET_RELEASE,
             git,
             app: None,
-            no_start: true,
             debug: false,
             pretend: false,
             deps: "",

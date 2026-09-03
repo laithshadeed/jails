@@ -2,10 +2,6 @@
 about	jails-project	read-only	project::about
 new	jails	project-create	new::new
 new-cli	jails	project-create	new::new_cli
-app	jails	dispatch-only	app::run
-app init	jails	one-shot-write	app::init
-app plan	jails	read-only	app::replay (pretend)
-app apply	jails	project-mutation	app::replay
 model	jails	dispatch-only	model_command::run
 model check	jails-model	read-only	model_command::check
 model fmt	jails	project-mutation-or-read-only	model_command::format

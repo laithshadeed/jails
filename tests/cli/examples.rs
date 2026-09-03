@@ -10,18 +10,18 @@ use std::collections::BTreeSet;
 use std::process::Command;
 
 const POLICY: &str = include_str!("../../examples/proof-policy.tsv");
-const MINICOM_MANIFEST: &str = concat!(
+const MINICOM_MODEL: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/examples/minicom/.jails/app.toml"
+    "/examples/minicom/.jails/model.jdl"
 );
-const MINICOM_SPRING_MANIFEST: &str = concat!(
+const MINICOM_SPRING_MODEL: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/examples/minicom-spring/.jails/app.toml"
+    "/examples/minicom-spring/.jails/model.jdl"
 );
 
 #[derive(Debug)]
 struct ProofPolicy<'a> {
-    manifest: &'a str,
+    model: &'a str,
     build_tool: &'a str,
     highest_tier: &'a str,
     cadence: &'a str,
@@ -33,14 +33,14 @@ fn proof_policy() -> Vec<ProofPolicy<'static>> {
     let mut lines = POLICY.lines().filter(|line| !line.starts_with('#'));
     assert_eq!(
         lines.next(),
-        Some("manifest\tbuild_tool\thighest_tier\tcadence\tgate\tprerequisites")
+        Some("model\tbuild_tool\thighest_tier\tcadence\tgate\tprerequisites")
     );
     lines
         .map(|line| {
             let columns = line.split('\t').collect::<Vec<_>>();
             assert_eq!(columns.len(), 6, "policy row must have six columns: {line}");
             ProofPolicy {
-                manifest: columns[0],
+                model: columns[0],
                 build_tool: columns[1],
                 highest_tier: columns[2],
                 cadence: columns[3],
@@ -51,15 +51,15 @@ fn proof_policy() -> Vec<ProofPolicy<'static>> {
         .collect()
 }
 
-fn checked_in_manifests() -> BTreeSet<String> {
+fn checked_in_models() -> BTreeSet<String> {
     let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
     fs::read_dir(&examples)
         .unwrap()
         .flatten()
         .filter_map(|entry| {
-            let manifest = entry.path().join(".jails/app.toml");
-            manifest.is_file().then(|| {
-                manifest
+            let model = entry.path().join(".jails/model.jdl");
+            model.is_file().then(|| {
+                model
                     .strip_prefix(env!("CARGO_MANIFEST_DIR"))
                     .unwrap()
                     .to_string_lossy()
@@ -70,24 +70,24 @@ fn checked_in_manifests() -> BTreeSet<String> {
 }
 
 #[test]
-fn example_manifest_policy_covers_every_checked_in_manifest() {
+fn example_model_policy_covers_every_checked_in_model() {
     let policy = proof_policy();
     let policy_paths = policy
         .iter()
-        .map(|row| row.manifest.to_owned())
+        .map(|row| row.model.to_owned())
         .collect::<BTreeSet<_>>();
     assert_eq!(
         policy_paths.len(),
         policy.len(),
         "duplicate manifest policy row"
     );
-    assert_eq!(policy_paths, checked_in_manifests());
+    assert_eq!(policy_paths, checked_in_models());
 
     let gates = [
-        "app_manifests_pass_the_full_generated_verification_gate",
-        "ledger_cli_manifest_builds_without_spring",
-        "unheld_gradle_example_manifest_builds_on_its_pinned_toolchain",
-        "unheld_maven_example_manifest_passes_real_verification",
+        "example_models_pass_the_full_generated_verification_gate",
+        "the_ledger_model_builds_without_spring",
+        "unheld_gradle_example_model_builds_on_its_pinned_toolchain",
+        "unheld_maven_example_model_passes_real_verification",
     ]
     .into_iter()
     .collect::<BTreeSet<_>>();
@@ -100,7 +100,7 @@ fn example_manifest_policy_covers_every_checked_in_manifest() {
     }
 }
 
-/// A broken container engine cannot touch what `jails new --app` produces.
+/// A broken container engine cannot touch what `jails new --model` produces.
 ///
 /// The model is compiled and its exact plan executed, and nothing external is
 /// started -- the same reason `sync` refuses `--no-start` by name -- so the
@@ -119,10 +119,12 @@ fn a_failed_post_commit_effect_reports_against_a_project_that_exists() {
     )
     .unwrap();
     set_executable(&docker);
-    let manifest = parent.join("app.toml");
+    let model = parent.join("deal.jdl");
     fs::write(
-        &manifest,
-        "schema = 1\ncapabilities = [\"db\"]\n\n[[generate]]\nkind = \"scaffold\"\nname = \"Deal\"\nfields = [\"id:uuid@pk\", \"amount:decimal\"]\n",
+        &model,
+        "jdl 1\n\napp Effectapp {\n  pkg com.example.effectapp\n  java 26\n  \
+         platform spring\n  build maven\n  storage postgres\n}\n\n\
+         entity Deal {\n  use scaffold\n\n  id:     uuid @pk\n  amount: decimal\n}\n",
     )
     .unwrap();
 
@@ -138,8 +140,8 @@ fn a_failed_post_commit_effect_reports_against_a_project_that_exists() {
             "effectapp",
             "--offline",
             "--no-git",
-            "--app",
-            manifest.to_str().unwrap(),
+            "--model",
+            model.to_str().unwrap(),
         ])
         .output()
         .unwrap();
@@ -153,8 +155,8 @@ fn a_failed_post_commit_effect_reports_against_a_project_that_exists() {
     let project = parent.join("effectapp");
     assert!(project.is_dir(), "the project was discarded:\n{rendered}");
     // Into the managed tree, because the project is canonical from its first
-    // command: `jails new` seeds `.jails/model.jdl`, and the manifest replays
-    // into it through the same frontends `jails g` uses.
+    // command: `--model` is the project's own `.jails/model.jdl`, compiled
+    // inside the publication.
     assert!(
         project
             .join("src/main/java/com/example/effectapp/domain/Deal.java")
@@ -182,8 +184,8 @@ fn generated_unheld_maven_example() -> &'static PathBuf {
                 // *generates* must not depend on a container engine being up
                 // on the machine running the suite.
                 "--no-start",
-                "--app",
-                MINICOM_MANIFEST,
+                "--model",
+                MINICOM_MODEL,
             ])
             .output()
             .unwrap();
@@ -229,8 +231,8 @@ fn generated_unheld_gradle_example() -> &'static PathBuf {
                 // *generates* must not depend on a container engine being up
                 // on the machine running the suite.
                 "--no-start",
-                "--app",
-                MINICOM_SPRING_MANIFEST,
+                "--model",
+                MINICOM_SPRING_MODEL,
             ])
             .output()
             .unwrap();
@@ -244,7 +246,7 @@ fn generated_unheld_gradle_example() -> &'static PathBuf {
     })
 }
 
-fn assert_second_apply_is_a_noop(root: &Path) {
+fn assert_second_sync_is_a_noop(root: &Path) {
     // The executable project is the example's output contract; `.jails` is
     // versioned bookkeeping with its own gates, and `target/` is the build
     // tool's, written by the verification test that shares this fixture and
@@ -261,12 +263,12 @@ fn assert_second_apply_is_a_noop(root: &Path) {
     };
     let before = generated_tree();
     let output = jails_cmd(root, None)
-        .args(["app", "apply", "--no-start"])
+        .args(["sync", "--no-start"])
         .output()
         .unwrap();
     assert!(
         output.status.success(),
-        "second manifest apply: {}{}",
+        "second sync: {}{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
@@ -290,19 +292,19 @@ fn assert_second_apply_is_a_noop(root: &Path) {
     }
     assert!(
         changed.is_empty(),
-        "second apply changed generated output:\n  {}",
+        "a second sync changed generated output:\n  {}",
         changed.join("\n  ")
     );
 }
 
 #[test]
-fn unheld_example_manifests_generate_offline_and_reapply_without_writes() {
-    assert_second_apply_is_a_noop(generated_unheld_maven_example());
-    assert_second_apply_is_a_noop(generated_unheld_gradle_example());
+fn unheld_example_models_generate_offline_and_resync_without_writes() {
+    assert_second_sync_is_a_noop(generated_unheld_maven_example());
+    assert_second_sync_is_a_noop(generated_unheld_gradle_example());
 }
 
 #[test]
-fn unheld_maven_example_manifest_passes_real_verification() {
+fn unheld_maven_example_model_passes_real_verification() {
     if !real_mvn_available() {
         skip("mvn not found on PATH");
         return;
@@ -425,7 +427,7 @@ fn pinned_gradle_reports_eight_five(mut command: Command) -> bool {
 }
 
 #[test]
-fn unheld_gradle_example_manifest_builds_on_its_pinned_toolchain() {
+fn unheld_gradle_example_model_builds_on_its_pinned_toolchain() {
     let Some((gradle, java_home)) = pinned_gradle_toolchain() else {
         skip("Gradle 8.5 running on JDK 21 is required by the example proof policy");
         return;
@@ -449,4 +451,167 @@ fn unheld_gradle_example_manifest_builds_on_its_pinned_toolchain() {
     );
     assert_eq!(reports.failures, 0);
     assert_eq!(reports.errors, 0);
+}
+
+// ---- the tier gates the example models have to clear ----
+
+/// Every Spring proof application compiles, main and test sources.
+///
+/// `verify` contains compile and test-compile, and both this and the gate
+/// below share one execution through the same `OnceLock`, so no generated
+/// test is omitted by running the cheaper lifecycle here.
+#[test]
+fn example_models_compile_without_manual_source_edits() {
+    if !real_mvn_available() {
+        skip("mvn not found on PATH");
+        return;
+    }
+    if !real_java_available() {
+        skip("java/javac not found on PATH");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let verified = verified_app_unit_fixtures(&path);
+    assert_eq!(verified.len(), SPRING_APP_MODELS.len());
+    for (name, root) in verified {
+        assert!(
+            root.join("target/classes").is_dir(),
+            "{name} main sources did not compile"
+        );
+        assert!(
+            root.join("target/test-classes").is_dir(),
+            "{name} test sources did not compile"
+        );
+    }
+}
+
+/// The same applications, through `mvn verify` and the OCI image gate.
+#[test]
+fn example_models_pass_the_full_generated_verification_gate() {
+    if !real_mvn_available() {
+        skip("mvn not found on PATH");
+        return;
+    }
+    if !real_java_available() {
+        skip("java/javac not found on PATH");
+        return;
+    }
+    if !real_docker_available() {
+        skip("a running Docker-compatible container runtime is required");
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let fixtures = verified_app_fixtures(&path);
+    verified_app_images(fixtures);
+}
+
+/// The control application: the crawler, the inbox and the payments gateway
+/// are all Spring Boot, so a Spring-shaped assumption in the generic
+/// machinery is invisible to every one of them.
+///
+/// It runs against the **plain** fixture -- no parent POM, no starters, no
+/// container -- and asks for `value`, `sealed`, `strategy`, `record`, `cli`
+/// and `command`, which the three Spring models never touch. `mvn verify`
+/// here is seconds rather than minutes, so this is the cheapest gate in the
+/// suite and the one that catches "it only works because Spring".
+#[test]
+fn the_ledger_model_builds_without_spring() {
+    if !real_mvn_available() {
+        skip("mvn not found on PATH");
+        return;
+    }
+    if !real_java_supports_target_release() {
+        skip(&format!(
+            "javac on PATH does not support --release {TARGET_RELEASE}"
+        ));
+        return;
+    }
+    let path = real_path_without_mvnd();
+    let root = verified_plain_toolbox(&path);
+
+    // The model names the dispatcher its command belongs to, so the
+    // registration is part of what this gate proves rather than a note. The
+    // dispatcher is compiler output, and this assertion is about what the
+    // compiler put in it.
+    let dispatcher =
+        fs::read_to_string(root.join("src/main/java/com/example/demo/cli/LedgerCli.java")).unwrap();
+    assert!(
+        dispatcher.contains("ReconcileCommand::run"),
+        "the model named its dispatcher, so the command must be registered in it: {dispatcher}"
+    );
+
+    // And the jar starts *that* dispatcher. `new-cli` writes `App.java` and
+    // names it as the entry point; a model that then declares `LedgerCli` and
+    // registers `reconcile` into it must move the entry point, or the jar
+    // answers only `help`. The entry point moves when it is still jails' own
+    // stub and nobody has registered anything there.
+    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
+    assert!(
+        pom.contains("<mainClass>com.example.demo.cli.LedgerCli</mainClass>"),
+        "the packaged jar does not start the dispatcher the model built:\n{pom}"
+    );
+
+    assert!(root.join("target/classes").is_dir());
+}
+
+/// One command is one report, however many declarations the model carries.
+///
+/// **A model is one plan, and it used to be many.** A manifest replayed row
+/// by row printed a header, a plan digest and a whole file list per row: the
+/// web-crawler manifest was 887 lines of them, and none of the fourteen
+/// digests answered the question a reader runs `new --model` to ask. One
+/// model is one compile, so the report is as long as what changed.
+///
+/// The ceiling is generous on purpose -- it is a shape test, not a golden --
+/// and a model of a dozen declarations landing anywhere near it means the
+/// per-declaration report has come back.
+#[test]
+fn a_model_seed_prints_one_report_however_many_declarations_it_has() {
+    let workspace = temp_dir("model-one-report");
+    fs::create_dir_all(&workspace).unwrap();
+    let model = workspace.join("many.jdl");
+    let mut source = String::from(
+        "jdl 1\n\napp Demo {\n  pkg com.example.demo\n  java 26\n  \
+         platform plain\n  build maven\n  storage none\n}\n\ncap json\n",
+    );
+    for name in ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot"] {
+        source.push_str(&format!(
+            "\nentity {name} {{\n  id:    uuid\n  label: string\n}}\n"
+        ));
+    }
+    fs::write(&model, source).unwrap();
+
+    let created = jails_cmd(&workspace, None)
+        .args(["new-cli", "demo", "--no-git", "--model"])
+        .arg(&model)
+        .output()
+        .unwrap();
+    assert!(
+        created.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&created.stdout),
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let report = String::from_utf8_lossy(&created.stdout).to_string();
+    assert!(
+        report.lines().count() < 150,
+        "a model of six declarations printed {} lines:\n{report}",
+        report.lines().count()
+    );
+    // A digest belongs to the plan, and `--output json` is where a reader who
+    // wants one is already looking.
+    assert!(!report.contains("sha256:"), "{report}");
+    // And it produced them: the report being short is only worth anything
+    // beside the files it was short about.
+    let root = workspace.join("demo");
+    for name in ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot"] {
+        assert!(
+            common::generated(
+                &root,
+                &format!("src/main/java/com/example/demo/domain/{name}.java")
+            )
+            .exists(),
+            "`{name}` was declared and not generated:\n{report}"
+        );
+    }
 }

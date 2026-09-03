@@ -115,9 +115,6 @@ pub(crate) fn invocation() -> Result<Option<Invocation>> {
         plan_in: Some(path),
         command_path: crate::cli::command_path_from_env(),
         no_start: false,
-        batch_effects: false,
-        defer_unchanged: false,
-        batch_report: None,
         consented: false,
     }))
 }

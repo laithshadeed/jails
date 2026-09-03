@@ -14,7 +14,6 @@
 
 pub mod constant;
 pub mod coordinate;
-pub mod manifest;
 pub mod paths;
 pub mod policy;
 pub mod suffix;

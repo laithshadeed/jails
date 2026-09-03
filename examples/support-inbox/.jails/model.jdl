@@ -1,0 +1,277 @@
+jdl 1
+
+app Demo {
+  pkg com.example.demo
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+
+cap api
+cap actuator
+cap observability
+cap security
+cap cors
+cap json
+cap testkit
+cap kafka
+cap docker
+cap ci
+
+// written by jails new; yours to edit or delete
+dep org.jspecify:jspecify @version("1.0.0")
+prop spring.threads.virtual.enabled = "false"
+prop spring.mvc.problemdetails.enabled = "true"
+prop server.max-http-request-header-size = "16KB"
+prop server.shutdown = "graceful"
+prop spring.lifecycle.timeout-per-shutdown-phase = "30s"
+
+enum ConversationStatus {
+  OPEN
+  PENDING
+  CLOSED
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MemberRole {
+  OWNER
+  ADMIN
+  AGENT
+}
+
+enum InboxChannel {
+  WEB
+  EMAIL
+}
+
+enum AssignmentStatus {
+  ACTIVE
+  CLEARED
+}
+
+entity Workspace {
+  use scaffold
+
+  id:        uuid @pk @scope
+  name:      string @notBlank @unique
+  createdAt: instant @default(now())
+  updatedAt: instant @default(now()) @updated
+
+  command CreateWorkspace(name) {
+  }
+}
+
+entity Member {
+  use scaffold
+
+  id:          uuid @pk
+  workspaceId: uuid @index @scope
+  email:       string @notBlank
+  displayName: string @notBlank
+  role:        MemberRole @index
+  createdAt:   instant @default(now())
+  updatedAt:   instant @default(now()) @updated
+
+  unique [workspace_id, id]
+
+  index [workspace_id, email]
+
+  relation memberWorkspace to Workspace {
+    map workspaceId -> id
+  }
+
+  command CreateMember(id, email, display_name, role) {
+  }
+  query MembersByWorkspace() {
+  }
+}
+
+entity Inbox {
+  use scaffold
+
+  id:          uuid @pk
+  workspaceId: uuid @index @scope
+  name:        string @notBlank
+  channel:     InboxChannel @index
+  createdAt:   instant @default(now())
+  updatedAt:   instant @default(now()) @updated
+
+  unique [workspace_id, id]
+
+  index [workspace_id, name]
+
+  relation inboxWorkspace to Workspace {
+    map workspaceId -> id
+  }
+
+  command CreateInbox(id, name, channel) {
+  }
+  query InboxesByWorkspace() {
+  }
+}
+
+entity InboxMember {
+  use scaffold
+
+  id:          uuid @pk
+  workspaceId: uuid @index @scope
+  inboxId:     uuid @index
+  memberId:    uuid @index
+  createdAt:   instant @default(now())
+  updatedAt:   instant @default(now()) @updated
+
+  index [workspace_id, inbox_id]
+  index [workspace_id, member_id]
+
+  relation inboxMemberInbox to Inbox {
+    map workspaceId -> workspaceId
+    map inboxId -> id
+  }
+
+  relation inboxMemberMember to Member {
+    map workspaceId -> workspaceId
+    map memberId -> id
+  }
+
+  command AddInboxMember(id, inbox_id, member_id) {
+  }
+  query InboxMembersByInbox(inbox_id) {
+  }
+}
+
+entity Contact {
+  use scaffold
+
+  id:          uuid @pk
+  workspaceId: uuid @index @scope
+  email:       string @notBlank
+  displayName: string?
+  createdAt:   instant @default(now())
+  updatedAt:   instant @default(now()) @updated
+
+  unique [workspace_id, id]
+
+  index [workspace_id, email]
+
+  relation contactWorkspace to Workspace {
+    map workspaceId -> id
+  }
+
+  command CreateContact(id, email, display_name) {
+  }
+  query ContactsByWorkspace() {
+  }
+}
+
+entity Conversation {
+  use scaffold
+
+  id:            uuid @pk
+  workspaceId:   uuid @index @scope
+  contactId:     uuid @index
+  inboxId:       uuid @index
+  status:        ConversationStatus @default(OPEN) @index
+  lastMessageAt: instant @default(now())
+  version:       long @version @nonnegative
+  createdAt:     instant @default(now())
+  updatedAt:     instant @default(now()) @updated
+
+  unique [workspace_id, id]
+
+  index [workspace_id, status, last_message_at desc]
+
+  relation conversationContact to Contact {
+    map workspaceId -> workspaceId
+    map contactId -> id
+  }
+
+  relation conversationInbox to Inbox {
+    map workspaceId -> workspaceId
+    map inboxId -> id
+  }
+
+  command OpenConversation(id, contact_id, inbox_id) {
+  }
+  query ConversationsByWorkspace() {
+  }
+  transition ChangeConversationStatus(id, status, version) {
+    select [id]
+    update [status]
+    if-match required
+  }
+}
+
+entity Message {
+  use scaffold
+
+  id:             uuid @pk
+  workspaceId:    uuid @index @scope
+  conversationId: uuid @index
+  direction:      MessageDirection
+  body:           string @notBlank
+  createdAt:      instant @default(now())
+  updatedAt:      instant @default(now()) @updated
+
+  index [conversation_id, created_at]
+
+  relation messageConversation to Conversation {
+    map workspaceId -> workspaceId
+    map conversationId -> id
+  }
+
+  command ReceiveMessage(id, conversation_id, direction, body) {
+    emit message_received
+    deliver outbox
+  }
+  query MessagesByConversation(conversation_id) {
+  }
+}
+
+entity ConversationAssignment {
+  use scaffold
+
+  id:             uuid @pk
+  workspaceId:    uuid @index @scope
+  conversationId: uuid @index @unique
+  memberId:       uuid @index
+  status:         AssignmentStatus @default(ACTIVE) @index
+  version:        long @version @nonnegative
+  assignedAt:     instant @default(now())
+  createdAt:      instant @default(now())
+  updatedAt:      instant @default(now()) @updated
+
+  index [workspace_id, member_id, status]
+
+  relation assignmentConversation to Conversation {
+    map workspaceId -> workspaceId
+    map conversationId -> id
+  }
+
+  relation assignmentMember to Member {
+    map workspaceId -> workspaceId
+    map memberId -> id
+  }
+
+  command AssignConversation(id, conversation_id, member_id) {
+  }
+  query AssignmentByConversation(conversation_id) {
+  }
+  transition ReassignConversation(id, member_id, status, version) {
+    select [id]
+    update [member_id, status]
+    if-match required
+  }
+}
+
+event MessageReceived(id: uuid, workspace_id: uuid, conversation_id: uuid, occurred_at: instant) {
+}
+
+component http-sink Provider {
+  on receive_message
+  yields message_received
+}

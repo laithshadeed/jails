@@ -11,6 +11,12 @@ pub(crate) const JDL_PATH: &str = jails_model::MODEL_FILE;
 /// The file a project wrote before `jdl 1`. Nothing reads it; a project that
 /// still has one is refused by name so a model is never seeded beside it.
 const TOML_PATH: &str = ".jails/model.toml";
+/// The second declarative source a project used to be allowed to carry.
+/// Its `[[generate]]` rows were CLI calls and everything they said, JDL
+/// says; a project that still has one is named rather than passed over,
+/// because the model beside it is the whole answer and silence would read
+/// as jails having applied it.
+const APP_MANIFEST: &str = ".jails/app.toml";
 
 /// The project a command is about: the nearest ancestor that is one.
 ///
@@ -60,6 +66,7 @@ pub(crate) fn root() -> Result<PathBuf> {
 /// directory is that project's *parent*; `Invocation::root` is where the
 /// walk lives.
 pub(crate) fn read_source(root: &Path, model_path: &Path) -> Result<String> {
+    refuse_retired_manifest(root)?;
     let source = match std::fs::read_to_string(root.join(model_path)) {
         Ok(source) => source,
         // **A project still on `.jails/model.toml` reads as a refusal, not as
@@ -101,6 +108,21 @@ pub(crate) fn read_source(root: &Path, model_path: &Path) -> Result<String> {
         return Err(refuse_not_jdl_1());
     }
     Ok(source)
+}
+
+/// A project still carrying the manifest is told what happened to it.
+///
+/// **Not a silent ignore.** The file declares capabilities and generation
+/// rows, and a reader who left it there believes those are being applied.
+pub(crate) fn refuse_retired_manifest(root: &Path) -> Result<()> {
+    if !root.join(APP_MANIFEST).is_file() {
+        return Ok(());
+    }
+    Err(Failure::Told(format!(
+        "`{APP_MANIFEST}` is not a source this jails reads.\n       fix: everything it \
+         declares, `{JDL_PATH}` declares -- `jails new <name> --model <file.jdl>` starts a \
+         project from one -- then remove `{APP_MANIFEST}`"
+    )))
 }
 
 fn refuse_retired_toml() -> Failure {
