@@ -1075,7 +1075,10 @@ field syntax into the entity's `EntityConstraint`s and `Index`es
 into the DDL. **An unknown marker is an error, not a no-op.** **No arbitrary
 SQL**: `@check(...)` would be a string jails passes through and cannot
 validate. `--index` (repeatable, on `g scaffold`) carries what a per-column
-marker cannot, and `created_at desc` is a column plus an ordering. `@scope`
+marker cannot, and `created_at desc` is a column plus an ordering. **At
+creation it is rendered into the declaration**, so the table and its indexes
+are one compile and one migration; `entity index add` appends a forward
+migration and is the command for a table that already exists. `@scope`
 is the exception and touches no SQL: it marks a request-boundary field
 proved against a same-named JWT claim, and the compiler refuses a scoped
 operation when `add security` has not declared a `ScopeAuthorizer` --

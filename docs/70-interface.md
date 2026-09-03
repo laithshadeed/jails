@@ -717,8 +717,13 @@ refusal is at the point the warm engine is about to run rather than at the
 flag -- which is what lets `--fast` keep falling back to the build tool
 when nothing is compiled, since that run reaches no launcher.
 
-**I70.17 — one command is one plan.** *Change* `--index` at creation is
-part of the `create table`. *Done when* one plan digest and one migration.
+**I70.17 — one command is one plan.** *Landed.* `--index` at creation is
+rendered into the entity declaration, so one compile writes the `create
+table` and its `create index` into one migration. `entity index add` is
+unchanged and still the command for a table that already exists. A
+side-effect worth having: `--index` on a project with no database now
+refuses before anything is written, where it used to write the entity and
+refuse afterwards.
 
 **I70.18 — an error surfaces on the command that caused it.** *Change* the
 storage-independent half of the check runs at `g usecase` time, or the

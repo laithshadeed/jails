@@ -216,7 +216,16 @@ pub(crate) fn remove(
     })
 }
 
-fn canonical_columns(entity: &jails_model::Entity, columns: &str) -> Result<Vec<String>> {
+/// Resolve one `--index` argument against an entity's fields.
+///
+/// `pub(crate)` because `g scaffold --index` needs the same answer *before*
+/// the entity is applied: an index asked for at creation belongs in the
+/// `create table` rather than in a migration that alters a table one command
+/// old.
+pub(crate) fn canonical_columns(
+    entity: &jails_model::Entity,
+    columns: &str,
+) -> Result<Vec<String>> {
     let mut seen = BTreeSet::new();
     let mut canonical = Vec::new();
     for raw in columns.split(',') {

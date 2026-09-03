@@ -4,3 +4,4 @@ create table notes (
     title text not null check (length(btrim(title)) > 0),
     created_at timestamptz default current_timestamp not null
 );
+create index idx_notes_title_created_at_desc on notes (title, created_at desc);

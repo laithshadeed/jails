@@ -368,30 +368,82 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
             reader_paths: Vec::new(),
         });
     }
-    let next_source = append_declaration(current.source.clone(), &declaration)?;
+    // **`--index` at creation is part of the `create table`.** An index is a
+    // stable entity child with its own identity, and `entity index add` is
+    // still the command that adds one to a table that exists -- but a table
+    // and an index asked for in the same breath are one plan and one
+    // migration, not a `create table` followed by an `alter` against a table
+    // one command old. The columns resolve against the declaration's own
+    // linked entity, so a name that is not a component still refuses before
+    // anything is written.
     let indexes = std::mem::take(&mut args.indexes);
-    let name = args.name.clone();
+    let declaration = match indexes.is_empty() {
+        true => declaration,
+        false => {
+            refuse_indexes_without_storage(&current.model)?;
+            let entity = declaration_entity(&current.model, &declaration, &entity_id)?;
+            let mut members = Vec::new();
+            for columns in &indexes {
+                let canonical = crate::model_index::canonical_columns(&entity, columns)?;
+                members.push(format!("  index [{}]", canonical.join(", ")));
+            }
+            declare_indexes(&declaration, &members)?
+        }
+    };
+    let next_source = append_declaration(current.source.clone(), &declaration)?;
     finish_generation(PreparedMutation {
         name: args.name,
-        invocation: invocation.clone(),
+        invocation,
         current,
         next_source,
         evolution: Evolution::none(),
         authored_migration: None,
         reader_paths: Vec::new(),
-    })?;
-    // **`--index` is a second mutation, not a flag on the first.** An index is a
-    // stable entity child with its own identity and its own forward
-    // migration, which is `entity index add`'s whole contract -- so the
-    // frontend that owns it is the one that applies it, rather than the entity
-    // renderer growing a copy.
-    //
-    // After the entity, necessarily: the columns are resolved against model
-    // field identity, and the fields do not exist until the entity above lands.
-    for columns in indexes {
-        crate::model_index::add(name.clone(), columns, None, invocation.clone())?;
+    })
+}
+
+/// An index needs a schema to live in, and says so before anything is written.
+///
+/// The same condition `entity index add` refuses on, checked here because
+/// this is the command that would otherwise have written the entity first and
+/// refused afterwards -- half of what the reader asked for.
+fn refuse_indexes_without_storage(model: &jails_model::AppModel) -> Result<()> {
+    if model
+        .capabilities
+        .values()
+        .any(|capability| capability.kind == "db")
+    {
+        return Ok(());
     }
-    Ok(())
+    Err(Failure::Told(
+        "an index needs a database to live in.
+       fix: run `jails add db` first, or \
+         generate without `--index`"
+            .to_string(),
+    ))
+}
+
+/// Put the index members inside the entity block, before its closing brace.
+///
+/// Text, because the declaration is text at this point and the whole value of
+/// rendering it here is that one compile sees the entity and its indexes
+/// together.
+fn declare_indexes(declaration: &str, members: &[String]) -> Result<String> {
+    let closing = declaration.rfind('}').ok_or_else(|| {
+        Failure::Told(format!(
+            "the rendered declaration has no closing brace: {declaration}\n       fix: report \
+             this as a bug in the declaration renderer"
+        ))
+    })?;
+    let mut out = declaration[..closing].trim_end().to_string();
+    out.push('\n');
+    out.push('\n');
+    for member in members {
+        out.push_str(member);
+        out.push('\n');
+    }
+    out.push_str(&declaration[closing..]);
+    Ok(out)
 }
 
 fn declaration_entity(

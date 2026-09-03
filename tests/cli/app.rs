@@ -786,16 +786,18 @@ fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
     assert!(root.join("Dockerfile").is_file());
     assert!(root.join(".github/workflows/ci.yml").is_file());
     assert!(root.join(".github/workflows/image.yml").is_file());
-    // Two tables and their indexes, plus one table each for the workflow and
-    // the durable job. Counted rather than named because the point is that
-    // nothing appends twice on a replay -- what each one is, is in the file.
+    // Four tables: two entities, the workflow and the durable job. An index
+    // asked for at creation is part of its `create table`, so it adds no
+    // migration of its own. Counted rather than named because the point is
+    // that nothing appends twice on a replay -- what each one is, is in the
+    // file.
     assert_eq!(
         fs::read_dir(root.join("src/main/resources/db/migration"))
             .unwrap()
             .filter_map(Result::ok)
             .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "sql"))
             .count(),
-        6
+        4
     );
 }
 
@@ -1098,9 +1100,11 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
     assert!(root.join("Dockerfile").is_file());
     assert!(root.join(".github/workflows/ci.yml").is_file());
     // One forward migration per change rather than one per replayed row: a
-    // table, each of its indexes, and each declared relation's foreign key are
-    // separate statements with separate names, so a history reads as a list of
-    // what happened rather than as `evolve_application_schema` twenty times.
+    // table and each declared relation's foreign key are separate statements
+    // with separate names, so a history reads as a list of what happened
+    // rather than as `evolve_application_schema` twenty times. An index asked
+    // for at creation is inside its own `create table`, because a table and
+    // an index requested in one command are one plan.
     let migrations = fs::read_dir(root.join("src/main/resources/db/migration"))
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
@@ -1115,7 +1119,20 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
         inbox_migration.contains("create table inboxes"),
         "{inbox_migration}"
     );
-    // Eight entity tables plus the outbox, eight indexes, ten foreign keys.
+    // The indexes are here rather than in migrations of their own.
+    assert!(
+        migrations
+            .iter()
+            .filter(|name| name.contains("__create_"))
+            .any(|name| {
+                fs::read_to_string(root.join("src/main/resources/db/migration").join(name))
+                    .unwrap()
+                    .contains("create index ")
+            }),
+        "an index asked for at creation belongs in its `create table`: {migrations:?}"
+    );
+    // Eight entity tables plus the outbox, ten foreign keys, and no
+    // `add_idx` migration at all: every index here was asked for at creation.
     assert_eq!(
         (
             migrations
@@ -1131,7 +1148,7 @@ fn app_manifest_builds_the_support_inbox_from_the_same_generic_intents() {
                 .filter(|name| name.contains("__add_fk_"))
                 .count(),
         ),
-        (9, 8, 10),
+        (9, 0, 10),
         "{migrations:?}"
     );
 }
