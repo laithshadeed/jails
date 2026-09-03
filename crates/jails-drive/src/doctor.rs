@@ -120,8 +120,31 @@ fn probe(
         )
         .fix(format!("repair or reinstall it from {install}"));
     }
-    let version = version_line(&output.stdout, &output.stderr)
-        .unwrap_or_else(|| "version not reported".to_string());
+    let Some(version) = version_line(&output.stdout, &output.stderr) else {
+        return Check::new(
+            Status::Ok,
+            title,
+            format!("{} -- version not reported", path.display()),
+        );
+    };
+    // **A probe that answers something other than a version has failed, even
+    // at exit 0.** Debian's `psql` is a wrapper that picks a cluster binary,
+    // and with no cluster installed it prints `Can't exec "--version"` and
+    // exits successfully -- which doctor reported as `ok psql executable ...
+    // Can't exec "--version"`, an error message in the column a reader scans
+    // for a version number. Every version report carries a digit; an answer
+    // with none is the tool saying it could not run.
+    if !version.chars().any(|c| c.is_ascii_digit()) {
+        return Check::new(
+            if required { Status::Fail } else { Status::Warn },
+            title,
+            format!(
+                "{} answered `{version}` instead of a version",
+                path.display()
+            ),
+        )
+        .fix(format!("repair or reinstall it from {install}"));
+    }
     Check::new(
         Status::Ok,
         title,

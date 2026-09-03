@@ -176,13 +176,14 @@ pub fn kafka(command: KafkaCommand, no_start: bool, debug: bool) -> Result<()> {
         }
         KafkaCommand::Lag { group } => {
             let group = resolve_group(&root, group)?;
-            tool(
-                &root,
-                "kafka-consumer-groups.sh",
-                &["--describe".into(), "--group".into(), group],
-                None,
-                debug,
-            )
+            let spec = crate::process::compose_spec(["exec", "-T", SERVICE])
+                .ok_or_else(|| "docker compose is not installed".to_string())?
+                .arg(format!("{TOOLS}/kafka-consumer-groups.sh"))
+                .args(["--bootstrap-server", BROKER])
+                .args(["--describe", "--group", &group])
+                .current_dir(&root)
+                .output(crate::process::OutputMode::Capture);
+            lag(&spec, &group, debug)
         }
         KafkaCommand::Reset { group, topic } => {
             let group = resolve_group(&root, group)?;
@@ -210,6 +211,55 @@ pub fn kafka(command: KafkaCommand, no_start: bool, debug: bool) -> Result<()> {
 }
 
 /// Run one of the broker's own CLI tools inside the container.
+/// `lag`, which is the one subcommand that reads the broker's answer.
+///
+/// **A broker exception is a refusal, not a table.** Asking for a group that
+/// has never committed is the ordinary first thing a reader does, and
+/// `kafka-consumer-groups.sh` answers it with a Java stack trace on stderr
+/// and exit 0 -- so jails reported success and printed twenty lines about
+/// `GroupIdNotFoundException`. The output is captured rather than inherited
+/// so the exception can be recognised; it is a short table, so nothing is
+/// lost by printing it after the fact.
+fn lag(spec: &crate::process::CommandSpec, group: &str, debug: bool) -> Result<()> {
+    let done = crate::process::run(spec, crate::process::Diagnostics::from_flag(debug))?;
+    let answer = format!(
+        "{}{}",
+        done.stdout_string(),
+        String::from_utf8_lossy(&done.stderr)
+    );
+
+    if answer.contains("GroupIdNotFoundException") {
+        return Err(jails_support::Failure::Told(format!(
+            "no consumer group `{group}` has committed an offset yet, so it has no lag\n       fix: run the application once with `jails run`, then ask again"
+        )));
+    }
+    if let Some(line) = broker_exception(&answer) {
+        return Err(jails_support::Failure::Told(format!(
+            "the broker refused the request: {line}\n       fix: check the broker is up with `jails kafka topics`"
+        )));
+    }
+    print!("{}", done.stdout_string());
+    eprint!("{}", String::from_utf8_lossy(&done.stderr));
+    if done.status.success() {
+        Ok(())
+    } else {
+        Err(jails_support::Failure::Reported)
+    }
+}
+
+/// The first line of a broker exception, when the answer carries one.
+///
+/// The tool writes `Error: Executing consumer group command failed due to
+/// <fully.qualified.Exception>: <message>` and then a stack trace. One line
+/// is the refusal; the trace is about the tool, not the project.
+fn broker_exception(answer: &str) -> Option<String> {
+    answer
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("Error:") || line.contains("Exception:"))
+        .map(str::to_string)
+}
+
 fn tool(
     root: &Path,
     script: &str,
@@ -490,6 +540,30 @@ fn resolve_group(root: &Path, given: Option<String>) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The one line worth printing out of a stack trace.
+    #[test]
+    fn a_broker_exception_is_reduced_to_its_first_line() {
+        let answer = "\nError: Executing consumer group command failed due to \
+                      org.apache.kafka.common.errors.TimeoutException: timed out\n\
+                      \tat org.apache.kafka.Admin.describe(Admin.java:1)\n\
+                      \tat kafka.admin.ConsumerGroupCommand.main(ConsumerGroupCommand.scala:2)\n";
+        assert_eq!(
+            super::broker_exception(answer).as_deref(),
+            Some(
+                "Error: Executing consumer group command failed due to \
+                 org.apache.kafka.common.errors.TimeoutException: timed out"
+            )
+        );
+    }
+
+    /// A table is not an exception, however many words it has.
+    #[test]
+    fn a_group_description_carries_no_exception() {
+        let answer = "GROUP TOPIC PARTITION CURRENT-OFFSET LOG-END-OFFSET LAG\n\
+                      notes orders 0 12 12 0\n";
+        assert_eq!(super::broker_exception(answer), None);
+    }
 
     fn topics(source: &str) -> Vec<String> {
         topics_in(source, &BTreeMap::new())

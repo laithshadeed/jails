@@ -965,7 +965,6 @@ fn every_inventoried_command_path_is_invoked_by_a_test() {
         "kafka poison",
         "kafka tail",
         "kafka dlt",
-        "kafka lag",
         "kafka reset",
         "test daemon restart",
         "test daemon status",

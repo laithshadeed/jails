@@ -471,9 +471,7 @@ the model component, or repeat with `--yes`*. `g record Bad ref:Missing`
 answers *`Missing` is neither in this model nor in your own sources; fix:
 declare it with `jails g record Missing …`*. Against that: twelve messages point at
 `[entities]`, `[capabilities]`, `[settings]` or `[dependencies]`, tables
-of a format the tree refuses by name; `kafka lag` on a
-fresh group prints a raw `GroupIdNotFoundException` with exit 0; `doctor`
-prints `ok psql executable … Can't exec "--version"`. Of 713 `fix:` lines,
+of a format the tree refuses by name; Of 713 `fix:` lines,
 70 name a `jails` command and 18 a file. `"sample-bodie"` appears in the
 request collection and the controller test because `named_json_sample`
 pluralises `body` and trims one `s`.
@@ -568,16 +566,6 @@ a gate scans `fix:` lines the way
 `every_command_a_message_tells_the_reader_to_run_is_one_that_exists`
 scans commands. *Done when* `grep -rn 'declared under \`\[' src crates`
 is empty and the gate is green.
-
-**I71.42 — a broker's exception is a refusal.** *Change* `kafka lag`
-recognises `GroupIdNotFoundException` and answers *no consumer group
-`<name>` has committed yet; run the application once*, exit 1; any other
-broker exception is a refusal carrying its first line. *Done when* the
-`lag` line on a fresh group is one sentence and the exit code is non-zero.
-
-**I71.32 — a probe that fails is not `ok`.** *Change* an executable row
-whose `--version` probe fails reports `warn` with the probe's error and a
-fix line. *Done when* the `psql executable` row reads `warn`.
 
 **I71.9 — one noun.** *Change* `entity` for the thing and `scaffold` for
 the facet, in help and messages; `jails resource …` keeps working with

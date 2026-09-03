@@ -1063,6 +1063,72 @@ fn test_sources_without_comments() -> String {
     out
 }
 
+/// **A broker exception is a refusal, not twenty lines of Java.**
+///
+/// Asking for the lag of a group that has never committed is the first thing
+/// a reader does, and `kafka-consumer-groups.sh` answers with a stack trace
+/// on stderr and exit 0 -- so jails used to report success and print the
+/// trace. The fake broker here answers exactly that way.
+#[test]
+fn kafka_lag_turns_a_missing_consumer_group_into_one_sentence() {
+    let root = temp_dir("kafka-lag-fresh-group");
+    fs::write(
+        root.join("pom.xml"),
+        "<project><modelVersion>4.0.0</modelVersion><groupId>dev.example</groupId>\
+         <artifactId>sample</artifactId><version>0.0.1</version></project>",
+    )
+    .unwrap();
+    fs::write(
+        root.join("compose.yaml"),
+        "services:\n  kafka:\n    image: apache/kafka:4.1.0\n",
+    )
+    .unwrap();
+    let tools = temp_dir("kafka-lag-fresh-group-bin");
+    let log = tools.join("log.txt");
+    common::write_fake_maven(&tools, &["docker"], &log);
+    fs::write(
+        tools.join("docker"),
+        // `compose version` is the probe that decides how compose is spelled
+        // on this machine; only `exec` is the broker answering.
+        format!(
+            "#!/bin/sh\n\
+             echo \"$0 $*\" >> \"{}\"\n\
+             case \"$*\" in\n\
+             *exec*)\n\
+             echo 'Error: Executing consumer group command failed due to org.apache.kafka.common.errors.GroupIdNotFoundException: The group id does not exist.' >&2\n\
+             echo '   at kafka.admin.ConsumerGroupCommand.main(ConsumerGroupCommand.scala:2)' >&2\n\
+             ;;\n\
+             *)\n\
+             echo 'Docker Compose version v5.0.0'\n\
+             ;;\n\
+             esac\n\
+             exit 0\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    common::set_executable(&tools.join("docker"));
+
+    let output = jails_cmd(&root, Some(&tools))
+        .args(["kafka", "lag", "--group", "notes"])
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "a group with no committed offset is not a success"
+    );
+    let told = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        told.contains("no consumer group `notes` has committed an offset yet"),
+        "{told}"
+    );
+    assert!(told.contains("fix: run the application once"), "{told}");
+    assert!(
+        !told.contains("ConsumerGroupCommand.scala"),
+        "the stack trace is about the tool, not the project: {told}"
+    );
+}
+
 /// The `kafka` family refuses outside a project, by name.
 ///
 /// Eight subcommands that shell into the broker's own CLI tools inside the

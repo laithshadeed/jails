@@ -704,6 +704,74 @@ fn doctor_reports_resolved_developer_tool_paths_and_versions() {
     assert!(read_log(&log).contains("docker compose version"));
 }
 
+/// **A probe that answers with an error is not `ok`.** Debian's `psql` is a
+/// wrapper that picks a cluster binary, and with no cluster installed it
+/// prints `Can't exec "--version"` and exits 0 -- which doctor reported as
+/// `ok psql executable ... Can't exec "--version"`, an error message sitting
+/// in the column a reader scans for a version number.
+#[test]
+fn doctor_warns_when_a_tool_answers_the_version_probe_with_an_error() {
+    let root = temp_dir("doctor-broken-probe");
+    write_project_skeleton(&root);
+    fs::write(
+        root.join("pom.xml"),
+        "<project><properties><maven.compiler.release>26</maven.compiler.release></properties></project>\n",
+    )
+    .unwrap();
+    // The PostgreSQL client rows are only asked for when the project declares
+    // a database to talk to.
+    fs::write(
+        root.join("compose.yaml"),
+        "services:\n  postgres:\n    image: postgres:17\n",
+    )
+    .unwrap();
+
+    let tools = temp_dir("doctor-broken-probe-bin");
+    let log = tools.join("log.txt");
+    write_fake_maven(&tools, &["pgcli", "psql", "mvn"], &log);
+    for (name, output) in [
+        ("pgcli", "pgcli 4.3.0"),
+        // Exit 0, no digit anywhere: the tool ran and could not answer.
+        ("psql", "Cannot exec the requested version"),
+        ("mvn", "Apache Maven 3.9.11"),
+    ] {
+        fs::write(
+            tools.join(name),
+            format!(
+                "#!/bin/sh\necho \"$0 $*\" >> \"{}\"\necho '{}'\nexit 0\n",
+                log.display(),
+                output
+            ),
+        )
+        .unwrap();
+    }
+
+    let output = jails_cmd(&root, Some(&tools))
+        .args(["doctor", "--json"])
+        .output()
+        .unwrap();
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("doctor --json is JSON");
+    let row = report["checks"]
+        .as_array()
+        .expect("checks is an array")
+        .iter()
+        .find(|check| check["title"] == "psql executable")
+        .expect("a psql row");
+    assert_eq!(row["status"], "warn", "{row}");
+    assert!(
+        row["detail"]
+            .as_str()
+            .unwrap()
+            .contains("Cannot exec the requested version"),
+        "the row should carry what the probe answered: {row}"
+    );
+    assert!(
+        !row["fix"].as_str().unwrap_or_default().is_empty(),
+        "a warn row names a fix: {row}"
+    );
+}
+
 #[test]
 fn doctor_reports_the_system_gradle_path_and_version_when_no_wrapper_exists() {
     let root = temp_dir("doctor-gradle-tool");

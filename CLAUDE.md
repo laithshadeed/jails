@@ -772,7 +772,12 @@ this phase, and their refusals are worded by the caller that reports them.
   a `${key:default}` placeholder, resolved against `application.properties`
   with the default as the fallback; a placeholder with neither is skipped, not
   guessed at, because an invented topic is a `tail` that reads an empty topic
-  and reports that nothing arrived.
+  and reports that nothing arrived. **`lag` is the one subcommand that reads
+  the broker's answer** rather than inheriting it: the tool reports a missing
+  consumer group as a Java stack trace on stderr *and exit 0*, so a captured
+  answer carrying `GroupIdNotFoundException` becomes one sentence and a
+  non-zero exit, and any other broker exception is a refusal carrying its
+  first line.
 - **`crates/jails-drive/src/console.rs`** -- `db`/`dbconsole` (`psql` or
   `sqlite3`) and `console` (`jshell` over the project's runtime classpath,
   resolved by `run/application/classpath.rs` from `dependency:build-classpath`
@@ -780,6 +785,11 @@ this phase, and their refusals are worded by the caller that reports them.
   inherit stdio.
 - **`crates/jails-drive/src/bench.rs`** -- runs the k6 script `add loadtest`
   wrote. It does not parse k6's output; k6's own thresholds decide.
+- **A version probe that answers without a digit has failed**, whatever it
+  exits with. Debian's `psql` is a wrapper that picks a cluster binary and,
+  with no cluster installed, prints `Can't exec "--version"` and exits 0 --
+  which `doctor` reported as an `ok` row with an error message sitting in the
+  version column (`jails_drive::doctor::probe`).
 - **`crates/jails-report/src/doctor/`** -- split by *who is being asked*:
   `environment.rs` asks the machine, `wiring.rs` asks the project whether a
   capability is wired up, and `doctor.rs` keeps the report and `--json`.
