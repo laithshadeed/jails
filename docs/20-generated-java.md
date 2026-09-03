@@ -75,7 +75,7 @@ through `Boundary::owned_by`, so §20.2's "emitters MUST NOT concatenate"
 holds for every entity artifact and the exhaustiveness tests in
 `ejectable.rs` keep it so.
 
-## A1 — what coverage does not say
+## What coverage does not say
 
 **`migration` is deliberately not a declaration** (§1.6, §12.6). "Covered"
 means the plan carries it as an `AppendMigration`, not that a renderer
@@ -87,15 +87,9 @@ twenty-three emitted packages sit under a head §9.7 does not close, so a
 `convention.facet.*` where a layer's reads `convention.layer.*`. Reconciling
 them would move files in every project generated so far.
 
-## A6.2 — `Compiler::compile` carries what §20.1 splits into passes
-
-The layers are conceptually present and are not separately addressable. A3.14
-is the change that splits it; splitting it without the IR moves the problem
-rather than solving it.
-
 ---
 
-## P9.5 §4.7 — policy and contract matrices, closed form only
+## Policy and contract matrices stay closed form
 
 No expression string, no SpEL passthrough -- the same rule that keeps
 `@check(...)` out of the field spec. `@scope` and `require_scope_authorizer`
