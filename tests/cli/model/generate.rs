@@ -1801,3 +1801,146 @@ fn canonical_association_writes_a_relation_and_its_foreign_key() {
         String::from_utf8_lossy(&refused.stderr)
     );
 }
+
+/// **`@package` is a place, and only a place.**
+///
+/// The specification called `--package` "the sole intentional refusal in v1
+/// managed mode" while the binary had shipped the attribute for a year: §9.8
+/// is now the story, and this is its conformance test. Three properties, and
+/// the third is the one a reader relies on without knowing it -- moving a
+/// declaration into a slice is a move, not a delete and a create, so its
+/// stable id and everything keyed by it survive the edit.
+#[test]
+fn a_package_attribute_moves_an_entitys_projections_and_not_its_identity() {
+    let root = model_project("model-package-slice", EMPTY_MODEL);
+    let generated = jails_cmd(&root, None)
+        .args([
+            "g",
+            "scaffold",
+            "Note",
+            "id:uuid@pk",
+            "title:string",
+            "--package",
+            "inbox",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    let source = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(source.contains("entity Note @package(inbox) {"), "{source}");
+
+    // Every layer of the entity's own projections, in one slice package.
+    for relative in [
+        "src/main/java/com/example/notes/inbox/Note.java",
+        "src/main/java/com/example/notes/inbox/NoteService.java",
+        "src/main/java/com/example/notes/inbox/NoteController.java",
+        "src/test/java/com/example/notes/inbox/NoteControllerTest.java",
+    ] {
+        assert!(root.join(relative).is_file(), "{relative} is not there");
+    }
+    assert!(
+        !root
+            .join("src/main/java/com/example/notes/domain/Note.java")
+            .exists(),
+        "the record stayed in its layer package too"
+    );
+
+    // The formatter round-trips the attribute rather than dropping it.
+    let formatted = jails_cmd(&root, None)
+        .args(["model", "fmt", "--check"])
+        .output()
+        .unwrap();
+    assert!(
+        formatted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&formatted.stderr)
+    );
+
+    // The ids, not the model: `java_package` is exactly what the move
+    // changes, and comparing the whole document would assert it did nothing.
+    let identity = |root: &std::path::Path| {
+        let checked = jails_cmd(root, None)
+            .args(["--output", "json", "model", "check"])
+            .output()
+            .unwrap();
+        let report: serde_json::Value = serde_json::from_slice(&checked.stdout).unwrap();
+        let entities = report["model"]["entities"].as_object().unwrap();
+        entities
+            .iter()
+            .map(|(id, entity)| {
+                let fields = entity["fields"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|field| field["id"].as_str().unwrap().to_string())
+                    .collect::<Vec<_>>();
+                format!("{id}({})", fields.join(","))
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = identity(&root);
+    assert_eq!(before, ["ent_note(fld_note_id,fld_note_title)"]);
+
+    // The move: one attribute edited by hand, then `sync`.
+    fs::write(
+        root.join(".jails/model.jdl"),
+        source.replace("@package(inbox)", "@package(outbox)"),
+    )
+    .unwrap();
+    let synced = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    assert!(
+        root.join("src/main/java/com/example/notes/outbox/Note.java")
+            .is_file()
+    );
+    assert!(
+        !root
+            .join("src/main/java/com/example/notes/inbox/Note.java")
+            .exists()
+    );
+    assert_eq!(
+        identity(&root),
+        before,
+        "the stable id moved with the package"
+    );
+}
+
+/// The base package is the quoted empty string, which is what `--package ''`
+/// has to write: `@package()` is a syntax error, so the one spelling the
+/// README tells a reader to use wrote a model the next command refused.
+#[test]
+fn an_empty_package_is_the_base_package_and_is_written_quoted() {
+    let root = model_project("model-package-base", EMPTY_MODEL);
+    let generated = jails_cmd(&root, None)
+        .args(["g", "record", "Note", "title:string", "--package", ""])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    let source = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(source.contains("entity Note @package(\"\") {"), "{source}");
+    assert!(
+        root.join("src/main/java/com/example/notes/Note.java")
+            .is_file()
+    );
+    let checked = jails_cmd(&root, None)
+        .args(["model", "check"])
+        .output()
+        .unwrap();
+    assert!(
+        checked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
+}

@@ -67,7 +67,7 @@ reopening a contract:
 | ~~6~~ | ~~I71.40, I71.41, I71.24~~ | ~~every scanner sees every source root; `test --affected` never selects nothing and passes~~ |
 | ~~7~~ | ~~I70.2~~ | ~~one JSON encoding, carrying the same value as the human report~~ |
 | 8 | ~~I70.8~~, I70.9 (one line over), ~~I71.18~~ | a one-screen `--help`, global flags printed once, `g <kind> --help` about the kind |
-| 9 | I71.29, I71.26, I71.28 | README, the specification and the binary agree |
+| 9 | ~~I71.29~~, I71.26, ~~I71.28~~ | README, the specification and the binary agree |
 | ~~10~~ | ~~I71.14~~ | ~~every mutation prints the JDL it wrote~~ |
 
 **Worth a prototype before a decision:** `jails undo` (I71.15), bare `jails`
@@ -420,13 +420,25 @@ cannot pass one and forget the other, and storage is read off the
 projections after the entity loop, so a JDL entity saying `use repo` had an
 empty facet set at the point the check runs.
 
-**I71.28 — `--package` has one story.** *Change* keep the binary and fix
-the specification: `@package(name)` becomes a §9 attribute with a
-formatter rule, a stable-ID rule (identity does not move with the package)
-and a conformance test, and the *sole intentional refusal* sentence goes.
-The flag is advertised and works, so R7 forbids the other way round. *Done
-when* the specification documents `@package` and `model fmt --check`
-passes on a model carrying one.
+**I71.28 — `--package` has one story.** *Landed.* The specification called
+`--package` "the sole intentional refusal in v1 managed mode" while the
+binary had shipped `@package(name)` as an entity header attribute all
+along. §9.8 is now the story: what it moves (every projection the entity
+owns, into one slice package, tests included), the three rules that make
+it a placement rather than a second naming system, and the identity rule
+that a move is not a remove and an add. §8.4's closed attribute matrix,
+§3.1's convention boundary, §17.2's argument table, §18.2, §19.2 and §21's
+conformance family were each carrying the refusal and now carry the
+attribute.
+`a_package_attribute_moves_an_entitys_projections_and_not_its_identity` is
+the conformance test: the slice, the formatter round-trip, and the stable
+ids unchanged across a hand edit from one package to another.
+
+One binary fix fell out of writing it down. `--package ''` is the
+documented way to say *straight into the base package*, and it rendered
+`@package()`, which is a syntax error -- the one spelling the README told a
+reader to use wrote a model the next command refused to read. The base
+package is the quoted empty string, and the specification says so.
 
 **I71.38 — `to`, not `--yields`, for a relation's parent.** *Landed, with
 `--yields` still visible.* `--to` is one spelling of the same argument, and

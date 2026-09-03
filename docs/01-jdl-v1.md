@@ -86,7 +86,7 @@ exactly one of:
 Every current capability MUST map to either `app.storage` or `cap`. Every
 generation modifier MUST map to durable syntax, typed transient evidence, or a
 documented convention-only refusal. The complete mappings are in sections
-15–17; `--package` is the sole intentional refusal in v1 managed mode.
+15–17, and there is no intentional refusal left in v1 managed mode.
 
 ### 2.1 What belongs in JDL
 
@@ -185,8 +185,10 @@ The following are normative language rules:
    `component service BillingService` is rejected with the fix `Billing`.
 2. There is no naming, pluralization, suffix, source-root, layer-package, test
    naming, migration naming, or route-style configuration in JDL v1.
-3. The base `app.pkg` is the only author-selected package. All managed Java is
-   placed below it by the closed layer table in section 9.7.
+3. The base `app.pkg` is the author-selected root, and the closed layer table
+   in section 9.7 places all managed Java below it. `@package` on an entity
+   selects a different sub-package for that declaration's own projections
+   (section 9.8); it selects a *place*, never a name.
 4. A convention is part of `jdl 1`. A compiler upgrade MUST NOT silently
    change it. A changed convention requires a new JDL major version and an
    explicit source/contract migration plan.
@@ -218,11 +220,12 @@ evidence from the accepted model; `jails model pin` supplies reviewed
 An unchanged pin in an already accepted model needs no new evidence. The
 formatter never invents a pin.
 
-Package placement is deliberately not pinnable. An importer that encounters a
-non-conventional managed package must either plan a move to the canonical
-layer or eject the affected implementation boundary. It MUST NOT reproduce a
-per-generator `--package` choice in JDL. This is the one current generator knob
-that v1 intentionally retires in order to produce a consistent source tree.
+Package placement is durable syntax, not transient evidence: an entity's
+`@package` is part of its declaration and section 9.8 defines it. An importer
+that encounters a non-conventional managed package writes that attribute, or
+ejects the affected implementation boundary; what it MUST NOT do is leave the
+placement in a side file, where the model and the source tree would disagree
+about where a type lives.
 
 Unlike JHipster, JDL has no open custom-annotation bag. Unlike PSL, JDL is not
 database-first: Java units, adapters, HTTP contracts, caps, properties,
@@ -755,7 +758,7 @@ The complete header-attribute matrix is closed:
 | Declaration | Valid attributes |
 |---|---|
 | app | `@id` |
-| entity | `@id`, `@retired`, `@retired(drop)` |
+| entity | `@id`, `@retired`, `@retired(drop)`, `@package(name)` |
 | enum | `@id` |
 | enum value | `@id` |
 | relation | `@id`, `@map` |
@@ -767,6 +770,12 @@ The complete header-attribute matrix is closed:
 | dep | section 15.2 |
 | prop | section 15.3 |
 | ejection | `@id` |
+
+`@package(name)` moves one entity's projections out of their conventional
+layer packages and into `app.pkg` + `name`; section 9.8 defines it. It is a placement, so it does not participate in identity: the
+entity's `@id` is unchanged by adding, changing or removing it, and a moved
+entity is the same declaration in a different directory rather than a remove
+and an add.
 
 `@internal` suppresses the otherwise conventional HTTP adapter for one command,
 query, or transition. It forbids `route` and `bind` members. This is a behavior
@@ -1180,6 +1189,46 @@ Every effective Java FQN, file, SQL identifier, route, and migration path is
 computed before emission and shown by `model plan`. Two logical declarations
 that compute the same name are an error; no registry entry may add a counter
 or silently choose another package.
+
+### 9.8 `@package`: one entity in a slice of its own
+
+`@package(name)` on an entity replaces the layer segment for every projection
+that entity owns. The declaration
+
+```jdl
+entity Note @package(inbox) {
+  id: uuid @pk
+  title: string
+}
+```
+
+with `use scaffold` places the record, the port, both adapters, the service,
+the controller and the DTOs in `app.pkg` + `inbox`, and their tests in the
+same relative package under `src/test/java` — package by feature rather than
+package by layer, for that entity alone. A support type shared by several
+entities keeps its conventional layer package: `@package` moves what the
+entity owns, not what it uses.
+
+Three rules make it a placement rather than a second naming system:
+
+1. **It selects a place, never a name.** Every Java type name, SQL name,
+   route and test name is still the convention's, computed exactly as section
+   9.7 computes it. `@package` chooses the directory those names are written
+   in.
+2. **Identity does not move with it.** The entity's `@id` is unchanged by
+   adding, changing or removing `@package`, so a moved entity is one
+   declaration in a different directory rather than a remove and an add. The
+   accepted projection's managed files move; the model's node does not.
+3. **The name is a Java package path**, validated as section 5.3 validates
+   one, relative to `app.pkg` and unable to escape it. The base package
+   itself is the quoted empty string, `@package("")`, which is what
+   `--package ''` writes; an attribute with nothing between its parentheses
+   is a syntax error.
+
+The formatter writes `@package` in header-attribute order (section 19.1) and
+never adds one: a declaration with no `@package` is in the conventional
+layer package, which is the answer for almost every declaration and the one
+a reader should not have to read an attribute to know.
 
 ## 10. Enums
 
@@ -2140,7 +2189,7 @@ survive into the linked model. The 18 option arguments map as follows:
 | CLI argument | Durable JDL or transient evidence |
 |---|---|
 | `--timestamps` | explicit `createdAt` and `updatedAt` fields with `now()`/`@updated`; no shorthand remains |
-| `--package` | refused for a managed JDL projection; move to the canonical layer or eject/adopt the boundary |
+| `--package` | entity `@package(name)`; omitted when the conventional layer package applies |
 | `--default-literal` | typed one-change backfill evidence; not an ongoing `@default` |
 | `--backfill-file` | exact reader-owned one-change SQL evidence |
 | `--index` | field `@index` for one ascending field; otherwise one `index [...]` declaration per occurrence |
@@ -2164,10 +2213,10 @@ this table, but MUST NOT repeat a derived name merely because a CLI displayed
 it. Re-reading the edited JDL must produce the same plan without replaying
 command arguments.
 
-The `--package` row is an intentional compatibility break, not an uncovered
-behavior: package placement changes presentation but adds no application
-capability. Existing custom-package code remains usable through the documented
-move/eject/adopt path; new managed code has exactly one placement.
+The `--package` row is durable syntax like every other row: the flag writes
+`@package(name)` into the declaration, and re-reading the edited JDL produces
+the same placement without replaying the command. A declaration with no
+`@package` has exactly one placement, which is the conventional one.
 
 ### 17.3 Resource lifecycle commands
 
@@ -2239,7 +2288,8 @@ Important global invariants include:
 - every generated output has exactly one owner or is explicitly ejected;
 - no declaration is accepted with an irrelevant member or attribute;
 - no semantic stem repeats its role's generated prefix/suffix; and
-- no managed unit carries a package, filename, test-name, or suffix override.
+- no managed unit carries a filename, test-name, or suffix override, and no
+  package override except an entity's own `@package`.
 
 ### 18.3 Diagnostic contract
 
@@ -2368,8 +2418,8 @@ reviewed apply transaction. They MUST:
   and keeps a formatted file formatted;
 - materialize a derived ID when a rename needs it;
 - omit a package/name/route argument when the convention already determines it;
-- refuse `--package` for managed output with the exact canonical destination
-  and ejection alternative in the diagnostic;
+- write `--package` into the declaration as `@package`, so the placement is
+  in the model rather than in the command that made it;
 - refuse an edit when syntax errors make the target span ambiguous; and
 - write through a same-directory temporary file with compare-and-swap against
   the source digest.
@@ -2491,7 +2541,7 @@ Implementation is complete only when all of these test families exist:
 4. **Convention snapshots** — every layer, Java role prefix/suffix, acronym,
    plural, SQL constraint, scaffold/operation route, unit/IT name, migration
    description, collision, contract pin, redundant-suffix diagnostic, and
-   managed `--package` refusal.
+   `@package` placement.
 5. **Registry exhaustiveness** — every one of the 39 `ArtifactKind` values,
    26 capabilities including `fast-test`, 18 generation options, projection,
    component, attribute, default, and boundary has exactly one mapping.

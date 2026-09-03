@@ -160,6 +160,12 @@ pub(crate) fn entity_declaration(
         refuse_unstorable_components(model, &parsed, java_name)?;
     }
     let package = match declaration.package {
+        // **The base package is the quoted empty string, not `@package()`.**
+        // `--package ''` is the documented way to say "straight into the base
+        // package", and an attribute with no argument between the parentheses
+        // is a syntax error -- so the one spelling the reader is told to use
+        // wrote a model the next command refused to read.
+        Some("") => " @package(\"\")".to_string(),
         Some(package) => format!(" @package({package})"),
         None => String::new(),
     };

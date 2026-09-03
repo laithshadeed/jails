@@ -1058,7 +1058,10 @@ there the unit is a whole service block rather than a setting.)
   the model has no answer for, and only `g`/`generate` reaches the binary.
 
 `generate`, `destroy`, `add` and `remove` all take `--package <sub>` to override where
-the code lands; `--package ''` writes straight into the base package.
+the code lands, which the model carries as `@package(name)` on the
+declaration; `--package ''` writes straight into the base package, spelled
+`@package("")`. It selects a place and never a name: every type, route, SQL
+and test name is still the convention's.
 
 ## The save-and-reload loop
 
