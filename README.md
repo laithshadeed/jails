@@ -179,7 +179,12 @@ source: the next change can be made by hand in the file and applied with
   versioned, read-only protocol `jails.nvim` speaks, and any other editor
   adapter can. `handshake` negotiates the protocol version and reports the
   project root, its build and its release; `complete` finishes one
-  already-tokenized argument at a byte offset; `symbols routes|beans|tests|types
+  already-tokenized argument at a byte offset, from the clap tree for the
+  closed sets every project shares and from the model for the ones it does
+  not -- the entities `--on`, `--via` and `--yields` can name, the components
+  a field list can filter on, the types after a colon and the `@markers`
+  after those. A project with no model, or one mid-edit that does not parse,
+  offers nothing rather than a diagnostic; `symbols routes|beans|tests|types
   [query]` returns project symbols with stable identities (a route's is
   `route:<METHOD>:<path>:<handler>`, which `jails request` accepts as a
   target); `diagnostics --scope project|buffer [--file <path>]` returns
@@ -1036,7 +1041,11 @@ there the unit is a whole service block rather than a setting.)
   answers on a project that does not build. The same table is rendered into the
   generated `AGENTS.md`, which is what stops the machine check and the guidance
   given to a coding agent drifting apart.
-- `jails completion <bash|zsh|fish|elvish|powershell>` — shell completion.
+- `jails completion <bash|zsh|fish|elvish|powershell>` — shell completion. The
+  bash script carries a hook that asks `jails editor complete` what this
+  project declares, so `jails g query Recent st<TAB>` completes `status:`
+  from the entity; it falls through to the static script for every position
+  the model has no answer for, and only `g`/`generate` reaches the binary.
 
 `generate`, `destroy`, `add` and `remove` all take `--package <sub>` to override where
 the code lands; `--package ''` writes straight into the base package.

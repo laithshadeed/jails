@@ -679,10 +679,28 @@ inline on `args.kind` at the point each is read, and hoisting them into one
 predicate would move behaviour to shorten a help page. The spelling gate is
 what holds that list honest.
 
-**I71.23 — the closed sets complete on the command line.** *Change* the
-shell completer calls `editor complete` for field types, markers, `--on`
-targets, `--yields` events and `--via` fields. *Done when* `jails g query
-X st<TAB>` completes `status:` from the entity.
+**I71.23 — the closed sets complete on the command line.** *Landed.*
+`editor complete` answered from the clap tree alone, so a completer could
+offer `--on` and then nothing after it. `editor_complete` adds the half
+that is not the same in every project: the entities `--on`, `--via` and
+`--yields` can name, the components a field list can filter on, the type
+table after a colon and the `@markers` after that. `jails completion bash`
+now emits a hook that asks the binary and falls through to the static
+script when the answer is empty, and
+`the_generated_bash_completion_asks_the_binary_what_this_project_declares`
+sources it in a real bash and reads `COMPREPLY`: `jails g query Recent
+st<TAB>` completes `status:` from the entity.
+
+Two decisions worth the words. Only `g`/`generate` reaches the binary,
+because that is where the model has something to say and a completer that
+spawns a process on every TAB is one people turn off. And every path is
+best-effort and silent -- no model, a model mid-edit that does not parse,
+a `--on` naming an entity that does not exist yet -- because the reader is
+in the middle of typing the thing that would fix it.
+
+*Deviation:* the hook is bash's alone. zsh and fish keep the static script
+they had; a hook written for a shell nobody has run it in would be worse
+than none.
 
 **I71.17 — bare `jails` is `status` (prototype).** *Change* what `git
 status` prints for a repository: the model in one line, what the lock has

@@ -24,6 +24,7 @@ mod cli;
 mod contract_command;
 mod dispatch;
 mod editor_command;
+mod editor_complete;
 mod facade;
 mod model_capability;
 mod model_command;
@@ -617,6 +618,12 @@ fn main() -> std::process::ExitCode {
         Command::Commands { json } => commands::commands(Cli::command(), json),
         Command::Completion { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "jails", &mut std::io::stdout());
+            // The model-aware half is bash's alone for now: the other shells
+            // get the static script, which is what they had. A hook written
+            // for a shell nobody has run it in would be worse than none.
+            if shell == clap_complete::Shell::Bash {
+                println!("{}", editor_complete::BASH_HOOK);
+            }
             Ok(())
         }
     };

@@ -114,3 +114,187 @@ fn completion_comes_from_clap_and_diagnostics_preserve_epoch() {
         "{json}"
     );
 }
+
+/// The model's own words, offered where the reader is typing them.
+///
+/// **A closed set the tool already holds is one the reader should not have
+/// to remember.** Which entities exist, which components one has, which
+/// types the language spells and which markers a field takes are all answers
+/// the binary computes for every other command; before this they stopped at
+/// the clap tree, so a completer could offer `--on` and then nothing after
+/// it. Every position here is a different source, which is why they are one
+/// test: the shape a reader relies on is that the model answers wherever it
+/// has an answer.
+#[test]
+fn completion_offers_what_the_model_declares_and_writes_nothing() {
+    let root = editor_fixture("editor-completion-model");
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "jdl 1\n\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  \
+         platform spring\n  build maven\n  storage none\n}\n\n\
+         entity Loan @id(ent_loan) {\n  use repo\n\n  id: uuid @id(fld_loan_id) @pk\n  \
+         status: string @id(fld_loan_status)\n  amount: int @id(fld_loan_amount)\n}\n",
+    )
+    .unwrap();
+    let before = snapshot_tree(&root);
+
+    for (argv, index, expected, kind) in [
+        // The item's own measurement: a component of the entity, from three
+        // letters of it, with no `--on` typed yet.
+        (
+            vec!["g", "query", "X", "st"],
+            3,
+            "\"value\":\"status:\"",
+            "field",
+        ),
+        // The entity behind `--on`, which is the flag every other one hangs
+        // off.
+        (
+            vec!["g", "query", "X", "--on", "Lo"],
+            4,
+            "\"value\":\"Loan\"",
+            "entity",
+        ),
+        // The language's own type table, after the colon.
+        (
+            vec!["g", "record", "X", "total:de"],
+            3,
+            "\"value\":\"total:decimal\"",
+            "type",
+        ),
+        // A marker at the end of a whole field, which is where one is typed.
+        (
+            vec!["g", "scaffold", "X", "status:string@uni"],
+            3,
+            "\"value\":\"status:string@unique\"",
+            "marker",
+        ),
+    ] {
+        let token = argv[index];
+        let output = jails_cmd(&root, None)
+            .args(["--output", "json", "editor", "complete", "--arg-index"])
+            .arg(index.to_string())
+            .arg("--byte-offset")
+            .arg(token.len().to_string())
+            .arg("--")
+            .args(&argv)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "`{}` refused: {}",
+            argv.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let json = String::from_utf8_lossy(&output.stdout);
+        assert!(json.contains(expected), "completing `{token}`: {json}");
+        assert!(json.contains(&format!("\"kind\":\"{kind}\"")), "{json}");
+    }
+
+    // The positions the model has nothing to say about still answer, and
+    // answer from clap: the kind is a closed set the parser owns.
+    let output = jails_cmd(&root, None)
+        .args([
+            "--output",
+            "json",
+            "editor",
+            "complete",
+            "--arg-index",
+            "0",
+            "--byte-offset",
+            "2",
+            "--",
+            "mo",
+        ])
+        .output()
+        .unwrap();
+    let json = String::from_utf8_lossy(&output.stdout);
+    assert!(json.contains("\"value\":\"model\""), "{json}");
+    assert!(!json.contains("\"kind\":\"field\""), "{json}");
+
+    assert_eq!(
+        snapshot_tree(&root),
+        before,
+        "completion wrote to the project"
+    );
+}
+
+/// **A completer that a shell cannot run is a protocol, not a completer.**
+///
+/// The generated bash script is `clap_complete`'s, which knows the closed
+/// sets that are the same in every project and nothing about this one. The
+/// appended hook is what asks the binary, and the only way to know it works
+/// is to let bash run it: the script is sourced, driven at the cursor a
+/// reader would be at, and read back out of `COMPREPLY`.
+#[test]
+fn the_generated_bash_completion_asks_the_binary_what_this_project_declares() {
+    let root = editor_fixture("editor-completion-bash");
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/model.jdl"),
+        "jdl 1\n\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  \
+         platform spring\n  build maven\n  storage none\n}\n\n\
+         entity Loan @id(ent_loan) {\n  use repo\n\n  id: uuid @id(fld_loan_id) @pk\n  \
+         status: string @id(fld_loan_status)\n}\n",
+    )
+    .unwrap();
+    let script = jails_cmd(&root, None)
+        .args(["completion", "bash"])
+        .output()
+        .unwrap();
+    assert!(script.status.success());
+    let script = String::from_utf8_lossy(&script.stdout).to_string();
+    let script_path = root.join("jails-completion.bash");
+    fs::write(&script_path, &script).unwrap();
+
+    let syntax = std::process::Command::new("bash")
+        .arg("-n")
+        .arg(&script_path)
+        .output()
+        .unwrap();
+    assert!(
+        syntax.status.success(),
+        "the generated script is not valid bash: {}",
+        String::from_utf8_lossy(&syntax.stderr)
+    );
+
+    let driver = root.join("drive.bash");
+    fs::write(
+        &driver,
+        format!(
+            "source {}\n\
+             COMP_WORDS=(jails g query Recent st)\n\
+             COMP_CWORD=4\n\
+             COMP_LINE=\"jails g query Recent st\"\n\
+             COMP_POINT=${{#COMP_LINE}}\n\
+             _jails_with_the_model jails st Recent\n\
+             printf '%s\\n' \"${{COMPREPLY[@]}}\"\n",
+            script_path.display()
+        ),
+    )
+    .unwrap();
+    let mut shell = std::process::Command::new("bash");
+    shell.arg(&driver).current_dir(&root);
+    // The hook calls `${words[0]}`, which is what a reader has on PATH.
+    let path = format!(
+        "{}:{}",
+        std::path::Path::new(common::bin())
+            .parent()
+            .expect("the test binary has a directory")
+            .display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    shell.env("PATH", path);
+    let completed = shell.output().unwrap();
+    assert!(
+        completed.status.success(),
+        "the completer failed: {}",
+        String::from_utf8_lossy(&completed.stderr)
+    );
+    let reply = String::from_utf8_lossy(&completed.stdout);
+    assert!(
+        reply.lines().any(|line| line == "status:"),
+        "bash completed `st` to {reply:?}"
+    );
+}

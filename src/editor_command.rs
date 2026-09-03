@@ -21,9 +21,9 @@ pub(crate) fn run(command: EditorCommand, invocation: crate::Invocation) -> Resu
         EditorCommand::Complete {
             arg_index,
             byte_offset,
-            path: _,
+            path,
             argv,
-        } => complete(arg_index, byte_offset, &argv),
+        } => complete(arg_index, byte_offset, &argv, path.as_deref()),
         EditorCommand::Symbols { kind, query, path } => {
             symbols(kind, query.as_deref(), path.as_deref())
         }
@@ -73,7 +73,12 @@ fn handshake(start: Option<&Path>) -> Result<()> {
     Ok(())
 }
 
-fn complete(argument_index: u32, byte_offset: u32, argv: &[String]) -> Result<()> {
+fn complete(
+    argument_index: u32,
+    byte_offset: u32,
+    argv: &[String],
+    start: Option<&Path>,
+) -> Result<()> {
     let index = usize::try_from(argument_index).map_err(|_| "argument index overflows usize")?;
     let token = argv.get(index).map(String::as_str).unwrap_or("");
     let end = usize::try_from(byte_offset).map_err(|_| "byte offset overflows usize")?;
@@ -120,21 +125,35 @@ fn complete(argument_index: u32, byte_offset: u32, argv: &[String]) -> Result<()
             }
         }
     }
-    let rows = candidates
+    let mut rows = candidates
         .into_iter()
         .map(|(kind, value, description)| {
-            format!(
-                "{{\"value\":{},\"display\":{},\"kind\":{},\"description\":{}}}",
-                js(&value),
-                js(&value),
-                js(if kind == 0 { "command" } else { "option" }),
-                description
-                    .map(|value| js(&value))
-                    .unwrap_or_else(|| "null".into())
+            candidate_json(
+                &value,
+                if kind == 0 { "command" } else { "option" },
+                description.as_deref(),
             )
         })
-        .collect::<Vec<_>>()
-        .join(",");
+        .collect::<Vec<_>>();
+    // **The model's answers come first.** A reader who has typed three
+    // letters of a component name is not choosing between that and a
+    // subcommand, and a candidate list is read from the top.
+    if let Ok(project) = project_containing(start) {
+        let model = crate::editor_complete::candidates(&command, argv, index, prefix, &project);
+        let mut offered = model
+            .into_iter()
+            .map(|candidate| {
+                candidate_json(
+                    &candidate.value,
+                    candidate.kind,
+                    candidate.description.as_deref(),
+                )
+            })
+            .collect::<Vec<_>>();
+        offered.append(&mut rows);
+        rows = offered;
+    }
+    let rows = rows.join(",");
     let start = token[..end]
         .rfind(char::is_whitespace)
         .map_or(0, |at| at + 1);
@@ -142,6 +161,16 @@ fn complete(argument_index: u32, byte_offset: u32, argv: &[String]) -> Result<()
         "{{\"schema\":\"jails.editor-completion.v1\",\"input\":{{\"argument_index\":{argument_index},\"byte_offset\":{byte_offset}}},\"replace\":{{\"argument_index\":{argument_index},\"start_byte\":{start},\"end_byte\":{end}}},\"candidates\":[{rows}]}}"
     );
     Ok(())
+}
+
+fn candidate_json(value: &str, kind: &str, description: Option<&str>) -> String {
+    format!(
+        "{{\"value\":{},\"display\":{},\"kind\":{},\"description\":{}}}",
+        js(value),
+        js(value),
+        js(kind),
+        description.map_or_else(|| "null".into(), js)
+    )
 }
 
 fn about(command: &clap::Command) -> Option<String> {
