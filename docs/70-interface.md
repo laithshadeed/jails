@@ -18,8 +18,10 @@ to *know* before `jails g scaffold Note title:string!` feels obvious, how
 long they wait, and what happens to them in git afterwards.
 
 Every section has the same shape: **Today** is what the binary does,
-measured; the items after it say what to **change** and how to tell it is
-**done**. An item reads:
+measured; **After** shows the result the section is aiming at, as a
+reader would see it; the items say what to **change** to get there and how
+to tell it is **done**. Where a change could go two ways, the item says
+which way and why. An item reads:
 
 > **I70.12 — say a warning once.** *Today* … *Change* … *Done when* …
 
@@ -135,6 +137,40 @@ scaffolded project as if the scaffold were not there:
 The third row is the *green build proving nothing* README's own paragraph
 on `--affected` promises cannot happen.
 
+### After
+
+A jails project is a Maven or Gradle project with a folder of inputs
+beside it:
+
+```
+notes/
+  pom.xml                                  no build-helper block; the pom of any Boot project
+  jails.toml                               layout and the architecture policy
+  src/main/java/com/example/notes/
+    NotesApplication.java
+    domain/Note.java                       // jails: art_ent_note_record  -- every generated file, first line
+    repository/NoteRepository.java
+    service/NoteService.java
+    web/NoteController.java  NoteRequest.java  NoteResponse.java
+    adapters/jdbc/JdbcNoteRepository.java
+  src/main/resources/db/migration/V001__create_notes.sql
+  src/test/java/com/example/notes/…        generated tests beside hand-written ones
+  src/test/http/notes.http
+  src/test/resources/archunit/frozen/      the freeze store, ArchUnit's own convention
+  .jails/
+    model.jdl                              the source
+    lock.json                              one line per managed path: path, artifact id, digest
+    base/src/main/java/…                   BASE bytes, one file per managed path (§2)
+    run/                                   ignored: daemon socket, caches
+```
+
+`rm -rf .jails` leaves a project that builds and passes its tests and can
+no longer regenerate; the next `jails g` says so. `rg`, `ls`, the IDE, the
+test selector and the Kafka tool see one source tree because there is one.
+`jails model relocate` moves an existing project across once: it moves
+the files, rewrites the lock's paths, removes the build-helper block, and
+refuses if any destination already exists.
+
 ### Change
 
 **I71.43 — generated Java lives in `src/`, and nothing generated reads
@@ -236,6 +272,30 @@ edit to a managed file is merged forward on the next change and `doctor`
 says so. `remove json` over a hand-edited file refuses with the fix. The
 `.gitignore` `new` writes does not cover `.jails/run/` or `apply.lock`.
 
+### After
+
+```
+$ git merge alice
+Auto-merging .jails/model.jdl
+Auto-merging .jails/lock.json
+Merge made by the 'ort' strategy.
+$ jails sync
+accepted  7 files from alice (Task)      matching the model, headers intact
+accepted  7 files from bob (Tag)
+nothing to regenerate
+$ git show --stat HEAD~1
+ .jails/lock.json                          |  7 +
+ .jails/base/src/main/java/.../Task.java   | 21 +
+ src/main/java/com/example/notes/domain/Task.java | 21 +
+ …
+```
+
+A scaffold is a diff a reviewer can read: one line per file in the lock,
+the BASE file beside the source file, no integer arrays. Two branches
+adding two entities merge without a conflict because each appended beside
+the entities, not at the end of the file, and the lock is one sorted line
+per path. A lost lock or a lost base is announced, never silently rebuilt.
+
 ### Change
 
 **I70.22 — the merge base is a tree of files, not an array of integers.**
@@ -271,19 +331,22 @@ cannot be told from generated code until the next one*, and `doctor`
 carries the row. *Done when* the lost-lock run prints it.
 
 **I71.7 — one verb makes the tree match the model.** *Change* `sync`
-restores a deleted managed file and says `restore <path> deleted by
-hand`; `resource repair` is an alias for one release. *Done when* the
+restores a deleted managed file (BASE is in the base tree, the render is
+the model's) and says `restore <path> deleted by hand`; `resource repair`
+is an alias for one release. *Done when* the
 deletion above is healed by `jails sync` and the report names the file.
 
 **I71.37 — a concurrent run is named.** *Change* *another jails run
 changed this project while this one was planning; run the command again*.
 *Done when* the race prints that line.
 
-**I70.3 — `--diff` diffs managed files, never the lock.** *Done when* the
-lock has no hunk in a `--diff`.
+**I70.3 — `--diff` diffs managed files, never the lock.** *Change* the
+lock and the base tree are derived from the plan and are skipped by
+`--diff`, which prints the model hunk and the managed files. *Done when*
+the lock has no hunk in a `--diff`.
 
-**I71.15 — `jails undo` (prototype).** Every planned operation carries a
-before-image (`before: Option<FileImageRef>` in `plan.rs`; blobs in the
+**I71.15 — `jails undo` (prototype).** *Change* add `jails undo`, built
+on what exists: every planned operation carries a before-image (`before: Option<FileImageRef>` in `plan.rs`; blobs in the
 bundle), so the inverse plan is the same bundle with before and after
 swapped and the current after-images as preconditions. Keep the last
 applied bundle at `.jails/run/last-plan.json`; `undo` hands the inverse to
@@ -352,6 +415,64 @@ typed by an entity (`note:Note`) is a second way to relate that embeds
 instead. Nothing in the binary teaches the grammar: `model --help` mentions
 JDL once, `model check --help` and `explain <kind>` never.
 
+### After
+
+The model the tool writes is the model the specification shows, in the
+order a reader would keep it, and the CLI is visibly sugar over it:
+
+```jdl
+jdl 1
+
+app Notes {
+  pkg com.example.notes
+  java 26
+  platform spring
+  build maven
+  storage postgres
+}
+
+cap db
+cap api
+
+// written by jails new; yours to edit or delete
+dep org.jspecify:jspecify @version("1.0.0")
+prop server.shutdown = "graceful"
+prop spring.lifecycle.timeout-per-shutdown-phase = "30s"
+
+enum Colour {
+  RED
+  GREEN
+}
+
+entity Note {
+  use scaffold
+
+  id:    uuid    @pk
+  title: string  @notBlank
+  body:  string?
+  tags:  string          // appended by `resource field add`, aligned, no @id
+}
+```
+
+```
+$ jails g record Money amount:long currency:Colour
+  .jails/model.jdl
++ entity Money {
++   amount:   long
++   currency: Colour
++ }
+create  src/main/java/com/example/notes/domain/Money.java
+create  src/test/java/com/example/notes/domain/MoneyTest.java
+2 created
+```
+
+A typo is one diagnostic with a position (`.jails/model.jdl:14:18:
+`strin` is not a type jails knows; a type you own is capitalised`), in the
+editor as well as on the command line. `jails explain jdl` prints the
+grammar the parser accepts. `#` says *comments start with `//`*.
+Collections work on non-stored records, `--package` is `@package` in the
+specification as well as in the binary, and a relation's parent is `--to`.
+
 ### Change
 
 **I70.13 — write `@id(…)` only when it is pinned.** *Change* the same rule
@@ -388,27 +509,39 @@ unknown suppresses the diagnostics that depend on it. *Done when* the
 `strin` typo prints one diagnostic with a line and column.
 
 **I71.48 — the editor protocol carries the language's diagnostics.**
-*Done when* `editor diagnostics` returns what `model check` returns, JDL
-and model codes alike, with line and column.
+*Change* `editor diagnostics` runs the same parse and link as `model
+check` and maps each code to the schema's diagnostic shape with the span.
+*Done when* it returns what `model check` returns, JDL and model codes
+alike, with line and column.
 
-**I71.36 — one identifier check, before the model.** *Done when* `2Fast`
-and `Café` refuse with the same sentence.
+**I71.36 — one identifier check, before the model.** *Change* the CLI
+validates a name as a Java identifier once, in the frontend, with the
+`Café` message; the linker never sees a name the CLI could have refused.
+*Done when* `2Fast` and `Café` refuse with the same sentence.
 
-**I71.49 — `#` is refused with the answer.** *Done when* `JDL0002` on `#`
-says *comments start with `//`*.
+**I71.49 — `#` is refused with the answer.** *Change* `JDL0002` on `#`
+adds *comments start with `//`*. *Done when* the refusal says so.
 
-**I71.26 — collections exist or are not advertised.** *Done when* `g
-record Bag tags:list<string>` matches what README, `--help` and the
-specification say, whichever way that is decided.
+**I71.26 — collections exist.** *Change* the model accepts `list<T>` and
+`map<K,V>` on non-stored records and component payloads, as the
+specification's §9 already says; a stored entity refuses them with the
+reason (no column type). Implement rather than un-advertise: three
+documents promise it and the compact syntax already parses the angle
+brackets. *Done when* `g record Bag tags:list<string>` generates and
+`g scaffold Bag tags:list<string>` refuses naming the column.
 
 **I71.27 — the reserved-word check is about columns, on stored entities.**
-*Done when* `g record Timing when:instant` succeeds and the message on a
+*Change* `model-sql-reserved` runs only for entities with storage and
+names the column, not a table. *Done when* `g record Timing when:instant` succeeds and the message on a
 stored entity says *column*.
 
-**I71.28 — `--package` has one story.** *Change* either `@package` is a
-language feature at §6.2's full price and the specification says so, or
-the flag refuses on a managed projection as the specification says. *Done
-when* the specification and `g record X a:int --package p` agree.
+**I71.28 — `--package` has one story.** *Change* keep the binary and fix
+the specification: `@package(name)` becomes a §9 attribute with a
+formatter rule, a stable-ID rule (identity does not move with the package)
+and a conformance test, and the *sole intentional refusal* sentence goes.
+The flag is advertised and works, so R7 forbids the other way round. *Done
+when* the specification documents `@package` and `model fmt --check`
+passes on a model carrying one.
 
 **I71.38 — `to`, not `--yields`, for a relation's parent.** *Change* `g
 association … --on Comment --to Note`, `--yields` a hidden alias for one
@@ -445,7 +578,8 @@ crawler.jdl` is a copy and one `sync`; `examples/*/.jails/app.toml` become
 *Done when* `new --app` accepts a `.jdl`, the examples carry one, and
 `app.toml` is refused by name like `model.toml`.
 
-**I71.19 — an LSP for the model (prototype).** `jails editor` already
+**I71.19 — an LSP for the model (prototype).** *Change* add `jails lsp`,
+a Language Server Protocol server over stdio. `jails editor` already
 emits diagnostics and symbols as versioned JSON in 5 ms. A `jails lsp`
 over stdio gives every editor completion of the closed sets, hover from
 `explain`, spans from I71.11, go-to-generated-file from the artifact id;
@@ -524,6 +658,37 @@ names: in messages `entity` 213 times, `resource` 129, `scaffold` 18. No
 report uses colour or `NO_COLOR`; a 23-line file list and a two-line
 refusal look alike.
 
+### After
+
+One report shape for every mutation, the same value in JSON:
+
+```
+$ jails g scaffold Note id:uuid@pk title:string! body:string?
+  .jails/model.jdl
++ entity Note {
++   use scaffold
++   id:    uuid   @pk
++   title: string @notBlank
++   body:  string?
++ }
+create  src/main/java/com/example/notes/domain/Note.java
+create  src/main/java/com/example/notes/repository/NoteRepository.java
+… (15 more)
+patch   pom.xml
+17 created, 1 patched, 3 unchanged
+note    Note has no table: this project declares `storage none`; `jails add db` gives it one
+
+$ jails --output json g scaffold Note …
+{"status":"applied","model":{"hunk":"+ entity Note {…"},"files":[{"op":"create","path":"src/main/java/…/Note.java"},…],"notes":[…]}
+```
+
+The note prints once, at the moment it becomes true, and never again.
+`jails new` names every file it wrote and ends with `next: cd notes &&
+jails g scaffold …`. `model explain Note` prints the five rows about
+`Note`. A refusal is always *fact, fix, nothing was written*, and every
+`fix:` names a command or a file. `canonical`, `semantic`, `exact` and
+`authenticated prepared transaction` appear nowhere.
+
 ### Change
 
 **I70.12 — say a warning once.** *Change* `storage-absent` (and the
@@ -549,7 +714,9 @@ writes; the per-command `--json` is a hidden alias for one release. *Done
 when* no row carries `--json` and `jails --output json g record X a:long |
 jq '.files | length'` equals the human list length.
 
-**I70.6 — an entity called `Note` must not read as a label.** *Done when*
+**I70.6 — an entity called `Note` must not read as a label.** *Change*
+print `nothing to do: the project already matches the model` and keep the
+entity name in the plan line, where it already is. *Done when*
 no report line begins with an identifier followed by a colon.
 
 **I70.7 — `"sample-bodie"`.** *Change* snake-case the name and stop. *Done
@@ -566,9 +733,10 @@ line for the project, one per file the reader did not name, one `next:`
 line; `apply.lock` removed at the end of a successful `new`. *Done when*
 the creation report names every file outside `src/` and `pom.xml`.
 
-**I70.21 — `about` speaks the project's language.** *Done when* the
-single-module `about` fits in five lines and prints reactor rows only for
-a reactor.
+**I70.21 — `about` speaks the project's language.** *Change* print
+`Reactor` and `Modules` rows only when there is more than one module, and
+say *project* otherwise. *Done when* the single-module `about` fits in
+five lines.
 
 **I70.4 — one "not a project" refusal.** *Change* one message with one fix
 line, decided in `model_command::root` where the one walk is. *Done when*
@@ -583,11 +751,15 @@ lines it needs; a gate scans `fix:` lines the way
 scans commands. *Done when* `grep -rn 'declared under \`\[' src crates`
 is empty and the gate is green.
 
-**I71.42 — a broker's exception is a refusal.** *Done when* `kafka lag` on
-a group that has not committed says so in one sentence and exits non-zero.
+**I71.42 — a broker's exception is a refusal.** *Change* `kafka lag`
+recognises `GroupIdNotFoundException` and answers *no consumer group
+`<name>` has committed yet; run the application once*, exit 1; any other
+broker exception is a refusal carrying its first line. *Done when* the
+`lag` line on a fresh group is one sentence and the exit code is non-zero.
 
-**I71.32 — a probe that fails is not `ok`.** *Done when* `doctor`'s `psql
-executable` row reads `warn` with the error.
+**I71.32 — a probe that fails is not `ok`.** *Change* an executable row
+whose `--version` probe fails reports `warn` with the probe's error and a
+fix line. *Done when* the `psql executable` row reads `warn`.
 
 **I71.9 — one noun.** *Change* `entity` for the thing and `scaffold` for
 the facet, in help and messages; `jails resource …` keeps working with
@@ -644,6 +816,34 @@ field completes nothing, although every one of those is a closed set
 jails knows and `editor complete` answers in 4 ms. `testd` prints *a
 compatibility alias* on every call. Bare `jails` prints clap's usage.
 
+### After
+
+```
+$ jails --help
+jails — Spring Boot and Maven projects from one model
+
+Change the project
+  new        Create a project                      g          Generate from a kind
+  add        Add a capability                      remove     Take one out
+  set        Set a property                        destroy    Remove a generated thing
+  rename     Rename an entity                      entity     Inspect or evolve an entity
+  sync       Make the project match the model
+
+Run and ask
+  run  test  check  build  start  stop             doctor  why  explain  routes  beans
+
+Global options
+  --pretend   Write nothing; show the plan          --yes      Answer every prompt yes
+  --output    human | json                          --plan-out / --plan-in   Save or apply a plan file
+
+`jails commands` lists everything, tooling and protocol commands included.
+```
+
+`jails g scaffold --help` explains scaffold and lists the flags scaffold
+takes. `jails destroy scaffold Note` asks, `--yes` answers, and JSON
+without `--yes` refuses. `jails test --pretend` refuses in 5 ms. `<TAB>`
+completes kinds, capabilities, entities, fields and markers.
+
 ### Change
 
 **I70.19 and I70.20 — one spelling per verb, and consent is `--yes`.**
@@ -654,9 +854,11 @@ then go; `g field` leaves the kind list. *Done when* `jails commands
 kind, and `destroy` and `remove db` name the exact command in their
 refusals.
 
-**I71.35 — JSON has no shortcut past consent.** *Done when* `jails
---output json destroy scaffold X` without `--yes` deletes nothing and
-returns `status: refused`.
+**I71.35 — JSON has no shortcut past consent.** *Change* the consent check
+runs before the output encoding is chosen; without `--yes` and without a
+terminal to ask, every encoding refuses, JSON with `status: refused` in
+the envelope. *Done when* `jails --output json destroy scaffold X`
+without `--yes` deletes nothing.
 
 **I71.6 — `--pretend` refuses where it means nothing.** *Change* on `test`,
 `run`, `check`, `build`, `clean`, `mvn`, `gradle`, `console`, `bench`,
@@ -684,8 +886,9 @@ the frontends already refuse a flag that does not apply. *Done when*
 `jails g scaffold --help` is under 40 lines and names `--index`, `--path`,
 `--timestamps`.
 
-**I71.30 — `explain` knows capabilities.** *Done when* `jails explain db`
-prints an entry, checked by the same build-time test as the kinds.
+**I71.30 — `explain` knows capabilities.** *Change* one entry per
+capability in the same table as the kinds, with the build-time test
+extended to both. *Done when* `jails explain db` prints one.
 
 **I71.23 — the closed sets complete on the command line.** *Change* the
 shell completer calls `editor complete` for field types, markers, `--on`
@@ -699,12 +902,13 @@ running, the JDK row; every fact already computed, assembled without the
 version probes. *Done when* bare `jails` inside a project prints it in
 under 20 ms and outside one prints the usage.
 
-**I71.20 — agents are readers too: `jails mcp` (open question).** `AGENTS.md`
+**I71.20 — agents are readers too: `jails mcp` (prototype).** *Change* add
+`jails mcp`, a Model Context Protocol server over stdio. `AGENTS.md`
 is written for them, `commands --json` is a tool schema, `--output json`
 the wire. A Model Context Protocol server over stdio derived from the same
 clap tree runs nothing inside jails, so it is not the plugin system the
-scope bar refuses. Open: whether it exposes the whole tree or I70.8's
-twenty words.
+scope bar refuses. Expose I70.8's twenty words plus `commands` and
+`explain`; an agent that needs the protocol commands has the CLI.
 
 ---
 
@@ -771,12 +975,16 @@ the project's digest). *Done when* the refusal names the byte count and no
 stack trace prints.
 
 **I71.31 — one path style.** *Change* resource paths derive from the same
-plural as the table and spell it with hyphens (`/crawl-runs`). *Done when*
+plural as the table and spell it with hyphens (`/crawl-runs`), through a
+second `DerivedValue` role so `model explain` shows it; an existing
+project keeps its paths through `use scaffold(path: …)`, which `rename`
+already writes. *Done when*
 `jails routes` on the crawler prints no path with `_`.
 
-**I71.33 — README's measurements name their subject.** *Done when* the
-testd and `--fast` numbers say which project and tests they were taken on
-and carry the §1 caveat until I71.24 closes.
+**I71.33 — README's measurements name their subject.** *Change* the testd
+and `--fast` paragraphs say which project and which tests their numbers
+were taken on, and carry the §1 caveat until I71.24 closes. *Done when*
+README line 936 names the project.
 
 ---
 
@@ -874,7 +1082,8 @@ the edited source equals the source on disk and the lock's model digest
 matches, answer before capture. *Done when* the repeat scaffold is 5 ms.
 
 **I71.1 — `model explain` and `resource status` read the model, not the
-tree.** *Done when* both show under 30 `openat` at a hundred entities and
+tree.** *Change* both answer from `AppModel` and the lock's path list and
+never call capture. *Done when* both show under 30 `openat` at a hundred entities and
 finish under 20 ms.
 
 **I71.2 — a manifest replay is one capture.** *Change* link every row into
@@ -883,7 +1092,8 @@ replay costs what one `model plan` costs (211 ms on the crawler).
 
 **I70.24 — `doctor` under 100 ms warm.** *Change* run the three version
 probes concurrently and cache each under `.jails/run/` keyed by the
-executable's path and mtime.
+executable's path and mtime. *Done when* the second `doctor` in a minute
+is under 100 ms.
 
 **I71.22 — the second `jails run` skips Maven (prototype).** *Change* on a
 tree whose classes are newer than its sources, `java -cp` the main class
