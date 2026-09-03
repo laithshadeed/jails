@@ -6,6 +6,11 @@ use super::*;
 /// files under `.jails/generated/<set>/<kind>`, a lock naming them there, and
 /// the marked source-root block in the pom.
 fn age(root: &Path) -> Vec<(String, String)> {
+    // **An old project has an old lock**, which is one that carries the
+    // merge base inline rather than as a tree of files beside it. Aging the
+    // paths without aging the shape would be a project no release ever
+    // wrote.
+    downgrade_lock_to_v4(root, false);
     let lock_path = root.join(".jails/compiler.lock.json");
     let mut lock: serde_json::Value =
         serde_json::from_slice(&fs::read(&lock_path).unwrap()).unwrap();

@@ -777,6 +777,9 @@ fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
             ".gitignore",
             "app.toml",
             "apply.lock",
+            // The merge base, one file per managed path: what the next
+            // compile diffs against, and what makes a merge a merge.
+            "base",
             "compiler.lock.json",
             "model.jdl",
             // One run's scratch: the executor's lock lives beside it and the

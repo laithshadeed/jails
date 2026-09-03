@@ -211,6 +211,22 @@ pub fn relocate(
         after: lock_after,
     });
 
+    // **The merge base moves with the tree it is the base for.** Its paths
+    // are the managed paths, so a relocation that rewrote the lock and left
+    // `.jails/base` at the old ones would leave the next compile diffing
+    // against files it could not find.
+    let base_before = crate::materialize::base_tree(projection, &mut blobs)?;
+    let base_after = crate::materialize::base_tree(&relocated, &mut blobs)?;
+    let base_before_id = tree_id(&base_before)?;
+    let base_after_id = tree_id(&base_after)?;
+    if base_before_id != base_after_id {
+        operations.push(PlannedOperation::PublishMergedTree {
+            root: crate::capture::project_path(crate::capture::BASE_ROOT)?,
+            before: Some(base_before_id.clone()),
+            after: base_after_id.clone(),
+        });
+    }
+
     let input = PlanInput::reconcile();
     let summary = SemanticPlan {
         model_nodes: accepted_model.node_count(),
@@ -234,6 +250,8 @@ pub fn relocate(
     let mut trees = BTreeMap::new();
     trees.insert(tree_id(&before)?, before);
     trees.insert(tree_id(&after)?, after);
+    trees.insert(base_before_id, base_before);
+    trees.insert(base_after_id, base_after);
     let bundle = PlanBundle {
         schema: crate::materialize::BUNDLE_SCHEMA.to_string(),
         plan,

@@ -42,13 +42,24 @@ mod authoring_source;
 use authoring_source::publish_authoring_source;
 
 mod lock;
+pub(crate) use lock::base_tree;
 pub(crate) use lock::encode_compiler_lock;
 use lock::materialize_compiler_lock;
 
 /// **v4 is v3 with the projection's bytes as text.** The number is what
 /// makes a client from the previous release refuse the file rather than
 /// look for an array, find a string, and infer an empty merge base.
-const COMPILER_LOCK_SCHEMA: &str = "jails.compiler-lock.v4";
+const COMPILER_LOCK_SCHEMA: &str = "jails.compiler-lock.v5";
+
+/// Where the merge base lives, one file per managed path.
+///
+/// **The lock names the base; the base is a tree of files.** Every managed
+/// file's accepted bytes used to sit inside the lock's JSON, which made it
+/// 1.38× the source tree it described on a hundred-file project and a single
+/// opaque blob to git. As files they are byte-identical to what they
+/// describe, so git stores no new objects for them, a base diff is per file,
+/// and a merge is a merge rather than a conflict inside one enormous line.
+pub(crate) const BASE_ROOT: &str = ".jails/base";
 
 #[derive(Serialize)]
 struct CompilerLock<'a> {
@@ -57,7 +68,14 @@ struct CompilerLock<'a> {
     model_digest: ContentDigest,
     model: &'a jails_model::AppModel,
     projection_digest: ContentDigest,
-    projection: &'a jails_contracts::RenderedTree,
+    /// What the merge base is, without what it holds.
+    ///
+    /// One row per managed path: the file's kind, mode and provenance, and
+    /// the digest of the bytes that are beside it under [`BASE_ROOT`]. The
+    /// bytes are how the reader rebuilds the projection, and
+    /// `projection_digest` above -- still a digest of the form `serde`
+    /// derives -- is how they are checked against what this lock accepted.
+    base: lock::BaseManifest<'a>,
     /// Every migration published so far, sealed by content.
     ///
     /// Carried forward rather than recomputed: the point is to record what was
@@ -171,6 +189,37 @@ pub fn materialize(
             .entry(path.clone())
             .or_insert(jails_contracts::FilePrecondition::Missing);
     }
+    // **The merge base is published as a tree, beside the one it is the base
+    // for.** Its entries are the *accepted* bytes at `.jails/base/<path>`,
+    // which are what the next compile diffs against -- not the merged bytes
+    // above, which carry the reader's edits. One operation covers writes,
+    // rewrites and the deletions a retired path needs, and the executor
+    // publishes it under the same lock as everything else.
+    let accepted_base = lock::base_tree(&draft.generated, &mut blobs)?;
+    let accepted_base_before = snapshot
+        .accepted_projection
+        .as_ref()
+        .map(|projection| lock::base_tree(projection, &mut blobs))
+        .transpose()?;
+    let base_after_id = tree_id(&accepted_base)?;
+    let base_before_id = match &accepted_base_before {
+        Some(tree) if !tree.entries.is_empty() => Some(tree_id(tree)?),
+        _ => None,
+    };
+    let base_on_disk = accepted_base_before.as_ref().is_some_and(|tree| {
+        tree.entries
+            .keys()
+            .all(|path| snapshot.files.contains_key(path))
+    });
+    let base_is_current = base_on_disk && accepted_base_before.as_ref() == Some(&accepted_base);
+    // A model that renders nothing has no base to publish, and publishing an
+    // empty tree over an absent one is an operation that does nothing.
+    let nothing_to_base = accepted_base.entries.is_empty() && base_before_id.is_none();
+    if let (Some(id), Some(tree)) = (&base_before_id, accepted_base_before) {
+        trees.insert(id.clone(), tree);
+    }
+    trees.insert(base_after_id.clone(), accepted_base);
+
     let mut operations = if managed_tree_changed {
         vec![PlannedOperation::PublishMergedTree {
             root: crate::capture::project_path(jails_contracts::SourceRoot::PARENT)?,
@@ -180,6 +229,21 @@ pub fn materialize(
     } else {
         Vec::new()
     };
+    // **Two ways the base needs writing, and equality only catches one.**
+    // The tree differing from the accepted one is the ordinary case. The
+    // other is a base that is not *there*: a lock from a release that kept
+    // its bytes inline decodes to exactly this projection, so the trees
+    // match and nothing would be written -- and the upgrade would leave a
+    // lock naming a base that does not exist. Capture observes every base
+    // path a v5 lock names, so a path missing from the snapshot is the
+    // answer to "is it on disk".
+    if !base_is_current && !nothing_to_base {
+        operations.push(PlannedOperation::PublishMergedTree {
+            root: crate::capture::project_path(BASE_ROOT)?,
+            before: base_before_id,
+            after: base_after_id,
+        });
+    }
     // **Only a migration jails authored whole is sealed.** A derived one
     // names the declaration it came from; `g migration` writes a comment for
     // the reader to fill in and names nothing, and sealing that would report a
@@ -970,7 +1034,7 @@ mod tests {
     #[test]
     fn the_compiler_lock_encoding_matches_its_golden() {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../tests/protocol-golden/compiler-lock-v2.json");
+            .join("../../tests/protocol-golden/compiler-lock-v5.json");
         let bundle = golden_bundle();
         let lock = bundle
             .plan
@@ -985,29 +1049,14 @@ mod tests {
                 _ => None,
             })
             .expect("the plan writes a compiler lock");
-        // **The file *contents* are elided, and only they.** A lock carries
-        // the whole accepted projection, so a verbatim golden is 380 KB of
-        // generated Java as JSON byte arrays -- and a diff nobody can read is
-        // a golden nobody reads, which is the failure this is meant to
-        // prevent rather than cause. Every struct shape survives the
-        // elision: `RenderedFile`, `Provenance`, `FileKind` and `FileMode`
-        // are all still here with their fields. What the bytes themselves say
-        // belongs in a tree golden rather than in the middle of a format one.
+        // **Nothing to elide in the base, which is the point of v5.** A lock
+        // used to carry the whole accepted projection, so a verbatim golden
+        // was 380 kB of generated Java as JSON -- and a diff nobody can read
+        // is a golden nobody reads. The base is a manifest now: one row per
+        // path with its kind, mode, provenance and digest, and the bytes are
+        // files beside it. Every struct shape is here, at a size a reader can
+        // check.
         let mut parsed: serde_json::Value = serde_json::from_slice(lock).unwrap();
-        if let Some(files) = parsed
-            .get_mut("projection")
-            .and_then(|projection| projection.get_mut("files"))
-            .and_then(serde_json::Value::as_object_mut)
-        {
-            for file in files.values_mut() {
-                for key in ["bytes", "text"] {
-                    if let Some(bytes) = file.get_mut(key) {
-                        let length = super::elided_length(bytes);
-                        *bytes = serde_json::json!(format!("<{length} bytes elided>"));
-                    }
-                }
-            }
-        }
         // A sealed migration's bytes are elided for the same reason, and the
         // digest beside them in `migrations` is what this golden is about.
         if let Some(sealed) = parsed
@@ -1026,7 +1075,7 @@ mod tests {
             return;
         }
         let expected = std::fs::read_to_string(&fixture)
-            .expect("tests/protocol-golden/compiler-lock-v2.json is checked in");
+            .expect("tests/protocol-golden/compiler-lock-v5.json is checked in");
         assert_eq!(
             encoded, expected,
             "the compiler lock encoding changed.\n       \
@@ -1240,7 +1289,8 @@ mod tests {
             Restore::Refuse,
         )
         .unwrap();
-        assert_eq!(bundle.plan.operations.len(), 2);
+        // Three: the managed tree, the merge base beside it, and the lock.
+        assert_eq!(bundle.plan.operations.len(), 3);
         assert!(matches!(
             bundle.plan.operations.last(),
             Some(PlannedOperation::ReplaceStateFile { path, .. })

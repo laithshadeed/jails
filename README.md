@@ -82,6 +82,16 @@ jails model fmt [--check]
 jails sync
 ```
 
+`.jails/` holds four things and nothing else: `model.jdl` and `app.toml`, the
+input; `compiler.lock.json`, what the last applied plan accepted; `base/`,
+the merge base that lock names, one file per managed path holding exactly the
+bytes the next generation diffs against; and two scratch entries a
+`.gitignore` keeps out of every commit. The base is byte-identical to the
+files it is the base for, so git stores no new object for it -- a hundred-file
+project commits 222 files as 122 blobs -- and `.gitattributes` marks it
+`-diff` while leaving the merge alone, because a per-file conflict there is
+the one conflict worth seeing.
+
 Every diagnostic these print names the model node it is about
 (`$.entities.note.fields.title.type`) and, where the document declared one,
 the line it was written on: `at .jails/model.jdl:36:9` on its own line under

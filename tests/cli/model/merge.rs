@@ -209,25 +209,20 @@ fn compiler_upgrade_uses_the_exact_accepted_projection_as_merge_base() {
     fs::write(&generated, live).unwrap();
 
     let lock_path = root.join(".jails/compiler.lock.json");
+    // **The merge base is a file, so an older emitter's output is written
+    // as one.** `reseal_base` then makes the lock say exactly what is there,
+    // which is what capture checks on the way in.
+    let generated_path = "src/main/java/com/example/notes/domain/Task.java";
+    fs::write(
+        root.join(".jails/base").join(generated_path),
+        old_projection.as_bytes(),
+    )
+    .unwrap();
     let mut lock: serde_json::Value =
         serde_json::from_slice(&fs::read(&lock_path).unwrap()).unwrap();
-    // The file records a managed file's bytes as the text they are; the type
-    // decodes from the form `serde` derives, which is also the digest's
-    // preimage below. The reader does the same on the way in.
-    let mut projection: jails_contracts::RenderedTree =
-        serde_json::from_value(lock["projection"].clone()).unwrap();
-    let generated_path =
-        jails_contracts::ProjectPath::parse("src/main/java/com/example/notes/domain/Task.java")
-            .unwrap();
-    projection.files.get_mut(&generated_path).unwrap().bytes = old_projection.into_bytes();
-    let projection_bytes = serde_json::to_vec(&projection).unwrap();
     lock["compiler"] = serde_json::Value::String("0.0.0-previous-emitter".to_string());
-    lock["projection_digest"] = serde_json::Value::String(format!(
-        "sha256:{}",
-        jails_support::hex(&jails_support::sha256(&projection_bytes))
-    ));
-    lock["projection"] = serde_json::to_value(projection).unwrap();
     fs::write(&lock_path, serde_json::to_vec_pretty(&lock).unwrap()).unwrap();
+    reseal_base(&root);
 
     let evolved = jails_cmd(&root, None)
         .args(["g", "field", "Task", "done:boolean"])

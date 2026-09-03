@@ -25,11 +25,10 @@
 
 use jails_contracts::{
     CapturedFile, ContentDigest, DirectoryPrecondition, FilePrecondition, Layout, MigrationHistory,
-    MigrationRecord, ProjectPath, RenderedTree, SnapshotPreconditions, WorkspaceSnapshot,
+    MigrationRecord, ProjectPath, SnapshotPreconditions, WorkspaceSnapshot,
 };
 use jails_model::{AppModel, Diagnostic};
 use jails_support::{hex, sha256};
-use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -42,6 +41,11 @@ pub const MIGRATION_ROOT: &str = "src/main/resources/db/migration";
 const READER_MAIN_ROOT: &str = "src/main/java";
 const READER_TEST_ROOT: &str = "src/test/java";
 pub const COMPILER_LOCK: &str = ".jails/compiler.lock.json";
+
+mod lock;
+
+use lock::accepted_compiler_state;
+pub use lock::{BASE_ROOT, base_path};
 
 /// A canonical project path this phase built, or the diagnostic that it is
 /// not one.
@@ -87,102 +91,6 @@ pub fn refused_io(verb: &str, at: &Path, error: impl std::fmt::Display) -> Diagn
 /// readers of it: the capture, and the `ProjectFacts` every command resolves.
 pub(crate) fn layout_invalid(message: String) -> Diagnostic {
     Diagnostic::without_a_fix("workspace-layout-invalid", "jails.toml", message)
-}
-
-fn lock_undecodable(error: impl std::fmt::Display) -> Diagnostic {
-    Diagnostic::without_a_fix(
-        "workspace-lock-undecodable",
-        COMPILER_LOCK,
-        format!("could not decode `{COMPILER_LOCK}`: {error}"),
-    )
-}
-
-fn lock_unverifiable(error: impl std::fmt::Display) -> Diagnostic {
-    Diagnostic::without_a_fix(
-        "workspace-lock-unverifiable",
-        COMPILER_LOCK,
-        format!("could not verify `{COMPILER_LOCK}`: {error}"),
-    )
-}
-
-fn lock_projection_mismatch() -> Diagnostic {
-    Diagnostic::new(
-        "workspace-lock-projection-mismatch",
-        COMPILER_LOCK,
-        format!("compiler lock `{COMPILER_LOCK}` does not match the generated tree it accepted"),
-        "restore a known-good lock; do not infer merge bases from generated source",
-    )
-}
-const COMPILER_LOCK_SCHEMA_V1: &str = "jails.compiler-lock.v1";
-const COMPILER_LOCK_SCHEMA_V2: &str = "jails.compiler-lock.v2";
-const COMPILER_LOCK_SCHEMA_V3: &str = "jails.compiler-lock.v3";
-/// v3's fields with the projection's bytes stored as text.
-const COMPILER_LOCK_SCHEMA_V4: &str = "jails.compiler-lock.v4";
-
-#[derive(Deserialize)]
-struct CompilerLockV1 {
-    model_digest: ContentDigest,
-    model: AppModel,
-}
-
-#[derive(Deserialize)]
-struct CompilerLockV2 {
-    compiler: String,
-    model_digest: ContentDigest,
-    model: AppModel,
-    projection_digest: ContentDigest,
-    projection: RenderedTree,
-}
-
-/// v2 plus the seal on published schema history.
-///
-/// The migration map is what makes append-only checkable: `migration_history`
-/// is read fresh from the tree, so it agrees with whatever the file says now,
-/// and only a recorded digest can say the file changed after it was published.
-#[derive(Deserialize)]
-struct CompilerLockV3 {
-    compiler: String,
-    model_digest: ContentDigest,
-    model: AppModel,
-    projection_digest: ContentDigest,
-    projection: RenderedTree,
-    #[serde(default)]
-    migrations: BTreeMap<ProjectPath, ContentDigest>,
-    /// The published bytes, so an edited migration can be put back.
-    ///
-    /// `#[serde(default)]` rather than a fourth lock schema: a lock written
-    /// before this existed still decodes and still verifies, and the only
-    /// thing it cannot do is restore a migration -- which is exactly what it
-    /// could not do before either.
-    #[serde(default, deserialize_with = "migration_bytes")]
-    migration_bytes: BTreeMap<ProjectPath, Vec<u8>>,
-}
-
-/// The migrations map, whichever shape the lock stores its values in.
-///
-/// The same reason as [`jails_contracts::bytes_field`]: the values are file
-/// bytes and the lock writes them as text.
-fn migration_bytes<'de, D>(deserializer: D) -> Result<BTreeMap<ProjectPath, Vec<u8>>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    #[derive(serde::Deserialize)]
-    struct Entry(#[serde(deserialize_with = "jails_contracts::bytes_field::deserialize")] Vec<u8>);
-
-    let raw = BTreeMap::<ProjectPath, Entry>::deserialize(deserializer)?;
-    Ok(raw
-        .into_iter()
-        .map(|(path, Entry(bytes))| (path, bytes))
-        .collect())
-}
-
-#[derive(Debug)]
-struct AcceptedCompilerState {
-    model: AppModel,
-    projection: Option<RenderedTree>,
-    compiler: Option<String>,
-    migrations: BTreeMap<ProjectPath, ContentDigest>,
-    migration_bytes: BTreeMap<ProjectPath, Vec<u8>>,
 }
 
 /// Whether the model file is expected on disk when the plan runs.
@@ -362,7 +270,7 @@ fn capture_model_state(
     // cannot be named in the plan, and stays behind importing a class the same
     // transition deletes.
     capture_optional_file(root, COMPILER_LOCK, &mut files, &mut preconditions)?;
-    let accepted = accepted_compiler_state(&files)?;
+    let accepted = accepted_compiler_state(root, &mut files, &mut preconditions)?;
     let managed = accepted
         .as_ref()
         .and_then(|state| state.projection.as_ref())
@@ -496,10 +404,12 @@ pub fn managed_paths(root: &Path) -> Result<BTreeSet<ProjectPath>, Diagnostic> {
     let mut files = BTreeMap::new();
     let mut preconditions = SnapshotPreconditions::default();
     capture_optional_file(root, COMPILER_LOCK, &mut files, &mut preconditions)?;
-    Ok(accepted_compiler_state(&files)?
-        .and_then(|state| state.projection)
-        .map(|projection| projection.files.into_keys().collect())
-        .unwrap_or_default())
+    Ok(
+        accepted_compiler_state(root, &mut files, &mut preconditions)?
+            .and_then(|state| state.projection)
+            .map(|projection| projection.files.into_keys().collect())
+            .unwrap_or_default(),
+    )
 }
 
 /// Every Java type the reader's own sources declare, by simple name.
@@ -521,6 +431,15 @@ fn index_reader_types(
     let mut index = jails_contracts::ExternalTypeIndex::default();
     for (path, file) in files {
         if !path.as_str().ends_with(".java") {
+            continue;
+        }
+        // **`.jails/` is jails' own record, not anybody's source.** The
+        // merge base is one exact copy of every managed file, so counting it
+        // answers "does this type exist" with a file that is about to stop
+        // existing -- `destroy enum Status` would succeed while an entity
+        // still declares a `Status` field, which is the failure the comment
+        // below is about, arriving through a different door.
+        if path.as_str().starts_with(".jails/") {
             continue;
         }
         // **The reader's sources only.** The managed files are what the plan
@@ -652,91 +571,6 @@ fn capture_migration_history(
         .collect::<Result<Vec<_>, _>>()?;
     records.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(MigrationHistory { records })
-}
-
-fn accepted_compiler_state(
-    files: &BTreeMap<ProjectPath, CapturedFile>,
-) -> Result<Option<AcceptedCompilerState>, Diagnostic> {
-    files
-        .get(&project_path(COMPILER_LOCK)?)
-        .map(|file| decode_compiler_lock(&file.bytes))
-        .transpose()
-}
-
-fn decode_compiler_lock(bytes: &[u8]) -> Result<AcceptedCompilerState, Diagnostic> {
-    let header: serde_json::Value = serde_json::from_slice(bytes).map_err(lock_undecodable)?;
-    // **Either shape decodes straight into the type.** A v4 lock stores a
-    // generated file's bytes as text and every earlier one stores an array of
-    // integers; `jails_contracts::bytes_field` reads both, so neither is
-    // rewritten into the other on the way in. What the verification below
-    // digests is still the one form `serde` derives, so a lock from any
-    // release is checked under one rule.
-    let schema = header
-        .get("schema")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default();
-    match schema {
-        COMPILER_LOCK_SCHEMA_V1 => {
-            let lock: CompilerLockV1 = serde_json::from_value(header).map_err(lock_undecodable)?;
-            verify_model(&lock.model, &lock.model_digest)?;
-            Ok(AcceptedCompilerState {
-                model: lock.model,
-                projection: None,
-                compiler: None,
-                migrations: BTreeMap::new(),
-                migration_bytes: BTreeMap::new(),
-            })
-        }
-        COMPILER_LOCK_SCHEMA_V2 => {
-            let lock: CompilerLockV2 = serde_json::from_value(header).map_err(lock_undecodable)?;
-            verify_model(&lock.model, &lock.model_digest)?;
-            let projection = serde_json::to_vec(&lock.projection).map_err(lock_unverifiable)?;
-            if digest(&projection)? != lock.projection_digest {
-                return Err(lock_projection_mismatch());
-            }
-            Ok(AcceptedCompilerState {
-                model: lock.model,
-                projection: Some(lock.projection),
-                compiler: Some(lock.compiler),
-                migrations: BTreeMap::new(),
-                migration_bytes: BTreeMap::new(),
-            })
-        }
-        COMPILER_LOCK_SCHEMA_V3 | COMPILER_LOCK_SCHEMA_V4 => {
-            let lock: CompilerLockV3 = serde_json::from_value(header).map_err(lock_undecodable)?;
-            verify_model(&lock.model, &lock.model_digest)?;
-            let projection = serde_json::to_vec(&lock.projection).map_err(lock_unverifiable)?;
-            if digest(&projection)? != lock.projection_digest {
-                return Err(lock_projection_mismatch());
-            }
-            Ok(AcceptedCompilerState {
-                model: lock.model,
-                projection: Some(lock.projection),
-                compiler: Some(lock.compiler),
-                migrations: lock.migrations,
-                migration_bytes: lock.migration_bytes,
-            })
-        }
-        other => Err(Diagnostic::new(
-            "workspace-lock-schema-unsupported",
-            COMPILER_LOCK,
-            format!("unsupported compiler lock `{other}`"),
-            format!("regenerate `{COMPILER_LOCK}` with this version of jails"),
-        )),
-    }
-}
-
-fn verify_model(model: &AppModel, expected: &ContentDigest) -> Result<(), Diagnostic> {
-    let actual = digest(&model.canonical_json().map_err(lock_unverifiable)?)?;
-    if &actual != expected {
-        return Err(Diagnostic::new(
-            "workspace-lock-model-mismatch",
-            COMPILER_LOCK,
-            format!("compiler lock `{COMPILER_LOCK}` does not match its accepted model"),
-            "restore a known-good lock; do not infer merge bases from generated source",
-        ));
-    }
-    Ok(())
 }
 
 pub fn observe_directory(
@@ -897,80 +731,4 @@ fn executable(metadata: &std::fs::Metadata) -> bool {
 #[cfg(not(unix))]
 fn executable(_metadata: &std::fs::Metadata) -> bool {
     false
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    /// An app block and nothing else: the lock tests need a model, not a tree.
-    const MODEL: &str = "jdl 1\n\napp Notes @id(project_notes) {\n  pkg com.example.notes\n  \
-         java 26\n  platform spring\n  build maven\n  storage none\n}\n";
-
-    #[test]
-    fn v1_lock_remains_a_one_way_upgrade_input() {
-        let model = jails_model::parse_jdl(MODEL).unwrap();
-        let model_digest = digest(&model.canonical_json().unwrap()).unwrap();
-        let bytes = serde_json::to_vec(&json!({
-            "schema": COMPILER_LOCK_SCHEMA_V1,
-            "model_digest": model_digest,
-            "model": model,
-        }))
-        .unwrap();
-
-        let accepted = decode_compiler_lock(&bytes).unwrap();
-        assert!(accepted.projection.is_none());
-        assert!(accepted.compiler.is_none());
-
-        // ... and a lock whose model does not match its digest is refused
-        // rather than trusted, which is the property the digest is for.
-        let mut tampered: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        tampered["model_digest"] =
-            json!("sha256:0000000000000000000000000000000000000000000000000000000000000000");
-        let error = decode_compiler_lock(&serde_json::to_vec(&tampered).unwrap())
-            .expect_err("a lock that disagrees with its own digest must refuse");
-        assert!(error.to_string().contains("compiler.lock"), "{error}");
-    }
-
-    #[test]
-    fn v2_lock_refuses_a_projection_that_does_not_match_its_digest() {
-        let model = jails_model::parse_jdl(MODEL).unwrap();
-        let model_digest = digest(&model.canonical_json().unwrap()).unwrap();
-        let projection = RenderedTree::new();
-        let projection_digest = digest(&serde_json::to_vec(&projection).unwrap()).unwrap();
-        let mut damaged = projection;
-        damaged.files.insert(
-            project_path("src/main/java/Damaged.java").unwrap(),
-            jails_contracts::RenderedFile {
-                kind: jails_contracts::FileKind::JavaMain,
-                mode: jails_contracts::FileMode::Regular,
-                bytes: Vec::new(),
-                provenance: jails_contracts::Provenance {
-                    artifact_id: "art_damaged".to_string(),
-                    semantic_ids: BTreeSet::new(),
-                    ejection_id: None,
-                    ejectable: false,
-                    compiler_pass: String::new(),
-                },
-            },
-        );
-        let bytes = serde_json::to_vec(&json!({
-            "schema": COMPILER_LOCK_SCHEMA_V2,
-            "compiler": "0.1.0",
-            "model_digest": model_digest,
-            "model": model,
-            "projection_digest": projection_digest,
-            "projection": damaged,
-        }))
-        .unwrap();
-
-        let error = decode_compiler_lock(&bytes).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("does not match the generated tree"),
-            "{error}"
-        );
-    }
 }

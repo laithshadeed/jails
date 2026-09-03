@@ -221,6 +221,26 @@ pub(crate) fn preview(bundle: &jails_contracts::PlanBundle) -> Delta {
                 before,
                 after,
             } => {
+                // **The merge base is state, and the lock's line stands for
+                // it.** It is one file per managed path holding exactly the
+                // accepted bytes, so listing it doubles every report: a
+                // scaffold's ten files become twenty, half of them a copy of
+                // the other half under `.jails/base`. What changed is the
+                // files above; that the acceptance was recorded is what
+                // `.jails/compiler.lock.json` on its own line already says.
+                // **The merge base is state, and the lock's line stands for
+                // it.** It is one file per managed path holding exactly the
+                // accepted bytes, so a line each doubles every report: a
+                // scaffold's ten files become twenty, half of them a copy of
+                // the other half. A summary line was tried and withdrawn --
+                // it has no path, and every other entry in this list is one,
+                // in the JSON as much as on the screen. What changed is the
+                // files above; that the acceptance was recorded is what
+                // `.jails/compiler.lock.json` on its own line already says,
+                // and `.gitattributes` tells git not to diff the copies.
+                if root.as_str() == jails_project::capture::BASE_ROOT {
+                    continue;
+                }
                 let entries = |digest: Option<&jails_contracts::ContentDigest>| {
                     digest
                         .and_then(|digest| bundle.trees.get(digest))

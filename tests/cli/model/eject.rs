@@ -12,7 +12,7 @@ use super::*;
 fn lock_names(root: &Path, relative: &str) -> bool {
     let lock = fs::read_to_string(root.join(".jails/compiler.lock.json")).unwrap();
     let lock: serde_json::Value = serde_json::from_str(&lock).unwrap();
-    lock["projection"]["files"]
+    lock["base"]["files"]
         .as_object()
         .is_some_and(|files| files.contains_key(relative))
 }

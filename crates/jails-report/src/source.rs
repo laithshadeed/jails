@@ -121,10 +121,13 @@ fn collect(dir: &Path, type_name: &str, out: &mut Vec<Found>) {
             let path = entry.path();
             if path.is_dir() {
                 // A build output directory holds generated copies of sources
-                // that are already on this list, so it would double every hit.
+                // that are already on this list, so it would double every
+                // hit. `.jails` is the same shape for the same reason: the
+                // merge base under it is one exact copy of every managed
+                // file.
                 if !matches!(
                     path.file_name().and_then(|n| n.to_str()),
-                    Some("target" | "build" | ".git")
+                    Some("target" | "build" | ".git" | ".jails")
                 ) {
                     stack.push(path);
                 }

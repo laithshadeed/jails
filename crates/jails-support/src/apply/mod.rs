@@ -373,10 +373,14 @@ run/
 /// the repository root is the reader's, and jails does not edit files it does
 /// not own.
 const STATE_GITATTRIBUTES: &str = "\
-# Written by jails. The lock is one exact copy of every managed file: git
-# should neither diff it nor try to merge it. On a conflict, keep either
-# side and run `jails sync`.
+# Written by jails. The lock is what the last plan accepted: git should
+# neither diff it nor try to merge it. On a conflict, keep either side and
+# run `jails sync`.
 compiler.lock.json -diff merge=binary
+# The merge base is an exact copy of every managed file, so a diff of it is
+# the diff of those files twice. Git still *merges* it -- per file, which is
+# what makes a conflict here the one conflict worth seeing.
+base/** -diff
 ";
 
 /// Mark jails' scratch as scratch, from inside `.jails/`.

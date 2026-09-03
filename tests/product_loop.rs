@@ -2237,7 +2237,11 @@ fn java_artifacts_named(root: &Path, name: &str) -> Vec<PathBuf> {
     snapshot(root)
         .into_keys()
         .filter(|path| {
-            path.extension() == Some(OsStr::new("java"))
+            // `.jails/` is jails' own record: the merge base under it is one
+            // exact copy of every managed file, so counting it answers
+            // "where did this land" with the same file twice.
+            !path.starts_with(".jails")
+                && path.extension() == Some(OsStr::new("java"))
                 && path
                     .file_name()
                     .is_some_and(|file_name| file_name.to_string_lossy().contains(name))
@@ -2480,6 +2484,12 @@ fn walk_java(root: &Path) -> Vec<String> {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
+                // Not jails' own record: the merge base under `.jails` is one
+                // exact copy of every managed file, so walking it finds each
+                // of them twice.
+                if path.file_name().is_some_and(|name| name == ".jails") {
+                    continue;
+                }
                 stack.push(path);
             } else if path.extension().is_some_and(|e| e == "java") {
                 found.push(

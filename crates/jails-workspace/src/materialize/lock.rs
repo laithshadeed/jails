@@ -28,19 +28,20 @@ pub(crate) fn encode_compiler_lock(
         ))
     })?;
     let projection_digest = digest(&projection_bytes)?;
-    // **The digest above is the preimage; the bytes below are the file.**
-    // `projection_bytes` is what the reader recomputes and compares, so it
-    // stays exactly what `serde` derives and a lock written by any release
-    // verifies under one rule. What the file holds is the compact form, where
-    // a generated file's bytes are the text they are rather than four
-    // characters per byte (`jails_contracts::lock_bytes`).
+    // **The digest is over the whole tree; the file records the parts.**
+    // `projection_bytes` stays exactly what `serde` derives, so a lock
+    // written by any release is checked under one rule -- and what this file
+    // holds is one row per managed path with the digest of bytes that live
+    // beside it under `.jails/base`. A reader rebuilds the tree from those
+    // and recomputes this digest; the two halves cannot drift, because the
+    // digest is of the whole thing.
     let mut lock = serde_json::to_value(CompilerLock {
         schema: COMPILER_LOCK_SCHEMA,
         compiler,
         model_digest,
         model,
         projection_digest,
-        projection,
+        base: base_manifest(projection)?,
         migrations,
         migration_bytes,
     })
@@ -48,6 +49,76 @@ pub(crate) fn encode_compiler_lock(
     jails_contracts::lock_bytes::compact(&mut lock);
     serde_json::to_vec_pretty(&lock)
         .map_err(|error| lock_encoding(format!("could not encode compiler lock: {error}")))
+}
+
+/// The merge base as a tree of files: every managed path's accepted bytes,
+/// written under [`BASE_ROOT`].
+pub(crate) fn base_tree(
+    projection: &jails_contracts::RenderedTree,
+    blobs: &mut BTreeMap<ContentDigest, Vec<u8>>,
+) -> Result<jails_contracts::TreeManifest, Diagnostic> {
+    let mut entries = BTreeMap::new();
+    for (path, file) in &projection.files {
+        let blob = digest(&file.bytes)?;
+        blobs
+            .entry(blob.clone())
+            .or_insert_with(|| file.bytes.clone());
+        entries.insert(
+            base_path(path)?,
+            jails_contracts::TreeEntry {
+                kind: file.kind,
+                mode: file.mode,
+                blob,
+            },
+        );
+    }
+    Ok(jails_contracts::TreeManifest { entries })
+}
+
+/// `src/main/java/X.java` under the base root.
+pub(crate) fn base_path(path: &ProjectPath) -> Result<ProjectPath, Diagnostic> {
+    crate::capture::project_path(format!("{BASE_ROOT}/{path}"))
+}
+
+/// The accepted projection, as metadata plus digests.
+#[derive(Serialize)]
+pub(super) struct BaseManifest<'a> {
+    files: BTreeMap<&'a ProjectPath, BaseEntry<'a>>,
+    /// Kept inline, because a facet is a *span* of a reader-owned document
+    /// rather than a file: there is nowhere in a tree of files to put one.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    reader_facets: &'a BTreeMap<String, jails_contracts::RenderedReaderFacet>,
+}
+
+#[derive(Serialize)]
+struct BaseEntry<'a> {
+    kind: &'a jails_contracts::FileKind,
+    mode: &'a jails_contracts::FileMode,
+    provenance: &'a jails_contracts::Provenance,
+    digest: ContentDigest,
+}
+
+/// One row per managed path: what the file is, and the digest of the bytes
+/// under `.jails/base` that are it.
+fn base_manifest(
+    projection: &jails_contracts::RenderedTree,
+) -> Result<BaseManifest<'_>, Diagnostic> {
+    let mut files = BTreeMap::new();
+    for (path, file) in &projection.files {
+        files.insert(
+            path,
+            BaseEntry {
+                kind: &file.kind,
+                mode: &file.mode,
+                provenance: &file.provenance,
+                digest: digest(&file.bytes)?,
+            },
+        );
+    }
+    Ok(BaseManifest {
+        files,
+        reader_facets: &projection.reader_facets,
+    })
 }
 
 /// The lock would not serialise. One code for the three halves it is made of,

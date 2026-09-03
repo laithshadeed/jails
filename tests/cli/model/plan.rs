@@ -40,11 +40,10 @@ fn an_unchanged_lock_is_left_alone_and_an_older_schema_is_rewritten() {
     );
 
     // A lock from an earlier schema decodes to the same values and is still
-    // rewritten, because its bytes are not the ones this release writes.
-    let downgraded = String::from_utf8(accepted.clone())
-        .unwrap()
-        .replace("jails.compiler-lock.v4", "jails.compiler-lock.v3");
-    fs::write(&lock, downgraded).unwrap();
+    // rewritten, because its bytes are not the ones this release writes --
+    // and for v4 that means the merge base moves out of the file and into
+    // the tree of files beside it.
+    downgrade_lock_to_v4(&root, false);
     let migrated = jails_cmd(&root, None).arg("sync").output().unwrap();
     assert!(
         migrated.status.success(),
@@ -52,8 +51,12 @@ fn an_unchanged_lock_is_left_alone_and_an_older_schema_is_rewritten() {
         String::from_utf8_lossy(&migrated.stderr)
     );
     assert!(
-        String::from_utf8_lossy(&fs::read(&lock).unwrap()).contains("jails.compiler-lock.v4"),
+        String::from_utf8_lossy(&fs::read(&lock).unwrap()).contains("jails.compiler-lock.v5"),
         "an older schema is migrated on the next plan"
+    );
+    assert!(
+        root.join(".jails/base").is_dir(),
+        "the merge base was not rebuilt beside the lock"
     );
 }
 
@@ -181,7 +184,9 @@ fn model_plan_is_deterministic_and_writes_a_self_verifying_bundle() {
     let bundle: jails_contracts::PlanBundle =
         serde_json::from_slice(&fs::read(&first).unwrap()).unwrap();
     jails_workspace::verify_bundle(&bundle).unwrap();
-    assert_eq!(bundle.plan.operations.len(), 3);
+    // Four: the managed tree, the merge base beside it, the model file and
+    // the lock.
+    assert_eq!(bundle.plan.operations.len(), 4);
     // Fifteen: the record and its companion test, the repository port, the
     // in-memory adapter that implements it -- without which the service has a
     // port no bean satisfies -- that adapter's own test and the repository
@@ -392,13 +397,20 @@ fn preview_export_and_apply_all_name_one_plan_digest() {
 /// The lock records a generated file's bytes as text, and still reads a lock
 /// written the old way.
 ///
-/// **A byte as a JSON integer costs four characters**, and the lock is one
-/// exact copy of every managed file, so a 25 kB tree was recorded as a 446 kB
-/// lock. The digest rule did not change with the encoding -- it is still a
-/// digest of the form `serde` derives -- which is what lets a lock from the
-/// previous release verify and be rewritten in the new shape.
+/// **The lock names the merge base; the base is a tree of files.**
+///
+/// Every managed file's accepted bytes used to sit inside this JSON: a
+/// hundred-file project recorded a 249 kB source tree as a 344 kB lock, and
+/// git saw one opaque blob that changed completely whenever anything did. As
+/// files they are byte-identical to what they describe, so git stores no new
+/// object for them and a base diff is per file.
+///
+/// The digest rule did not change with the layout -- `projection_digest` is
+/// still a digest of the form `serde` derives from the whole tree, recomputed
+/// from what the base files hold -- which is what lets a lock from either
+/// earlier release verify and be rewritten in the new shape.
 #[test]
-fn the_lock_stores_managed_bytes_as_text_and_still_reads_the_old_array_form() {
+fn the_lock_names_the_merge_base_and_still_reads_the_two_older_shapes() {
     let root = model_project("model-lock-encoding", EMPTY_MODEL);
     let generated = jails_cmd(&root, None)
         .args(["g", "record", "Note", "title:string!"])
@@ -413,70 +425,48 @@ fn the_lock_stores_managed_bytes_as_text_and_still_reads_the_old_array_form() {
     let lock_path = root.join(".jails/compiler.lock.json");
     let lock: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&lock_path).unwrap()).unwrap();
-    assert_eq!(lock["schema"], "jails.compiler-lock.v4");
-    let files = lock["projection"]["files"].as_object().unwrap();
-    let note = files
+    assert_eq!(lock["schema"], "jails.compiler-lock.v5");
+    let files = lock["base"]["files"].as_object().unwrap();
+    let (path, note) = files
         .iter()
         .find(|(path, _)| path.ends_with("domain/Note.java"))
-        .map(|(_, file)| file)
-        .expect("the record is in the accepted projection");
+        .expect("the record is in the accepted base");
+    assert!(note["digest"].as_str().unwrap().starts_with("sha256:"));
     assert!(
-        note["text"]
-            .as_str()
-            .is_some_and(|text| text.contains("record Note")),
-        "the projection carries the file as text: {note}"
+        note.get("text").is_none(),
+        "one place for the bytes: {note}"
     );
-    assert!(note.get("bytes").is_none(), "one spelling: {note}");
+    assert!(
+        note.get("bytes").is_none(),
+        "one place for the bytes: {note}"
+    );
 
-    // Now the old shape, byte for byte what the previous release wrote: the
-    // same lock with `text` expanded back to an array and the schema it had.
-    let mut old = lock.clone();
-    for file in old["projection"]["files"]
-        .as_object_mut()
-        .unwrap()
-        .values_mut()
-    {
-        let object = file.as_object_mut().unwrap();
-        if let Some(text) = object
-            .remove("text")
-            .and_then(|text| text.as_str().map(str::to_string))
-        {
-            object.insert(
-                "bytes".to_string(),
-                serde_json::Value::Array(
-                    text.bytes()
-                        .map(|byte| serde_json::Value::Number(byte.into()))
-                        .collect(),
-                ),
-            );
-        }
+    // And the bytes are beside it, byte for byte what the managed file is.
+    let managed = fs::read(root.join(path)).unwrap();
+    let base = fs::read(root.join(".jails/base").join(path)).unwrap();
+    assert_eq!(managed, base, "the base is not what it is the base for");
+
+    // The two shapes before it: v4 with the bytes as text, v3 with the bytes
+    // as an array of integers. Each is what a project on that release has,
+    // built from the base tree those releases did not keep.
+    for array in [false, true] {
+        downgrade_lock_to_v4(&root, array);
+        let evolved = jails_cmd(&root, None).args(["sync"]).output().unwrap();
+        assert!(
+            evolved.status.success(),
+            "a lock in an earlier release's shape must still be readable:\n{}{}",
+            String::from_utf8_lossy(&evolved.stdout),
+            String::from_utf8_lossy(&evolved.stderr)
+        );
+        let rewritten: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&lock_path).unwrap()).unwrap();
+        assert_eq!(rewritten["schema"], "jails.compiler-lock.v5");
+        assert_eq!(
+            fs::read(root.join(".jails/base").join(path)).unwrap(),
+            managed,
+            "the base was not rebuilt from the older lock"
+        );
     }
-    old["schema"] = serde_json::Value::String("jails.compiler-lock.v3".to_string());
-    fs::write(&lock_path, serde_json::to_vec_pretty(&old).unwrap()).unwrap();
-
-    // A mutation over that project reads the old lock, merges against it, and
-    // writes the new shape back.
-    let evolved = jails_cmd(&root, None)
-        .args(["entity", "field", "add", "Note", "body:string?"])
-        .output()
-        .unwrap();
-    assert!(
-        evolved.status.success(),
-        "a lock in the previous release's shape must still be readable:\n{}{}",
-        String::from_utf8_lossy(&evolved.stdout),
-        String::from_utf8_lossy(&evolved.stderr)
-    );
-    let rewritten: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&lock_path).unwrap()).unwrap();
-    assert_eq!(rewritten["schema"], "jails.compiler-lock.v4");
-    assert!(
-        rewritten["projection"]["files"]
-            .as_object()
-            .unwrap()
-            .values()
-            .all(|file| file.get("text").is_some() || file.get("bytes").is_some()),
-        "every file carries one of the two spellings"
-    );
 }
 
 /// Every mutation prints the JDL it wrote, above the files that JDL implies.
@@ -610,6 +600,13 @@ fn every_line_of_a_mutation_report_is_a_file_git_sees_change() {
                     ".jails/apply.lock" | ".jails/.gitignore" | ".jails/.gitattributes"
                 )
             })
+            // **The merge base is one line, not one line per file.** It is
+            // an exact copy of every managed file's accepted bytes, so a
+            // line each would double every report -- ten files become
+            // twenty, half of them the other half. The `merge base` line
+            // below is what covers them, and `.gitattributes` tells git not
+            // to diff them for the same reason.
+            .filter(|path| !path.starts_with(".jails/base/"))
             .collect();
 
         assert_eq!(

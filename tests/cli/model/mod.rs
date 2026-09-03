@@ -159,3 +159,109 @@ pub fn unaligned(source: &str) -> String {
         })
         .collect()
 }
+
+/// The lock this project has, rewritten in the shape the release before v5
+/// wrote: every managed file's bytes inline, and no `.jails/base` beside it.
+///
+/// **The upgrade path is a fixture, not a story.** A lock is a file in
+/// somebody's repository, so the only honest test of "an older one still
+/// reads" is to hand the binary one -- built from the base tree it replaced,
+/// which is where those bytes now live. `array` writes them the way every
+/// release before v4 did, four characters per byte, so the oldest spelling is
+/// exercised too.
+fn downgrade_lock_to_v4(root: &Path, array: bool) {
+    let lock_path = root.join(".jails/compiler.lock.json");
+    let mut lock: serde_json::Value =
+        serde_json::from_slice(&fs::read(&lock_path).unwrap()).unwrap();
+    let base = lock["base"].as_object().expect("a v5 lock names its base");
+    let mut files = serde_json::Map::new();
+    for (path, entry) in base["files"].as_object().unwrap() {
+        let bytes = fs::read(root.join(".jails/base").join(path)).unwrap();
+        let mut file = serde_json::Map::new();
+        file.insert("kind".to_string(), entry["kind"].clone());
+        file.insert("mode".to_string(), entry["mode"].clone());
+        file.insert("provenance".to_string(), entry["provenance"].clone());
+        if array {
+            file.insert(
+                "bytes".to_string(),
+                serde_json::Value::Array(
+                    bytes
+                        .iter()
+                        .map(|byte| serde_json::Value::Number((*byte).into()))
+                        .collect(),
+                ),
+            );
+        } else {
+            file.insert(
+                "text".to_string(),
+                serde_json::Value::String(String::from_utf8(bytes).unwrap()),
+            );
+        }
+        files.insert(path.clone(), serde_json::Value::Object(file));
+    }
+    let mut projection = serde_json::Map::new();
+    projection.insert("files".to_string(), serde_json::Value::Object(files));
+    if let Some(facets) = base.get("reader_facets") {
+        projection.insert("reader_facets".to_string(), facets.clone());
+    }
+    let object = lock.as_object_mut().unwrap();
+    object.remove("base");
+    object.insert(
+        "projection".to_string(),
+        serde_json::Value::Object(projection),
+    );
+    object.insert(
+        "schema".to_string(),
+        serde_json::Value::String(
+            if array {
+                "jails.compiler-lock.v3"
+            } else {
+                "jails.compiler-lock.v4"
+            }
+            .to_string(),
+        ),
+    );
+    fs::write(&lock_path, serde_json::to_vec_pretty(&lock).unwrap()).unwrap();
+    fs::remove_dir_all(root.join(".jails/base")).unwrap();
+}
+
+/// Seal the merge base as it now stands on disk: every entry's digest, and
+/// the digest of the tree they make.
+///
+/// **The fixture for "the accepted projection was written by something
+/// else".** A test that wants an older emitter's bytes as the merge base
+/// writes them into `.jails/base` and calls this; the lock then says exactly
+/// what is there, which is what capture checks.
+fn reseal_base(root: &Path) {
+    let lock_path = root.join(".jails/compiler.lock.json");
+    let mut lock: serde_json::Value =
+        serde_json::from_slice(&fs::read(&lock_path).unwrap()).unwrap();
+    let mut projection = jails_contracts::RenderedTree::new();
+    let entries = lock["base"]["files"].as_object().unwrap().clone();
+    for (path, entry) in &entries {
+        let bytes = fs::read(root.join(".jails/base").join(path)).unwrap();
+        let digest = format!(
+            "sha256:{}",
+            jails_support::hex(&jails_support::sha256(&bytes))
+        );
+        lock["base"]["files"][path]["digest"] = serde_json::Value::String(digest);
+        projection.files.insert(
+            jails_contracts::ProjectPath::parse(path.clone()).unwrap(),
+            jails_contracts::RenderedFile {
+                kind: serde_json::from_value(entry["kind"].clone()).unwrap(),
+                mode: serde_json::from_value(entry["mode"].clone()).unwrap(),
+                bytes,
+                provenance: serde_json::from_value(entry["provenance"].clone()).unwrap(),
+            },
+        );
+    }
+    if let Some(facets) = lock["base"].get("reader_facets") {
+        projection.reader_facets = serde_json::from_value(facets.clone()).unwrap();
+    }
+    let encoded = serde_json::to_vec(&projection).unwrap();
+    lock["projection_digest"] = serde_json::Value::String(format!(
+        "sha256:{}",
+        jails_support::hex(&jails_support::sha256(&encoded))
+    ));
+    fs::write(&lock_path, serde_json::to_vec_pretty(&lock).unwrap()).unwrap();
+}

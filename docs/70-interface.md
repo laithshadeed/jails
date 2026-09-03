@@ -63,7 +63,7 @@ reopening a contract:
 | ~~2~~ | ~~I70.1, I71.13~~ | ~~the report is the delta; a manifest prints one report~~ |
 | ~~3~~ | ~~I71.35, I70.19, I70.20~~ | ~~consent is `--yes`, nothing else, and JSON has no shortcut past it~~ |
 | ~~4~~ | ~~I70.13, I71.47, I71.16~~ | ~~the model file reads like the specification's, and editing it by hand is the first path~~ |
-| 5 | I70.22, I71.3, I71.4, I71.5 | the lock is 1× the tree, a scaffold is a 20-line diff, a mutation at a hundred entities is under 100 ms |
+| ~~5~~ | ~~I70.22~~, ~~I71.3~~, ~~I71.4~~, ~~I71.5~~ | ~~the lock is 1× the tree, a scaffold is a 20-line diff, a mutation at a hundred entities is under 100 ms~~ |
 | ~~6~~ | ~~I71.40, I71.41, I71.24~~ | ~~every scanner sees every source root; `test --affected` never selects nothing and passes~~ |
 | ~~7~~ | ~~I70.2~~ | ~~one JSON encoding, carrying the same value as the human report~~ |
 | 8 | ~~I70.8~~, I70.9 (one line over), ~~I71.18~~ | a one-screen `--help`, global flags printed once, `g <kind> --help` about the kind |
@@ -148,17 +148,14 @@ refuses if any destination already exists.
 
 ### Change
 
-**I71.44 — `.jails/` is the input, and only the input.** *Today* it holds
-`model.jdl`, the lock, and two scratch entries a `.gitignore` keeps out of
-every commit; deleting it leaves a project that builds and passes its
-tests, and the next `jails g` refuses by name rather than seeding a second
-model over the generated tree. What is left is the lock's *shape*:
-`compiler.lock.json` still carries every managed file's BASE bytes inline
--- as the text they are since I70.22's interim, which took it from 17.8×
-the tree it describes to 4.9×, but inline. *Change* the lock becomes a
-manifest of path, artifact id and digest, with the merge base beside it as
-a tree of files — which is I70.22 in §2, and is the whole of what remains
-here. *Done when* I70.22 is done.
+**I71.44 — `.jails/` is the input, and only the input.** *Landed with
+I70.22.* It holds `model.jdl` and `app.toml` -- the input -- the lock and
+the merge base it names -- what the last plan accepted -- and two scratch
+entries a `.gitignore` keeps out of every commit. Deleting it leaves a
+project that builds and passes its tests, and the next `jails g` refuses by
+name rather than seeding a second model over the generated tree. The lock's
+*shape* was the last of it: it is a manifest of path, kind, mode,
+provenance and digest now, with the bytes as files under `.jails/base`.
 
 ---
 
@@ -252,12 +249,42 @@ release verify and be rewritten in the new shape by the next mutation. The
 schema is `jails.compiler-lock.v4` so an older client refuses rather than
 finding no `bytes` and inferring an empty merge base.
 
-*What remains for 1.1×* is the tree layout the item names: BASE as one file
-per managed path under `.jails/base/`, the lock as `path -> artifact id,
-digest`. That takes the projection out of the JSON entirely, makes a base
-diff readable per file, and lets git deduplicate unchanged blobs -- none of
-which the interim does. It also leaves the accepted model as the lock's only
-bulk, and 44.9 kB of model for thirty entities is the next thing to measure.
+*And the tree layout landed too*, which is the whole of the item. `jails.
+compiler-lock.v5` carries a `base` manifest -- one row per managed path with
+its kind, mode, provenance and digest -- and the bytes are files under
+`.jails/base`, published by an ordinary `PublishMergedTree` through the one
+executor. Capture reads them back, rebuilds the projection and recomputes
+`projection_digest`, so the rule that has held since v2 is unchanged: the
+digest is of the form `serde` derives from the whole tree, whatever shape
+the file kept it in.
+
+Measured on the crawler -- 99 managed files, a 249 kB source tree:
+
+| | before | after |
+|---|---|---|
+| lock | 344 kB (1.38x the tree) | 152 kB (**0.61x**) |
+| base on disk | inline | 241 kB, byte-identical to the tree |
+| **git objects** | one opaque blob per commit | **zero new blobs** |
+
+The last row is the one that matters and it is measured, not argued: a
+fresh `git commit` of the whole project reports 222 files and **122 blobs**,
+because every base file is byte-identical to the managed file it is the base
+for and git stores one object for both. The whole repository packs to 113
+KiB. `.gitattributes` marks `base/**` as `-diff` -- a diff of it is the diff
+of those files twice -- while leaving the merge alone, because a per-file
+conflict in the merge base is exactly the conflict worth seeing (I71.45).
+
+Three decisions worth the words. The base is published only when it is
+stale *or absent*, and absence is read from the snapshot rather than from
+the trees: a v4 lock decodes to exactly this projection, so equality alone
+would upgrade the schema and leave no base beside it. The report says
+nothing about it -- a line per base file doubles every report, and a
+summary line was tried and withdrawn because it has no path, and every
+other entry in that list is one in the JSON as much as on the screen. And
+four scanners had to learn that `.jails/` is jails' own record rather than
+anybody's source: the external-type index (where a stale copy let `destroy
+enum Status` succeed while a field still named it), `jails src`, and two
+test walkers.
 
 
 **I71.45 — a merge is a merge.** *Change* the model conflicts only where

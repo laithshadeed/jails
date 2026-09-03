@@ -67,16 +67,31 @@ the next capture cannot tell it from one. `write_atomic` stages under
 reads the parent of every path the plan publishes, never a whole tree, and
 runs under the lock.
 
+**The lock names the merge base; the base is a tree of files.**
+`jails.compiler-lock.v5` carries a `base` manifest -- one row per managed
+path with its kind, mode, provenance and digest -- and the accepted bytes
+are files under `.jails/base/<path>`, published by an ordinary
+`PublishMergedTree` through the one executor. Capture reads them back,
+rebuilds the `RenderedTree` and recomputes `projection_digest`, so the rule
+that has held since v2 is unchanged: **the digest is of the form `serde`
+derives from the whole tree**, whatever shape the file kept it in. Every
+earlier schema still decodes, which is what lets a project upgrade by being
+used. The base is published when it differs *or is absent*, and absence is
+read from the snapshot: a v4 lock decodes to exactly this projection, so
+equality alone would migrate the schema and leave no base beside it.
+`.jails/` is jails' own record, not anybody's source -- the external-type
+index, `jails src` and two test walkers each skip it, because a stale copy
+of a type answers "does this exist" with a file that is about to stop
+existing.
+
 **An unchanged lock is not re-encoded.** `encode_compiler_lock` is a pure
 function of the accepted model, projection, compiler version and
 migrations, so `accepted_lock_is_current` compares those against the
 snapshot and skips the encode when they match -- and compares the *schema*
 too, because a lock a previous release wrote decodes to the same values and
 holds different bytes, and a project that never re-encoded would never
-migrate. The encode serialises the projection twice, once as fourteen
-megabytes of JSON for the digest and once into a `Value` tree for the file;
-skipping it took a hundred-entity mutation's materialize phase from 116 ms
-to 30 ms.
+migrate. Skipping it took a hundred-entity mutation's materialize phase
+from 116 ms to 30 ms.
 
 **The lock is written as text and read as either shape.**
 `jails_contracts::lock_bytes` compacts a `Vec<u8>` to a JSON string on the
