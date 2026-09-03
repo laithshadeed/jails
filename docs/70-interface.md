@@ -302,15 +302,46 @@ enum Status` succeed while a field still named it), `jails src`, and two
 test walkers.
 
 
-**I71.45 — a merge is a merge.** *Change* the model conflicts only where
-two branches touched the same declaration (step 4 puts a new entity beside
-the entities rather than at the end, which is half of it); the manifest is one sorted line per path and
-merges by line; the base tree merges by file. After a merge, `jails sync`
-accepts a file that carries a provenance header and matches the model's
-render for its artifact, and reports which files it accepted and which it
-re-baselined. *Done when* the two-branch scenario merges with `git merge`
-and one `jails sync`, no deletion, and the report lists the files each
-side brought.
+**I71.45 — a merge is a merge.** *Landed, with one case the rule cannot
+reach.* Two branches that generated different things now merge with `git
+merge` and one `jails sync`, nothing is deleted, and the report lists the
+files each side brought.
+
+**The model merges because a declaration is inserted in name order within
+its kind.** Appending is what made two independent edits collide: both
+landed at the end of the file with identical context, and git has no way
+to see they are independent. Sorted, one lands before the declaration that
+was already there and one after it, which is two hunks with an unchanged
+declaration between them. It converges rather than reorders -- nothing
+already in the file moves, so a reader's own arrangement is theirs, and a
+file every one of whose declarations the tool placed is in order.
+
+**The base tree merges by file** because I71.44 moved it out of the lock:
+one file per managed path, so `git merge` brings both sides' base files
+and neither branch's managed output conflicts.
+
+**The lock still conflicts, and keeping either side is now safe.** That was
+I71.46's documented resolution and it used to cost the other side's files:
+a managed path the surviving lock does not name reads as reader-owned and
+the next plan refuses. `sync` now accepts a file whose bytes are exactly
+what the compiler renders for that artifact -- byte equality is proof
+rather than inference, because the provenance header is part of those
+bytes -- and the accepted base gains it. The preview and the report both
+say `accept`, not `create`: the file is already on disk with those bytes,
+and a preview promising a write the run does not make is the one thing
+I70.2 forbids.
+
+The manifest half of the item is moot: I71.21 deleted it.
+
+*The case the rule cannot reach:* two branches each adding the *first*
+declaration of a kind. Both edits land at the same byte with the same
+context on either side, and no ordering rule separates them -- there is
+nothing between them to be the context git needs. From the second
+declaration onwards, order does the work.
+`two_branches_that_declared_different_things_merge_and_sync_without_deleting_either`
+holds the scenario; `two_branches_merge_file_by_file_and_sync_sweeps_what_the_lock_lost`
+holds the case where a reader does resolve the model by hand and the sweep
+takes the abandoned side's base files.
 
 **I71.46 — until then, the two lines `new` can write today.** The ignore
 half is done, and not where this said: the executor writes
@@ -1188,8 +1219,7 @@ done, is the better shape.
 
 Not measured: `bench` (no k6 here), Neovim and the IDEs on either layout
 (none installed), `jails new --gradle` fetching a wrapper jar, the `model
-relocate` migration S60.7 names (it does not exist yet), and a merge on
-the relocated layout (it needs I71.45).
+relocate` migration S60.7 names (it does not exist yet).
 
 ---
 

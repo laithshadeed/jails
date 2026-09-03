@@ -7,6 +7,6 @@ app Demo @id(project_demo) {
   storage none
 }
 
-component controller Health {}
-
 component service Billing {}
+
+component controller Health {}

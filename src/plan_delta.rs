@@ -88,6 +88,7 @@ impl Delta {
         let mut counts: Vec<(&str, usize)> = Vec::new();
         for (verb, noun) in [
             ("create", "created"),
+            ("accept", "accepted"),
             ("write", "written"),
             ("patch", "patched"),
             ("append", "appended"),
@@ -241,6 +242,18 @@ pub(crate) fn preview(bundle: &jails_contracts::PlanBundle) -> Delta {
                 if root.as_str() == jails_project::capture::BASE_ROOT {
                     continue;
                 }
+                // Whether the path is already on disk with exactly the bytes
+                // this plan would write, read off the plan's own captured
+                // preconditions rather than the filesystem: preview and apply
+                // must describe one transition, and only the plan is shared.
+                let accepted = |path: &jails_contracts::ProjectPath,
+                                entry: &jails_contracts::TreeEntry| {
+                    matches!(
+                        bundle.plan.base.files.get(path),
+                        Some(jails_contracts::FilePrecondition::Present { digest, .. })
+                            if *digest == entry.blob
+                    )
+                };
                 let entries = |digest: Option<&jails_contracts::ContentDigest>| {
                     digest
                         .and_then(|digest| bundle.trees.get(digest))
@@ -258,6 +271,17 @@ pub(crate) fn preview(bundle: &jails_contracts::PlanBundle) -> Delta {
                     .collect::<std::collections::BTreeSet<_>>()
                 {
                     let verb = match (was.get(path), now.get(path)) {
+                        // **A file already on disk with exactly these bytes
+                        // is accepted, not created.** This is what a `git
+                        // merge` leaves: one side's lock survived and the
+                        // other side's managed files did not reach the base
+                        // behind it, so the plan brings them into the managed
+                        // tree without writing a byte. Saying `create` for a
+                        // file that is already there and already right is the
+                        // one thing the preview must not do -- the report
+                        // under it would count zero written, and I70.2's rule
+                        // is that the list and the count are one answer.
+                        (None, Some(entry)) if accepted(path, entry) => "accept",
                         (None, _) => "create",
                         (Some(old), Some(new)) if old.blob == new.blob && old.mode == new.mode => {
                             unchanged += 1;

@@ -1940,3 +1940,141 @@ fn two_branches_merge_file_by_file_and_sync_sweeps_what_the_lock_lost() {
             .is_file()
     );
 }
+
+/// Two branches, one `git merge` and one `jails sync` — no deletion.
+///
+/// **This is I71.45's own scenario.** Two people generate different things on
+/// different branches; the merge has to end with a project that has both, and
+/// with neither of them having had to resolve a document by hand.
+///
+/// **The model merges because a declaration is inserted in name order.**
+/// Appending is what made two independent edits collide: both landed at the
+/// end of the file with identical context, and git has no way to see they are
+/// independent. Sorted within the kind, one lands before the entity that was
+/// already there and one after it, which is two hunks with an unchanged
+/// declaration between them.
+///
+/// **The lock still conflicts, and that is the documented resolution** (I71.46):
+/// keep either side. What makes keeping either side safe is the half below --
+/// `sync` accepts a managed file whose bytes are exactly what the compiler
+/// renders, so the side whose lock lost is adopted rather than refused as
+/// reader-owned, and the report says which files that was.
+#[test]
+fn two_branches_that_declared_different_things_merge_and_sync_without_deleting_either() {
+    let root = model_project("model-merge-no-deletion", EMPTY_MODEL);
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .args(["-c", "user.email=t@t", "-c", "user.name=t"])
+            .args(args)
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        (
+            output.status.success(),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ),
+        )
+    };
+    let commit = |message: &str| {
+        assert!(git(&["add", "-A"]).0);
+        assert!(git(&["commit", "-qm", message]).0);
+    };
+    let generate = |name: &str| {
+        assert!(
+            jails_cmd(&root, None)
+                .args(["g", "record", name, "title:string"])
+                .status()
+                .unwrap()
+                .success(),
+            "generating {name} failed"
+        );
+    };
+    // **A declaration already in the file is what the two edits sort around.**
+    // Two branches each adding the *first* entity of a project land at the
+    // same byte with the same context, and no ordering rule can separate
+    // them; from the second onwards, order does the work.
+    assert!(git(&["init", "-q", "."]).0);
+    generate("Mango");
+    commit("base");
+
+    assert!(git(&["checkout", "-qb", "left"]).0);
+    generate("Alpha");
+    commit("alpha");
+    assert!(git(&["checkout", "-q", "master"]).0 || git(&["checkout", "-q", "main"]).0);
+    assert!(git(&["checkout", "-qb", "right"]).0);
+    generate("Zulu");
+    commit("zulu");
+    assert!(git(&["checkout", "-q", "left"]).0);
+
+    let (_, merged) = git(&["merge", "right"]);
+    // The model is not one of the conflicts. The lock is, and it is the only
+    // one: every managed file and every base file merged on its own.
+    assert!(
+        !merged.contains("Merge conflict in .jails/model.jdl"),
+        "the model conflicted over two independent declarations:\n{merged}"
+    );
+    assert!(merged.contains(".jails/compiler.lock.json"), "{merged}");
+    let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    for name in ["Alpha", "Mango", "Zulu"] {
+        assert!(
+            model.contains(&format!("entity {name} {{")),
+            "`{name}` did not survive the merge:\n{model}"
+        );
+    }
+
+    // Keep either side of the lock, which is the documented resolution, and
+    // let one `sync` reconcile.
+    assert!(git(&["checkout", "--ours", ".jails/compiler.lock.json"]).0);
+    let synced = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&synced.stdout),
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    let report = String::from_utf8_lossy(&synced.stdout).to_string();
+
+    // **The report says which files each side brought.** They are accepted,
+    // not created: they are already on disk with exactly these bytes, and a
+    // preview that said `create` would promise a write the run does not make.
+    for path in [
+        "accept  src/main/java/com/example/notes/domain/Zulu.java",
+        "accept  src/test/java/com/example/notes/domain/ZuluTest.java",
+    ] {
+        assert!(report.contains(path), "{report}");
+    }
+    assert!(
+        !report.contains("delete "),
+        "the sync deleted something:\n{report}"
+    );
+
+    // Nothing either side generated is gone, and the base holds all of it.
+    for name in ["Alpha", "Mango", "Zulu"] {
+        assert!(
+            root.join(format!(
+                "src/main/java/com/example/notes/domain/{name}.java"
+            ))
+            .is_file(),
+            "`{name}.java` is gone"
+        );
+        assert!(
+            root.join(format!(
+                ".jails/base/src/main/java/com/example/notes/domain/{name}.java"
+            ))
+            .is_file(),
+            "`{name}` has no merge base"
+        );
+    }
+
+    // And it has converged: a second run is a no-op, which is what makes the
+    // acceptance an acceptance rather than a repair that runs forever.
+    let again = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(
+        String::from_utf8_lossy(&again.stdout).contains("nothing to do"),
+        "{}",
+        String::from_utf8_lossy(&again.stdout)
+    );
+}

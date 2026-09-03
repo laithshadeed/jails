@@ -245,6 +245,19 @@ fn reconcile_artifact(
     } else {
         match (base_file, live, desired_file) {
             (None, None, Some(theirs)) => Some((theirs.bytes.clone(), theirs.kind, theirs.mode)),
+            // **A file that is exactly what the compiler renders is jails'
+            // own, whatever the lock lost.** This is the merge case: two
+            // branches each generated a declaration, `git merge` took both
+            // into the model and one side's lock, and the other side's
+            // managed files are now on disk with no base behind them. Byte
+            // equality with THEIRS is proof rather than inference -- the
+            // provenance header is part of those bytes -- and adopting them
+            // costs a reader nothing, because the alternative is refusing
+            // over content nobody disagrees about. The accepted base gains
+            // the file, which is what re-baselining means.
+            (None, Some(ours), Some(theirs)) if ours.bytes == theirs.bytes => {
+                Some((theirs.bytes.clone(), theirs.kind, captured_mode(ours)))
+            }
             (None, Some(_), Some(_)) => {
                 // **A lost merge base is indistinguishable from a collision,
                 // so the fix names both.** BASE for every managed file lives

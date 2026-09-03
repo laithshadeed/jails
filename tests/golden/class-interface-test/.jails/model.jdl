@@ -7,10 +7,9 @@ app Demo @id(project_demo) {
   storage none
 }
 
-component class RingBuffer {}
+component integration-test Checkout {}
 
 component interface Clock {}
-
 component test Parser {}
 
-component integration-test Checkout {}
+component class RingBuffer {}

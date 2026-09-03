@@ -7,14 +7,6 @@ app Demo @id(project_demo) {
   storage postgres
 }
 
-entity Owner {
-  use scaffold
-
-  id:        uuid @pk
-  email:     string @notBlank @unique
-  createdAt: instant @default(now())
-}
-
 entity Item {
   use scaffold
 
@@ -28,4 +20,12 @@ entity Item {
     limit 20
     join Owner as owner on owner_id -> owner.id
   }
+}
+
+entity Owner {
+  use scaffold
+
+  id:        uuid @pk
+  email:     string @notBlank @unique
+  createdAt: instant @default(now())
 }

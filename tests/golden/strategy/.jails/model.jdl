@@ -7,14 +7,19 @@ app Demo @id(project_demo) {
   storage none
 }
 
+entity Reward {
+  id:     uuid
+  amount: long
+}
+
 entity Transaction {
   id:     uuid
   amount: long
 }
 
-entity Reward {
-  id:     uuid
-  amount: long
+component strategy Eligibility {
+  on transaction
+  variant Domestic
 }
 
 component strategy RewardRule {
@@ -22,9 +27,4 @@ component strategy RewardRule {
   yields reward
   variant Coffee
   variant Large
-}
-
-component strategy Eligibility {
-  on transaction
-  variant Domestic
 }

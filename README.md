@@ -1534,10 +1534,21 @@ textual three-way merge of two branches' locks produces a file that
 describes neither tree. When a merge conflicts on it, keep either side —
 `git checkout --ours .jails/compiler.lock.json` — and run `jails sync`.
 Either side's projection is a real ancestor of both trees, so the merge of
-your managed files is still a three-way merge; what you lose by picking one
-is nothing but the other side's record of what it had generated. Both files
-live inside `.jails/`, because a `.gitattributes` at the repository root is
-yours.
+your managed files is still a three-way merge, and you lose nothing by
+picking one: `sync` accepts a managed file whose bytes are exactly what the
+compiler renders for it, so the side whose lock did not survive is adopted
+rather than refused as something you wrote. The report says `accept` for
+each of those, not `create` — the file is already there with those bytes.
+Both files live inside `.jails/`, because a `.gitattributes` at the
+repository root is yours.
+
+**The model itself usually does not conflict.** A generated declaration is
+inserted in name order within its kind rather than appended, so two
+branches that declared different things land in different hunks with an
+unchanged declaration between them and `git merge` resolves it. The
+exception is two branches each adding the very first declaration of a
+kind: there is nothing between them to be the context git needs, and that
+one is yours to resolve.
 
 Delete `.jails` and the application is untouched: it builds, and `mvn test`
 passes with the same tests, generated ones included. What you have lost is the

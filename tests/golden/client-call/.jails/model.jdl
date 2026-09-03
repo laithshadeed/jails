@@ -7,14 +7,14 @@ app Demo @id(project_demo) {
   storage none
 }
 
-entity ChatRequest {
-  model:  string @notBlank
-  prompt: string @notBlank
-}
-
 entity ChatReply {
   id:   string @notBlank
   text: string @notBlank
+}
+
+entity ChatRequest {
+  model:  string @notBlank
+  prompt: string @notBlank
 }
 
 component client OpenAiChat {

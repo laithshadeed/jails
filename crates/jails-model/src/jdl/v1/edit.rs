@@ -14,16 +14,86 @@ use crate::{Diagnostic, Diagnostics};
 /// (`cst::top_level_order`), which is where a reader keeping the
 /// file tidy would have put it and is still one splice into their bytes:
 /// nothing already in the document moves.
+/// The name a top-level declaration announces, for ordering.
+///
+/// The same word the CST records: `component <kind> <Name>` names its third
+/// word and every other family its second. `use` announces none, and neither
+/// does anything this cannot read -- both fall back to appending.
+fn declared_name(declaration: &str) -> Option<&str> {
+    let mut words = declaration.split_whitespace();
+    let keyword = words.next()?;
+    let name = match keyword {
+        "use" => return None,
+        "component" => words.nth(1)?,
+        _ => words.next()?,
+    };
+    let name = name.split(['{', '(']).next().unwrap_or(name);
+    (!name.is_empty()).then_some(name)
+}
+
 pub fn append_declaration(source: &str, declaration: &str) -> Result<String, Diagnostics> {
     let cst = parse_cst(source)?;
     let newline = newline_style(source);
     let declaration = normalize_newlines(declaration.trim_end_matches(['\r', '\n']), newline);
     let (group, rank) = super::cst::top_level_order(first_word(&declaration));
-    let previous = cst
-        .declarations
-        .iter()
-        .filter(|candidate| super::cst::top_level_order(&candidate.kind).1 <= rank)
-        .max_by_key(|candidate| candidate.span.end);
+    // A declaration nested inside another is not a neighbour of this one: an
+    // entity's own `command` is at rank 7 like a top-level one, and anchoring
+    // against it would put the new declaration inside the entity's body.
+    let nested = |candidate: &super::cst::DeclarationCst| {
+        cst.declarations.iter().any(|outer| {
+            outer.span.start < candidate.span.start && candidate.span.end <= outer.span.end
+        })
+    };
+    let ordered = |candidate: &super::cst::DeclarationCst| {
+        super::cst::top_level_order(&candidate.kind).1 <= rank && !nested(candidate)
+    };
+    // **Sorted within the kind, so two branches adding two declarations do
+    // not both append to the same line.** Appending is what makes a `git
+    // merge` of one branch's `entity Berry` and another's `entity Zulu`
+    // conflict: both edits land at the same place with the same context, and
+    // git has no way to see they are independent. Inserting by name puts them
+    // in different hunks with an unchanged declaration between, which merges.
+    //
+    // **It converges rather than reorders.** Nothing already in the file
+    // moves -- a reader's own arrangement is theirs -- so a hand-written file
+    // whose entities are not in name order behaves exactly as before. A file
+    // every one of whose declarations this function placed *is* in order, and
+    // that is every model `jails new` and `jails g` produce.
+    let sorted = declared_name(&declaration).and_then(|name| {
+        let peers: Vec<&super::cst::DeclarationCst> = cst
+            .declarations
+            .iter()
+            .filter(|candidate| {
+                super::cst::top_level_order(&candidate.kind).1 == rank && !nested(candidate)
+            })
+            .collect();
+        // A kind whose declarations do not all carry a name -- `use` is the
+        // one -- has no order to insert into.
+        if peers.is_empty() || peers.iter().any(|peer| peer.name.is_none()) {
+            return None;
+        }
+        peers
+            .iter()
+            .filter(|peer| peer.name.as_deref().is_some_and(|peer| peer < name))
+            .max_by_key(|peer| peer.span.end)
+            .copied()
+            // Every peer sorts after this one, so it goes before all of them:
+            // the anchor is the last declaration of an *earlier* kind.
+            .or_else(|| {
+                cst.declarations
+                    .iter()
+                    .filter(|candidate| {
+                        super::cst::top_level_order(&candidate.kind).1 < rank && !nested(candidate)
+                    })
+                    .max_by_key(|candidate| candidate.span.end)
+            })
+    });
+    let previous = sorted.or_else(|| {
+        cst.declarations
+            .iter()
+            .filter(|candidate| ordered(candidate))
+            .max_by_key(|candidate| candidate.span.end)
+    });
     let Some(previous) = previous.filter(|candidate| candidate.span.end < source.len()) else {
         let mut edited = source.to_string();
         if !edited.is_empty() && !edited.ends_with('\n') && !edited.ends_with('\r') {

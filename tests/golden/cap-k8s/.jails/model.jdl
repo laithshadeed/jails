@@ -8,9 +8,7 @@ app Demo @id(project_demo) {
 }
 
 cap actuator
+cap docker
+cap k8s
 
 cap observability
-
-cap docker
-
-cap k8s

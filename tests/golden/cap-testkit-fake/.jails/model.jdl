@@ -7,6 +7,6 @@ app Demo @id(project_demo) {
   storage none
 }
 
-cap testkit
-
 cap fake
+
+cap testkit

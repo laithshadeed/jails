@@ -9,14 +9,6 @@ app Demo @id(project_demo) {
 
 cap json
 
-entity Owner {
-  use scaffold
-
-  id:        uuid @pk
-  name:      string @notBlank
-  createdAt: instant @default(now())
-}
-
 entity Item {
   use scaffold
 
@@ -31,6 +23,14 @@ entity Item {
 
   command AddItem(id, owner_id, name) {
   }
+}
+
+entity Owner {
+  use scaffold
+
+  id:        uuid @pk
+  name:      string @notBlank
+  createdAt: instant @default(now())
 }
 
 component durable-job ItemDispatcher(id: uuid, ownerId: uuid, name: string @notBlank) {
