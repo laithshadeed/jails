@@ -60,6 +60,44 @@ fn lock_encoding(message: String) -> Diagnostic {
     )
 }
 
+/// Whether the lock on disk was written from exactly this state.
+///
+/// The schema is checked as well as the state, because a lock a previous
+/// release wrote decodes to the same values and holds different bytes; a
+/// project that never re-encoded would never migrate.
+///
+/// The marker is looked for in the whole file rather than at a fixed offset:
+/// the lock is written through a `serde_json::Value`, whose maps are sorted,
+/// so `schema` is neither first nor at any place worth relying on. A scan of
+/// two megabytes is a couple of milliseconds against the hundred the encode
+/// costs.
+fn accepted_lock_is_current(
+    snapshot: &WorkspaceSnapshot,
+    draft: &PlanDraft,
+    compiler_version: &str,
+    migrations: &BTreeMap<ProjectPath, ContentDigest>,
+    migration_bytes: &BTreeMap<ProjectPath, Vec<u8>>,
+) -> bool {
+    let Ok(path) = crate::capture::project_path(crate::capture::COMPILER_LOCK) else {
+        return false;
+    };
+    let Some(file) = snapshot.files.get(&path) else {
+        return false;
+    };
+    if !file
+        .bytes
+        .windows(COMPILER_LOCK_SCHEMA.len())
+        .any(|window| window == COMPILER_LOCK_SCHEMA.as_bytes())
+    {
+        return false;
+    }
+    snapshot.accepted_compiler.as_deref() == Some(compiler_version)
+        && snapshot.accepted_model.as_ref() == Some(&draft.next_model)
+        && snapshot.accepted_projection.as_ref() == Some(&draft.generated)
+        && &snapshot.accepted_migrations == migrations
+        && &snapshot.accepted_migration_bytes == migration_bytes
+}
+
 pub(super) fn materialize_compiler_lock(
     snapshot: &WorkspaceSnapshot,
     draft: &PlanDraft,
@@ -69,6 +107,26 @@ pub(super) fn materialize_compiler_lock(
     blobs: &mut BTreeMap<ContentDigest, Vec<u8>>,
     operations: &mut Vec<PlannedOperation>,
 ) -> Result<(), Diagnostic> {
+    let path = crate::capture::project_path(crate::capture::COMPILER_LOCK)?;
+    // **The encoder is a pure function of exactly these five values.** When
+    // every one of them is what the file on disk was written from, the bytes
+    // it would produce are the bytes already there -- so the comparison below
+    // is decided without doing the work.
+    //
+    // It is worth deciding early because the encoding is the expensive half
+    // of a plan: the projection is serialised once as fourteen megabytes of
+    // JSON for the digest and once more into a `Value` tree for the file, and
+    // on a hundred-entity project that was 116 ms of a 232 ms mutation, paid
+    // in full by a run that changes nothing.
+    if accepted_lock_is_current(
+        snapshot,
+        draft,
+        compiler_version,
+        &migrations,
+        &migration_bytes,
+    ) {
+        return Ok(());
+    }
     let lock_bytes = encode_compiler_lock(
         compiler_version,
         &draft.next_model,
@@ -76,7 +134,6 @@ pub(super) fn materialize_compiler_lock(
         migrations,
         migration_bytes,
     )?;
-    let path = crate::capture::project_path(crate::capture::COMPILER_LOCK)?;
     let before = snapshot
         .files
         .get(&path)

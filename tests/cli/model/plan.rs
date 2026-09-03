@@ -4,6 +4,59 @@
 //!
 use super::*;
 
+/// **An unchanged lock is not rewritten, and an old one still is.**
+///
+/// The encoder is a pure function of the accepted model, projection,
+/// compiler and migrations, so when all four are what the file was written
+/// from, the bytes it would produce are the bytes already there. Deciding
+/// that before encoding is worth doing: the projection is serialised once as
+/// fourteen megabytes of JSON for the digest and once more into a `Value`
+/// tree for the file, which was 116 ms of a 232 ms mutation at a hundred
+/// entities.
+///
+/// The schema is part of "unchanged", because a lock a previous release
+/// wrote decodes to the same values and holds different bytes -- a project
+/// that never re-encoded would never migrate.
+#[test]
+fn an_unchanged_lock_is_left_alone_and_an_older_schema_is_rewritten() {
+    let root = jdl_project("lock-rewrite", MODEL);
+    write_spring_fixture(&root);
+    apply_canonical_model(&root, "lock-rewrite-initial");
+    let lock = root.join(".jails/compiler.lock.json");
+    let accepted = fs::read(&lock).unwrap();
+
+    // A run that changes nothing leaves the file byte for byte.
+    let again = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(
+        again.status.success(),
+        "{}",
+        String::from_utf8_lossy(&again.stderr)
+    );
+    assert_eq!(fs::read(&lock).unwrap(), accepted, "the lock was rewritten");
+    assert!(
+        !String::from_utf8_lossy(&again.stdout).contains("compiler.lock.json"),
+        "{}",
+        String::from_utf8_lossy(&again.stdout)
+    );
+
+    // A lock from an earlier schema decodes to the same values and is still
+    // rewritten, because its bytes are not the ones this release writes.
+    let downgraded = String::from_utf8(accepted.clone())
+        .unwrap()
+        .replace("jails.compiler-lock.v4", "jails.compiler-lock.v3");
+    fs::write(&lock, downgraded).unwrap();
+    let migrated = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(
+        migrated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&migrated.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&fs::read(&lock).unwrap()).contains("jails.compiler-lock.v4"),
+        "an older schema is migrated on the next plan"
+    );
+}
+
 #[test]
 fn reviewed_model_format_refuses_a_concurrent_source_edit() {
     let root = jdl_project(

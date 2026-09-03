@@ -783,9 +783,17 @@ than a slow one. What remains after this is `materialize` at 116 ms, which
 is the projection serialised as fourteen megabytes of JSON to compute the
 digest the lock rule fixes -- that belongs with I71.4.
 
-**I70.25 — "nothing to do" is decided before compiling.** *Change* when
-the edited source equals the source on disk and the lock's model digest
-matches, answer before capture. *Done when* the repeat scaffold is 5 ms.
+**I70.25 — "nothing to do" is decided before writing.** *Answered
+differently, and the difference matters.* Deciding before *capture* would
+make the answer a claim about the model rather than about the project: a
+managed file deleted or a `pom.xml` edited by hand changes what the plan
+does, and a run that skipped the capture would report "nothing to do" over
+a tree that no longer matches. The decision is made where it is still true
+-- the lock encoder is a pure function of the accepted model, projection,
+compiler and migrations, so when all four are what the file was written
+from it is not re-encoded. A repeat mutation at a hundred entities went
+from 619 ms of measured phases to about 132 ms, and materialize from 116 ms
+to 30 ms.
 
 **I71.1 — `model explain` reads the model, not the tree.** *Half landed.*
 `model explain` needed exactly one external fact -- `jails.toml`'s layer
