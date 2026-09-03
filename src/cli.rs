@@ -990,10 +990,10 @@ pub(crate) enum Command {
     /// This is for whoever is deciding whether to generate it -- and for an
     /// agent, which otherwise "fixes" the deliberate asymmetries.
     Explain {
-        /// The generator kind to explain; omitted with `--flag`
-        kind: Option<ArtifactKind>,
-        /// Explain a global flag instead of a kind
-        #[arg(long, conflicts_with = "kind")]
+        /// The generator kind or capability to explain; omitted with `--flag`
+        topic: Option<jails_model::ExplainTopic>,
+        /// Explain a global flag instead
+        #[arg(long, conflicts_with = "topic")]
         flag: Option<String>,
     },
     /// Print every subcommand, generator kind, capability and flag jails accepts

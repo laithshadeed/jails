@@ -332,6 +332,8 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-model", "component", 2),
     ("jails-model", "constraint", 2),
     ("jails-model", "layout", 2),
+    // Above both vocabularies it unions, and below anything that reads it.
+    ("jails-model", "topic", 3),
     // jails-support: no jails concepts at all -- writing, running, encoding.
     // `jails-codemod` depends on nothing at all -- it knows one text format
     // and no more -- so it sits beside the support primitives, where every

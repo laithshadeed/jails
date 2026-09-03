@@ -155,8 +155,9 @@ it added to `.jails/model.jdl`. The CLI is sugar over that one editable
 source: the next change can be made by hand in the file and applied with
 `jails sync`.
 
-- `jails explain <kind>` — what a generator kind is for and the trap it
-  invites. `jails explain --flag <name>` does the same for a global flag:
+- `jails explain <kind|capability>` — what a generator kind or a capability is
+  for and the trap it invites. Both vocabularies answer to one argument, and
+  no capability is spelled like a kind. `jails explain --flag <name>` does the same for a global flag:
   `--pretend`, `--output`, `--yes`, `--plan-out`, `--timing` and `--debug`
   carry one help line each, and the reason each exists lives here rather
   than on the first screen of `--help`. The generated Javadoc carries the same reasoning for whoever reads

@@ -661,10 +661,6 @@ the frontends already refuse a flag that does not apply. *Done when*
 `jails g scaffold --help` is under 40 lines and names `--index`, `--path`,
 `--timestamps`.
 
-**I71.30 — `explain` knows capabilities.** *Change* one entry per
-capability in the same table as the kinds, with the build-time test
-extended to both. *Done when* `jails explain db` prints one.
-
 **I71.23 — the closed sets complete on the command line.** *Change* the
 shell completer calls `editor complete` for field types, markers, `--on`
 targets, `--yields` events and `--via` fields. *Done when* `jails g query

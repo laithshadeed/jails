@@ -574,12 +574,13 @@ fn main() -> std::process::ExitCode {
             debug,
         ),
         Command::Setup {} => doctor::setup(pretend),
-        Command::Explain { kind, flag } => match (kind, flag) {
-            (Some(kind), _) => explain::explain(kind),
+        Command::Explain { topic, flag } => match (topic, flag) {
+            (Some(topic), _) => explain::explain_topic(topic),
             (None, Some(flag)) => explain::explain_flag(&flag),
             (None, None) => Err(jails_support::Failure::Told(
-                "explain needs a generator kind or `--flag <name>`.\n       fix: run \
-                 `jails explain scaffold`, or `jails explain --flag pretend`"
+                "explain needs a generator kind, a capability or `--flag <name>`.\n       \
+                 fix: run `jails explain scaffold`, `jails explain db`, or `jails explain \
+                 --flag pretend`"
                     .to_string(),
             )),
         },

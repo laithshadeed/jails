@@ -554,7 +554,7 @@ pub fn explain_flag(name: &str) -> Result<()> {
 ///
 /// Written here rather than taken as a dependency: one paragraph, one rule,
 /// and a wrapping crate would be a dependency for six strings.
-fn textwrap(body: &str) -> Vec<String> {
+pub(crate) fn textwrap(body: &str) -> Vec<String> {
     let mut lines = Vec::new();
     let mut line = String::new();
     for word in body.split_whitespace() {
@@ -572,6 +572,20 @@ fn textwrap(body: &str) -> Vec<String> {
     lines
 }
 
+mod capability;
+
+/// Explain whichever half of the vocabulary the reader named.
+///
+/// One positional argument over the union of the two closed sets, which is
+/// possible because no capability is spelled like a generator kind and
+/// `jails_model::topic` holds that true.
+pub fn explain_topic(topic: jails_model::ExplainTopic) -> Result<()> {
+    match topic {
+        jails_model::ExplainTopic::Kind(kind) => explain(kind),
+        jails_model::ExplainTopic::Capability(capability) => capability::explain(capability),
+    }
+}
+
 pub fn explain(kind: ArtifactKind) -> Result<()> {
     let entry = EXPLANATIONS
         .iter()
@@ -586,10 +600,24 @@ pub fn explain(kind: ArtifactKind) -> Result<()> {
 
     println!("{}  {}", name_of(kind), entry.summary);
     println!();
-    for line in entry.body.lines() {
-        println!("  {line}");
-    }
+    print_body(entry.body);
     Ok(())
+}
+
+/// Print an explanation's body, wrapped, paragraphs kept.
+///
+/// The same 72 columns `explain --flag` wraps to, because they are the same
+/// report; a body printed as one long line is one the terminal wraps at
+/// whatever width it happens to have.
+pub(crate) fn print_body(body: &str) {
+    for (index, paragraph) in body.split("\n\n").enumerate() {
+        if index > 0 {
+            println!();
+        }
+        for line in textwrap(paragraph) {
+            println!("  {line}");
+        }
+    }
 }
 
 fn name_of(kind: ArtifactKind) -> String {

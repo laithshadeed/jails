@@ -803,9 +803,15 @@ this phase, and their refusals are worded by the caller that reports them.
   failure and only the most specific is reported. Add rules only from failures
   that happened; a guessed cause costs more than no cause. The way to find
   them is to mine real logs for `Caused by:` lines, deduplicated and counted.
-- **`crates/jails-report/src/explain.rs`** -- `jails explain <kind>`: a
-  hand-written table, one entry per kind, with `every_kind_has_an_explanation`
-  failing the build when a kind is added without one.
+- **`crates/jails-report/src/explain.rs`** -- `jails explain
+  <kind|capability>`: two hand-written tables, one entry per kind and
+  (in `explain/capability.rs`) one per capability, with
+  `every_kind_has_an_explanation` and `every_capability_has_an_explanation`
+  failing the build when a word is added without one. One positional
+  argument spans both closed sets through `jails_model::ExplainTopic`, whose
+  `ValueEnum` is a union *computed* from `ArtifactKind` and `CapabilityKind`
+  rather than a third list; it holds only while no capability is spelled like
+  a kind, which `no_capability_is_spelled_like_a_generator_kind` asserts.
 - **`crates/jails-report/src/commands.rs`** -- `jails commands [--json]`:
   every subcommand, kind, capability and flag, walked out of the same
   `clap::Command` that parses the arguments, to every depth. There is no

@@ -1063,6 +1063,58 @@ fn test_sources_without_comments() -> String {
     out
 }
 
+/// **`explain` answers for both halves of the vocabulary.**
+///
+/// A reader deciding whether to run `jails add db` had nowhere to read what
+/// it installs and what it will get wrong; the thirty-eight generator kinds
+/// had an entry each and the twenty-five capabilities had none. One
+/// positional argument now takes either, which works because no capability
+/// is spelled like a kind -- held in `jails_model::topic`.
+#[test]
+fn explain_answers_for_a_capability_as_well_as_a_kind() {
+    let root = temp_dir("explain-capability");
+    for (topic, expected) in [
+        ("db", "@ServiceConnection"),
+        ("kafka", "DeadLetterPublishingRecoverer"),
+        ("json", "Jackson 3"),
+        ("scaffold", "@Repository"),
+    ] {
+        let output = jails_cmd(&root, None)
+            .args(["explain", topic])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "`jails explain {topic}` refused");
+        let printed = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            printed.starts_with(&format!("{topic}  ")),
+            "the first line names the topic: {printed}"
+        );
+        assert!(
+            printed.contains(expected),
+            "`jails explain {topic}` does not name its trap: {printed}"
+        );
+        // The body is wrapped, not one long line the terminal folds at
+        // whatever width it happens to have. The heading is the summary and
+        // stands on its own line.
+        assert!(
+            printed.lines().skip(1).all(|line| line.len() < 80),
+            "`jails explain {topic}` printed an unwrapped line: {printed}"
+        );
+    }
+
+    // Neither vocabulary, so the refusal lists both.
+    let unknown = jails_cmd(&root, None)
+        .args(["explain", "nonesuch"])
+        .output()
+        .unwrap();
+    assert!(!unknown.status.success());
+    let stderr = String::from_utf8_lossy(&unknown.stderr);
+    assert!(
+        stderr.contains("scaffold") && stderr.contains("db"),
+        "{stderr}"
+    );
+}
+
 /// **A global flag that some commands quietly ignore is a flag that lies.**
 ///
 /// `--pretend` is the promise that nothing is written. Every command here
