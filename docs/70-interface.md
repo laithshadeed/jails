@@ -153,8 +153,9 @@ refuses if any destination already exists.
 every commit; deleting it leaves a project that builds and passes its
 tests, and the next `jails g` refuses by name rather than seeding a second
 model over the generated tree. What is left is the lock's *shape*:
-`compiler.lock.json` is still every managed file's BASE bytes as a JSON
-array of integers, 15× the tree it describes. *Change* the lock becomes a
+`compiler.lock.json` still carries every managed file's BASE bytes inline
+-- as the text they are since I70.22's interim, which took it from 17.8×
+the tree it describes to 4.9×, but inline. *Change* the lock becomes a
 manifest of path, artifact id and digest, with the merge base beside it as
 a tree of files — which is I70.22 in §2, and is the whole of what remains
 here. *Done when* I70.22 is done.
@@ -931,9 +932,28 @@ history it reads is a capture-boundary rule rather than a file list. Doing
 it without a capture means re-implementing both, which is a second reader
 of two things that have one; it belongs with I70.23 rather than beside it.
 
-**I71.2 — a manifest replay is one capture.** *Change* link every row into
-one edited source and run the pipeline once. *Done when* the idempotent
-replay costs what one `model plan` costs (211 ms on the crawler).
+**I71.2 — a manifest replay is one capture.** *Landed, by the other
+route.* The item proposed linking every row into one edited source; what
+landed keeps a row's own pipeline for a row that changes something and
+skips it for a row that does not. A row whose declaration is already in
+the model produces the source it was handed, and discovering that cost a
+capture, a compile and a materialize each -- on the crawler's twelve
+rows, 255 ms of finding twelve times over that there was nothing to do.
+
+`Invocation::defer_unchanged` is the flag and only a replay sets it. What
+makes the skip sound is the closing pass `app apply` now runs: an
+ordinary mutation over the finished source, with nothing to change about
+the model, that captures once and writes whatever the tree is missing. So
+a file a skipped row would have repaired is repaired there, and the
+convergence property the manifest is for is unchanged.
+
+**Measured on the crawler, release binary: 255 ms to 30 ms**, against the
+20 ms one `model plan` costs -- the difference is twelve model parses,
+which is what a row that skips still pays. A fresh apply is unchanged
+except for the closing pass, which finds nothing to do because the rows
+did it. `a_converged_replay_captures_once` asserts the shape rather than
+the milliseconds: `--timing` prints one `capture` line per pipeline, and a
+converged replay has exactly one.
 
 **I70.24 — `doctor` warm.** *Half landed, and the other half declined.*
 The probes run concurrently -- the version probes among themselves, and

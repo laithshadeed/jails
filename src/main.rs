@@ -190,6 +190,7 @@ fn main() -> std::process::ExitCode {
         // what is running alone.
         no_start: true,
         batch_effects: false,
+        defer_unchanged: false,
         batch_report: None,
     };
     let failure_output = invocation.output;

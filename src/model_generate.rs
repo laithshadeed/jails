@@ -182,6 +182,25 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
         true => jails_model::format_jdl_v1(&next_source).unwrap_or(next_source),
         false => next_source,
     };
+    // **A row that declares something the model already has does no work,
+    // and finding that out costs a pipeline.** Capture reads the whole
+    // project, the compiler renders every file and the materializer hashes
+    // them, all to produce a plan with nothing in it: on a twelve-row
+    // manifest replayed over its own output that was 255 ms of discovering
+    // twelve times that there was nothing to do. The edited source being the
+    // source it started from is the whole test -- a frontend that changed
+    // one byte is not this case -- and what makes skipping safe is the pass
+    // `app apply` runs afterwards, which is an ordinary mutation over the
+    // finished source and repairs anything a skipped row would have.
+    if invocation.defer_unchanged
+        && next_source == current.source
+        && evolution.is_empty()
+        && authored_migration.is_none()
+        && reader_paths.is_empty()
+    {
+        invocation.file_row(format!("  {name:<22}  already declared"));
+        return Ok(());
+    }
     // **The model is what the edited source links to**, decided once here
     // and nowhere else: the frontend wrote the bytes, and the linker says
     // what they mean.
@@ -375,7 +394,15 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
                 true => format!("  {name:<22}  nothing to do"),
                 false => format!("  {name:<22}  {}", delta.summary()),
             };
-            invocation.file_row(filed);
+            // **The replay's closing pass is not one of its rows.** It is the
+            // one batched mutation the manifest did not ask for -- it exists
+            // because the rows that skipped their own pipeline rely on it --
+            // so it files what it did and leaves the count to the rows.
+            if invocation.defer_unchanged {
+                invocation.file_row(filed);
+            } else {
+                invocation.file_note(filed);
+            }
             for line in stranded.into_iter().chain(notes) {
                 invocation.file_note(line);
             }

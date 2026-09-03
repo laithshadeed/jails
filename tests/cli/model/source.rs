@@ -1245,6 +1245,66 @@ fn a_project_that_only_recorded_its_layout_can_still_become_canonical() {
 /// Row by row rather than one transition, which costs atomicity and buys
 /// convergence: each frontend is idempotent, so an interrupted replay
 /// converges by being run again.
+/// **A replay that changes nothing runs one pipeline, not one per row.**
+///
+/// Every row of an already-applied manifest produces the source it was
+/// handed, and discovering that used to cost a capture, a compile and a
+/// materialize each: twelve rows of the crawler's manifest were 255 ms of
+/// finding twelve times over that there was nothing to do. A row whose
+/// declaration is already in the model now skips its pipeline and the
+/// command runs one closing pass over the finished source.
+///
+/// The measurement is the point, so it is asserted rather than described:
+/// `--timing` prints one line per phase per pipeline, and a converged replay
+/// has exactly one `capture`.
+#[test]
+fn a_converged_replay_captures_once() {
+    let root = temp_dir("manifest-one-capture");
+    write_spring_fixture(&root);
+    fs::create_dir_all(root.join(".jails")).unwrap();
+    fs::write(
+        root.join(".jails/app.toml"),
+        "schema = 1\ncapabilities = []\n\n\
+         [[generate]]\nkind = \"record\"\nname = \"Note\"\nfields = [\"title:string\"]\n\n\
+         [[generate]]\nkind = \"record\"\nname = \"Tag\"\nfields = [\"label:string\"]\n\n\
+         [[generate]]\nkind = \"enum\"\nname = \"Colour\"\nfields = [\"RED\", \"GREEN\"]\n",
+    )
+    .unwrap();
+
+    let applied = jails_cmd(&root, None)
+        .args(["app", "apply"])
+        .output()
+        .unwrap();
+    assert!(
+        applied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+
+    let again = jails_cmd(&root, None)
+        .args(["--timing", "app", "apply"])
+        .output()
+        .unwrap();
+    assert!(
+        again.status.success(),
+        "{}",
+        String::from_utf8_lossy(&again.stderr)
+    );
+    let printed = String::from_utf8_lossy(&again.stdout).to_string();
+    assert_eq!(
+        printed.matches("timing  capture").count(),
+        1,
+        "a converged replay captured more than once:\n{printed}"
+    );
+    assert_eq!(printed.matches("already declared").count(), 3, "{printed}");
+    assert!(printed.contains("applied 3 manifest rows"), "{printed}");
+
+    // And the closing pass is what makes the skip safe: a managed file that
+    // the rows would have written is written by it, once, at the end.
+    let record = root.join("src/main/java/com/example/demo/domain/Note.java");
+    assert!(record.is_file());
+}
+
 #[test]
 fn a_manifest_replays_into_the_model_and_converges() {
     let root = jdl_project(
@@ -1311,11 +1371,16 @@ fields = ["OPEN", "CLOSED"]
         .unwrap();
     let again = String::from_utf8_lossy(&again.stdout).to_string();
     // One report for the whole replay: a row files its line, and the summary
-    // under them is the command's own. Each row still says it declared
-    // nothing, which is what convergence looks like from a manifest.
+    // under them is the command's own. A row whose declaration is already in
+    // the model says so and skips its pipeline; the closing pass is the one
+    // that captures, and it is the line that says there was nothing to do.
     assert!(
-        again.matches("  nothing to do").count() >= 3,
+        again.matches("  already declared").count() >= 3,
         "a second replay declares nothing new:\n{again}"
+    );
+    assert!(
+        again.contains("nothing to do"),
+        "the closing pass files what it found:\n{again}"
     );
     assert_eq!(
         again.matches("applied").count(),

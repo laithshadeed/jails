@@ -357,6 +357,13 @@ pub(crate) fn replay(requested: Option<&Path>, invocation: crate::Invocation) ->
     for row in rows {
         crate::model_generate_jdl::run(row, batched.clone())?;
     }
+    // **One pipeline for the whole replay, at the end.** A row that declares
+    // something already in the model skips its own pipeline (`Invocation::
+    // defer_unchanged`), which is only sound because this runs: an ordinary
+    // mutation over the finished source, with nothing to change about the
+    // model, that captures once and writes whatever the tree is missing. On
+    // an unchanged manifest it is the only pipeline the command runs.
+    apply_deferred(&batched)?;
     crate::model_generate::run_owed_format(&invocation)?;
     // **One command, one report.** Each row is the same pipeline and printed
     // its own header, plan digest and whole file list: a fourteen-row manifest
@@ -375,6 +382,27 @@ pub(crate) fn replay(requested: Option<&Path>, invocation: crate::Invocation) ->
         println!("applied {} manifest rows", filed.rows);
     }
     report_undeclared(root, &declared, &invocation)
+}
+
+/// The replay's closing pass: the model as the rows left it, compiled and
+/// executed once.
+///
+/// It is a mutation that mutates nothing -- the source it hands forward is
+/// the source it read -- so every guard, precondition and merge a row's own
+/// pipeline would have run, runs here over the finished model.
+fn apply_deferred(batched: &crate::Invocation) -> Result<()> {
+    let invocation = batched.clone().applying_deferred();
+    let current = crate::model_command::Current::load(&invocation)?;
+    let next_source = current.source.clone();
+    crate::model_generate::finish_generation(crate::model_generate::PreparedMutation {
+        name: "model".to_string(),
+        invocation,
+        current,
+        next_source,
+        evolution: jails_model::Evolution::none(),
+        authored_migration: None,
+        reader_paths: Vec::new(),
+    })
 }
 
 /// Name what the model still declares and the manifest no longer does.

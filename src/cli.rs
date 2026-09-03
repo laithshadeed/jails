@@ -240,6 +240,19 @@ pub(crate) struct Invocation {
     /// row rewrites. The rows still declare the effect on their plans; the
     /// replay runs it once after the last of them, over everything at once.
     pub(crate) batch_effects: bool,
+    /// Whether a mutation that changes nothing may skip the pipeline.
+    ///
+    /// **Only a replay sets this, and only because a replay ends with a pass
+    /// that would have done the same work.** A row whose declaration is
+    /// already in the model produces the source it was handed, and capturing,
+    /// compiling and materializing to discover that costs about thirty
+    /// milliseconds a row -- twelve rows of an unchanged manifest were 255 ms
+    /// of finding twelve times over that there was nothing to do. What makes
+    /// the skip safe is not that the model is unchanged: it is that
+    /// `app apply` runs one ordinary mutation over the finished source
+    /// afterwards, so a file a skipped row would have repaired is repaired
+    /// there.
+    pub(crate) defer_unchanged: bool,
     /// Where a row of a replay files its report, instead of printing one.
     ///
     /// **One command is one report.** Fifteen rows each printing a header, a
@@ -292,6 +305,7 @@ impl Invocation {
     pub(crate) fn batching(self) -> Self {
         Self {
             batch_effects: true,
+            defer_unchanged: true,
             batch_report: Some(std::sync::Arc::new(std::sync::Mutex::new(
                 BatchReport::default(),
             ))),
@@ -337,6 +351,15 @@ impl Invocation {
             .unwrap_or_default()
     }
 
+    /// The replay's closing pass: batched like a row, and the one mutation
+    /// that must not be skipped, because it is what the skipped rows rely on.
+    pub(crate) fn applying_deferred(self) -> Self {
+        Self {
+            defer_unchanged: false,
+            ..self
+        }
+    }
+
     pub(crate) fn without_starting(self, no_start: bool) -> Self {
         Self { no_start, ..self }
     }
@@ -375,6 +398,7 @@ impl Invocation {
             debug,
             timing: debug,
             batch_effects: false,
+            defer_unchanged: false,
             batch_report: None,
             output: Output::Human,
             diff: false,
