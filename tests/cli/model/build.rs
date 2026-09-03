@@ -81,7 +81,12 @@ fn dependency_is_semantic_model_data_and_one_exact_maven_projection() {
         .unwrap();
     assert!(reapplied.status.success());
     let execution: serde_json::Value = serde_json::from_slice(&reapplied.stdout).unwrap();
-    assert_eq!(execution["files_written"], 0);
+    assert!(
+        execution["files"]
+            .as_array()
+            .is_some_and(|files| files.is_empty()),
+        "a re-apply changes nothing, so the report lists nothing: {execution}"
+    );
 
     let removed = jails_cmd(&root, None)
         .args(["remove", "dependency", "org.jsoup:jsoup"])
@@ -603,7 +608,12 @@ fn canonical_settings_preview_update_reconcile_and_unset_end_to_end() {
         .unwrap();
     assert!(repeated.status.success());
     let execution: serde_json::Value = serde_json::from_slice(&repeated.stdout).unwrap();
-    assert_eq!(execution["files_written"], 0);
+    assert!(
+        execution["files"]
+            .as_array()
+            .is_some_and(|files| files.is_empty()),
+        "a re-apply changes nothing, so the report lists nothing: {execution}"
+    );
 
     let removed = jails_cmd(&root, None)
         .args(["unset", "server.port"])

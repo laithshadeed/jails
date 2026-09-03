@@ -56,14 +56,33 @@ pub(crate) fn deleted_paths(
 /// what the rest amount to is one number. The summary is counted off the
 /// lines rather than beside them, which is what makes the count and the list
 /// the same answer by construction.
+/// One path this transition changes, and what it does to it.
+///
+/// **The value, not the sentence.** The human report renders these as
+/// `  create  src/...` and `--output json` renders them as objects, and
+/// making both readings of one list is what stops the two describing the
+/// same transition differently -- which is the whole of I70.2.
+pub(crate) struct Change {
+    pub(crate) verb: &'static str,
+    pub(crate) path: String,
+}
+
 pub(crate) struct Delta {
-    /// One line per path this transition changes, in the order it does it.
-    pub(crate) lines: Vec<String>,
+    /// Every path this transition changes, in the order it does it.
+    pub(crate) changes: Vec<Change>,
     /// Managed paths the plan carries and this transition leaves alone.
     pub(crate) unchanged: usize,
 }
 
 impl Delta {
+    /// One report line per change, in the order the executor does them.
+    pub(crate) fn lines(&self) -> Vec<String> {
+        self.changes
+            .iter()
+            .map(|change| format!("  {:<8}{}", change.verb, change.path))
+            .collect()
+    }
+
     /// The one-line count under (or instead of) the list.
     pub(crate) fn summary(&self) -> String {
         let mut counts: Vec<(&str, usize)> = Vec::new();
@@ -75,9 +94,9 @@ impl Delta {
             ("delete", "deleted"),
         ] {
             let found = self
-                .lines
+                .changes
                 .iter()
-                .filter(|line| line.trim_start().starts_with(verb))
+                .filter(|change| change.verb == verb)
                 .count();
             if found > 0 {
                 counts.push((noun, found));
@@ -174,7 +193,7 @@ pub(crate) fn model_hunk(bundle: &jails_contracts::PlanBundle) -> Vec<String> {
 /// bundle -- no filesystem read, and nothing here can disagree with what
 /// apply will write.
 pub(crate) fn preview_lines(bundle: &jails_contracts::PlanBundle) -> Vec<String> {
-    preview(bundle).lines
+    preview(bundle).lines()
 }
 
 /// Which verb a single-file operation gets, or `None` when it changes nothing.
@@ -193,7 +212,7 @@ fn verb_for(
 /// The same walk, keeping what it left out.
 pub(crate) fn preview(bundle: &jails_contracts::PlanBundle) -> Delta {
     use jails_contracts::PlannedOperation as Op;
-    let mut lines = Vec::new();
+    let mut changes: Vec<Change> = Vec::new();
     let mut unchanged = 0_usize;
     for operation in &bundle.plan.operations {
         match operation {
@@ -227,7 +246,10 @@ pub(crate) fn preview(bundle: &jails_contracts::PlanBundle) -> Delta {
                         (Some(_), Some(_)) => "write",
                         (Some(_), None) => "delete",
                     };
-                    lines.push(format!("  {verb:<8}{}", path.as_str()));
+                    changes.push(Change {
+                        verb,
+                        path: path.as_str().to_string(),
+                    });
                 }
             }
             Op::ReplaceModelFile {
@@ -241,7 +263,10 @@ pub(crate) fn preview(bundle: &jails_contracts::PlanBundle) -> Delta {
                 after,
             } => match verb_for(before.as_ref(), after, "write") {
                 None => unchanged += 1,
-                Some(verb) => lines.push(format!("  {verb:<8}{}", path.as_str())),
+                Some(verb) => changes.push(Change {
+                    verb,
+                    path: path.as_str().to_string(),
+                }),
             },
             Op::PatchReaderFile {
                 path,
@@ -249,15 +274,24 @@ pub(crate) fn preview(bundle: &jails_contracts::PlanBundle) -> Delta {
                 after,
             } => match verb_for(before.as_ref(), after, "patch") {
                 None => unchanged += 1,
-                Some(verb) => lines.push(format!("  {verb:<8}{}", path.as_str())),
+                Some(verb) => changes.push(Change {
+                    verb,
+                    path: path.as_str().to_string(),
+                }),
             },
             Op::RemoveReaderFile { path, .. } => {
-                lines.push(format!("  {:<8}{}", "delete", path.as_str()));
+                changes.push(Change {
+                    verb: "delete",
+                    path: path.as_str().to_string(),
+                });
             }
             Op::AppendMigration { path, .. } => {
-                lines.push(format!("  {:<8}{}", "append", path.as_str()));
+                changes.push(Change {
+                    verb: "append",
+                    path: path.as_str().to_string(),
+                });
             }
         }
     }
-    Delta { lines, unchanged }
+    Delta { changes, unchanged }
 }

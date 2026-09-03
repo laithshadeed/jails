@@ -157,6 +157,60 @@ fn disabled_tests(bundle: &jails_contracts::PlanBundle) -> Vec<String> {
     disabled
 }
 
+/// The report as one JSON value: the same status, the same list, the same
+/// notes the human output carries.
+///
+/// **One projection, two encodings.** `--output json` used to print the
+/// `Execution` receipt -- four counts and a digest, no list -- so a caller
+/// could not learn from JSON what a reader learns from the screen, and the
+/// bundle it printed for a preview was a third shape again. The bundle is
+/// what `--plan-out` writes, because that is the reviewed transition; this
+/// is the report, and `files` is the very list `Delta` renders as lines.
+pub(crate) fn json_report(
+    status: &str,
+    name: &str,
+    bundle: &jails_contracts::PlanBundle,
+    delta: &crate::plan_delta::Delta,
+    notes: &[String],
+) -> serde_json::Value {
+    // **A report says what happened, and a re-apply's plan is older than the
+    // files.** `model apply` of a bundle whose transition is already on disk
+    // has before-images from when those paths did not exist, so the plan
+    // reads `create` while the executor wrote nothing; the human report says
+    // "nothing to do" for exactly this reason, and the encodings must not
+    // disagree about it.
+    let idle = status == "nothing-to-do";
+    let files = match idle {
+        true => Vec::new(),
+        false => delta
+            .changes
+            .iter()
+            .map(|change| serde_json::json!({"verb": change.verb, "path": change.path}))
+            .collect::<Vec<_>>(),
+    };
+    let unchanged = match idle {
+        true => delta.changes.len() + delta.unchanged,
+        false => delta.unchanged,
+    };
+    serde_json::json!({
+        "schema": "jails.command-result.v2",
+        "status": status,
+        "command": name,
+        "plan_digest": bundle.plan.digest.as_str(),
+        "summary": match idle {
+            true => "nothing to do".to_string(),
+            false => delta.summary(),
+        },
+        "unchanged": unchanged,
+        "files": files,
+        "model": crate::plan_delta::model_hunk(bundle)
+            .into_iter()
+            .map(|line| line.trim_start().to_string())
+            .collect::<Vec<_>>(),
+        "notes": notes,
+    })
+}
+
 pub(crate) fn report_plan(
     bundle: &jails_contracts::PlanBundle,
     invocation: &Invocation,
@@ -175,7 +229,7 @@ pub(crate) fn report_plan(
         for line in crate::plan_delta::model_hunk(bundle) {
             println!("{line}");
         }
-        for line in &delta.lines {
+        for line in &delta.lines() {
             println!("{line}");
         }
         report_review(bundle, invocation);
@@ -190,10 +244,11 @@ pub(crate) fn report_plan(
             println!("nothing was written.");
         }
     } else {
+        let delta = crate::plan_delta::preview(bundle);
         println!(
             "{}",
-            serde_json::to_string_pretty(bundle)
-                .map_err(|error| Failure::Told(format!("could not encode exact plan: {error}")))?
+            serde_json::to_string_pretty(&json_report("planned", "plan", bundle, &delta, &[]))
+                .map_err(|error| Failure::Told(format!("could not encode the report: {error}")))?
         );
     }
     Ok(())

@@ -184,7 +184,12 @@ fn model_apply_consumes_the_reviewed_plan_without_recompiling() {
         .unwrap();
     assert!(retried.status.success());
     let execution: serde_json::Value = serde_json::from_slice(&retried.stdout).unwrap();
-    assert_eq!(execution["files_written"], 0);
+    assert!(
+        execution["files"]
+            .as_array()
+            .is_some_and(|files| files.is_empty()),
+        "a re-apply changes nothing, so the report lists nothing: {execution}"
+    );
 
     let frozen = jails_cmd(&root, None)
         .args(["model", "check", "--frozen"])

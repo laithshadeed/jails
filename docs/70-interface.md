@@ -65,7 +65,7 @@ reopening a contract:
 | ~~4~~ | ~~I70.13, I71.47, I71.16~~ | ~~the model file reads like the specification's, and editing it by hand is the first path~~ |
 | 5 | I70.22, I71.3, I71.4, I71.5 | the lock is 1× the tree, a scaffold is a 20-line diff, a mutation at a hundred entities is under 100 ms |
 | ~~6~~ | ~~I71.40, I71.41, I71.24~~ | ~~every scanner sees every source root; `test --affected` never selects nothing and passes~~ |
-| 7 | I70.2 | one JSON encoding, carrying the same value as the human report |
+| ~~7~~ | ~~I70.2~~ | ~~one JSON encoding, carrying the same value as the human report~~ |
 | 8 | ~~I70.8~~, I70.9 (one line over), I71.18 | a one-screen `--help`, global flags printed once, `g <kind> --help` about the kind |
 | 9 | I71.29, I71.26, I71.28 | README, the specification and the binary agree |
 | ~~10~~ | ~~I71.14~~ | ~~every mutation prints the JDL it wrote~~ |
@@ -519,13 +519,16 @@ jails g scaffold …`. `model explain Note` prints the five rows about
 
 ### Change
 
-**I70.2 — one JSON, carrying the human report's value.** *Change*
-`--output json` is the same report as human output (status, file list with
-verbs, diagnostics) on every command; the bundle is what `--plan-out`
-writes; the per-command `--json` is a hidden alias for one release. *Done
-when* no row carries `--json` and `jails --output json g record X a:long |
-jq '.files | length'` equals the human list length.
-
+**I70.2 — one JSON, carrying the human report's value.** *Landed:* every
+mutation, preview, `sync` and `model apply` prints one
+`jails.command-result.v2` envelope with the status, the same file list the
+screen shows -- each entry a verb and a path, off the one `Delta` both
+encodings render -- the declaration written into the model, the counts and
+the notes. The bundle is what `--plan-out` writes, which is where a caller
+that wants the reviewed transition looks. The ten per-command `--json`
+flags are hidden aliases for one release. `jails request --json` is not
+one of them and stays advertised: it is curl's request body, not an
+encoding.
 
 
 **I70.10 — `model explain` leads with what the reader pinned.** *Change*

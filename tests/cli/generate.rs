@@ -1666,6 +1666,15 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
     assert!(!debug.contains("timing  execute"), "{debug}");
     assert_eq!(snapshot_tree(&root), before, "debug preview wrote files");
 
+    // **Two values, each with one home.** `--output json` is the report --
+    // the same status and file list the screen carries -- and the reviewed
+    // transition is what `--plan-out` writes, because that is the value
+    // `apply` refers to. Printing the bundle as the report made a caller
+    // read a transition where it asked for an answer.
+    // Outside the project: `--plan-out` is resolved absolute, and a plan
+    // written into the tree would make a preview look like a write.
+    let plans = temp_dir("prepared-review-plans");
+    let bundle_path = plans.join("fresh.plan.json");
     let json = jails_cmd(&root, None)
         .args([
             "g",
@@ -1678,16 +1687,17 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
             "--output",
             "json",
         ])
+        .arg("--plan-out")
+        .arg(&bundle_path)
         .output()
         .unwrap();
     assert!(json.status.success(), "{json:?}");
-    let json = String::from_utf8(json.stdout).unwrap();
+    let report = String::from_utf8(json.stdout).unwrap();
+    let reported: serde_json::Value = serde_json::from_str(&report).unwrap();
+    assert_eq!(reported["schema"], "jails.command-result.v2", "{report}");
+    assert_eq!(reported["status"], "planned", "{report}");
+    let json = std::fs::read_to_string(&bundle_path).unwrap();
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
-    // The exact plan itself, not an envelope describing one: the answer to
-    // `--output json` is the `PlanBundle` -- the reviewed transition, its
-    // digest, its operations and every blob they name -- because that is the
-    // value `--plan-out` writes and `apply` refers to. A second shape
-    // describing it could disagree with it.
     assert_eq!(value["schema"], "jails.plan-bundle.v1", "{json}");
     assert!(
         value["plan"]["digest"]
@@ -1732,6 +1742,7 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
     // carries its *result* rather than a timing for it: the merged bytes are
     // in the bundle's blobs, which is what makes the digest above the thing
     // `apply` refers to.
+    let merged_path = plans.join("merged.plan.json");
     let merged_json = jails_cmd(&root, None)
         .args([
             "g",
@@ -1739,13 +1750,13 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
             "Note",
             "createdAt:instant@default(now())",
             "--pretend",
-            "--output",
-            "json",
         ])
+        .arg("--plan-out")
+        .arg(&merged_path)
         .output()
         .unwrap();
     assert!(merged_json.status.success(), "{merged_json:?}");
-    let merged_json = String::from_utf8(merged_json.stdout).unwrap();
+    let merged_json = std::fs::read_to_string(&merged_path).unwrap();
     let merged_value: serde_json::Value = serde_json::from_str(&merged_json).unwrap();
     let merged_tree = merged_value["plan"]["operations"]
         .as_array()
@@ -1807,9 +1818,10 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
     // bundle it was handed -- which is what makes "preview, review, apply"
     // refer to one transition rather than three.
     assert_eq!(
-        committed_value["schema"], "jails.execution.v1",
+        committed_value["schema"], "jails.command-result.v2",
         "{committed}"
     );
+    assert_eq!(committed_value["status"], "applied", "{committed}");
     assert!(
         committed_value["plan_digest"]
             .as_str()
@@ -1817,9 +1829,9 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
         "{committed}"
     );
     assert!(
-        committed_value["files_written"]
-            .as_u64()
-            .is_some_and(|n| n > 0),
+        committed_value["files"]
+            .as_array()
+            .is_some_and(|files| !files.is_empty()),
         "{committed}"
     );
     // The machine's answer carries no timings: they are a human diagnostic

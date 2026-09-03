@@ -354,7 +354,7 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
                 for line in crate::plan_delta::model_hunk(&bundle) {
                     println!("{line}");
                 }
-                for line in &delta.lines {
+                for line in &delta.lines() {
                     println!("{line}");
                 }
             }
@@ -363,10 +363,17 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
             }
         }
     } else {
+        let delta = crate::plan_delta::preview(&bundle);
+        let status = match execution.files_written == 0 && execution.files_deleted == 0 {
+            true => "nothing-to-do",
+            false => "applied",
+        };
         println!(
             "{}",
-            serde_json::to_string_pretty(&execution)
-                .map_err(|error| Failure::Told(format!("could not encode execution: {error}")))?
+            serde_json::to_string_pretty(&report::json_report(
+                status, &name, &bundle, &delta, &notes
+            ))
+            .map_err(|error| Failure::Told(format!("could not encode the report: {error}")))?
         );
     }
     report::report_review(&bundle, &invocation);

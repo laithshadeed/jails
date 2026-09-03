@@ -137,12 +137,15 @@ refuses before writes.
 - `jails about [--json]` (alias: `jails info`) — describes the current Maven
   context: the top-level reactor, active module, Java release, Spring Boot
   presence, Maven wrapper/command, and recursively declared modules. It works
-  from any directory below a module. `--json` emits the versioned contract
-  used by editor integrations and other tools.
-`--json` is available on `about`, `routes`, `beans`, `why`, `commands`,
-`doctor`, `stats`, `notes` and `test`. `doctor --json` and `test --json` keep
-their exit codes, so `jails doctor --json && deploy` behaves like
-`jails doctor && deploy`.
+  from any directory below a module. `--output json` emits the versioned
+  contract used by editor integrations and other tools.
+`--output json` is available on every command and carries the same value the
+screen does: the status, the file list with its verbs, the declaration a
+mutation wrote, and the notes. The reviewed transition itself is what
+`--plan-out` writes. The older per-command `--json` still parses for one
+release and is no longer advertised. `doctor` and `test` keep their exit
+codes under either spelling, so `jails doctor --output json && deploy`
+behaves like `jails doctor && deploy`.
 
 Every mutation prints the JDL it wrote above the files that JDL implies, so
 `jails g record Money amount:long` shows the `entity Money { … }` declaration

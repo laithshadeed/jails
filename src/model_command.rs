@@ -282,8 +282,13 @@ pub(crate) fn sync(no_start: bool, invocation: Invocation) -> Result<()> {
             println!("       no capabilities are declared: `jails add <capability>` declares one");
         }
     } else {
-        let value = serde_json::to_value(&execution)
-            .map_err(|error| Failure::Told(format!("could not encode execution: {error}")))?;
+        let delta = crate::plan_delta::preview(&bundle);
+        let status = match execution.files_written == 0 && execution.files_deleted == 0 {
+            true => "nothing-to-do",
+            false => "synchronized",
+        };
+        let value =
+            crate::model_generate::report::json_report(status, "sync", &bundle, &delta, &[]);
         print_json(&value)?;
     }
     // **Sync converges the files; `add` installs the service.** A compose
@@ -454,8 +459,16 @@ pub(crate) fn apply(bundle_path: &Path, output: Output) -> Result<()> {
             execution.files_deleted
         );
     } else {
-        let value = serde_json::to_value(execution)
-            .map_err(|error| Failure::Told(format!("could not encode execution: {error}")))?;
+        // The report, like every other command's: an apply that changed
+        // nothing has an empty list, and a caller reads the list rather than
+        // three zeroes.
+        let delta = crate::plan_delta::preview(&bundle);
+        let status = match execution.files_written == 0 && execution.files_deleted == 0 {
+            true => "nothing-to-do",
+            false => "applied",
+        };
+        let value =
+            crate::model_generate::report::json_report(status, "apply", &bundle, &delta, &[]);
         print_json(&value)?;
     }
     Ok(())
@@ -534,7 +547,7 @@ fn plan(root: &Path, manifest: &Path, bundle_path: Option<&Path>, output: Output
             delta.summary(),
             bundle_path.map_or_else(String::new, |path| format!(", bundle {}", path.display()))
         );
-        for line in &delta.lines {
+        for line in &delta.lines() {
             println!("{line}");
         }
     } else {

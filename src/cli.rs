@@ -387,7 +387,7 @@ pub(crate) enum Command {
     #[command(hide = true, visible_alias = "info")]
     About {
         /// Emit a stable machine-readable project description
-        #[arg(long)]
+        #[arg(long, hide = true)]
         json: bool,
     },
     /// Create a new Spring Boot project via start.spring.io
@@ -614,7 +614,7 @@ pub(crate) enum Command {
         #[arg(value_name = "TYPE")]
         type_name: String,
         /// Emit the matches as JSON
-        #[arg(long)]
+        #[arg(long, hide = true)]
         json: bool,
     },
     /// Run the k6 load test (`jails add loadtest`) and report what it measured
@@ -663,7 +663,7 @@ pub(crate) enum Command {
     /// Check everything that has to be true before the app can start
     Doctor {
         /// Emit the checks as JSON: {version, failures, warnings, checks[]}
-        #[arg(long)]
+        #[arg(long, hide = true)]
         json: bool,
     },
     /// Explain a failure: pass a log file, pipe one in, or run it bare to start the app
@@ -679,14 +679,14 @@ pub(crate) enum Command {
         #[arg(long)]
         evidence: bool,
         /// Emit machine-readable diagnoses
-        #[arg(long)]
+        #[arg(long, hide = true)]
         json: bool,
     },
     /// Count files and lines per layer, and the test-to-code ratio
     #[command(hide = true)]
     Stats {
         /// Emit the per-layer counts as JSON
-        #[arg(long)]
+        #[arg(long, hide = true)]
         json: bool,
     },
     /// List TODO/FIXME/HACK/XXX comments across the project
@@ -695,7 +695,7 @@ pub(crate) enum Command {
         /// Only this tag (e.g. `jails notes fixme`)
         tag: Option<String>,
         /// Emit the notes as JSON: file/line/tag/text, ready for a quickfix list
-        #[arg(long)]
+        #[arg(long, hide = true)]
         json: bool,
     },
     /// Find stale APIs and architecture violations without compiling
@@ -704,7 +704,7 @@ pub(crate) enum Command {
     /// List the HTTP routes this project's source declares
     Routes {
         /// Emit machine-readable output for editor integrations
-        #[arg(long)]
+        #[arg(long, hide = true)]
         json: bool,
     },
     /// List the Spring beans this project's source registers, and what they inject
@@ -712,7 +712,7 @@ pub(crate) enum Command {
         /// Only show beans whose type or stereotype contains this text
         pattern: Option<String>,
         /// Emit machine-readable output for editor integrations
-        #[arg(long)]
+        #[arg(long, hide = true)]
         json: bool,
     },
     /// Apply the migrations to a scratch database and report the first failure
@@ -866,7 +866,7 @@ pub(crate) enum Command {
         #[arg(long, value_name = "N", num_args = 0..=1, default_missing_value = "10")]
         slowest: Option<usize>,
         /// Emit the run as JSON instead of Maven's output, read from the reports
-        #[arg(long)]
+        #[arg(long, hide = true)]
         json: bool,
         /// Skip Maven and run the already-compiled classes through JUnit's
         /// console launcher. Falls back to the full path, loudly, whenever a
@@ -997,7 +997,7 @@ pub(crate) enum Command {
     /// editor plugin reads instead of keeping its own tables.
     #[command(hide = true)]
     Commands {
-        #[arg(long)]
+        #[arg(long, hide = true)]
         json: bool,
     },
     /// Print a shell-completion script: source <(jails completion bash)

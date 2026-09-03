@@ -98,7 +98,12 @@ fn fake_capability_is_a_global_compiler_profile_and_remove_is_recompilation() {
         .unwrap();
     assert!(reapplied.status.success());
     let execution: serde_json::Value = serde_json::from_slice(&reapplied.stdout).unwrap();
-    assert_eq!(execution["files_written"], 0);
+    assert!(
+        execution["files"]
+            .as_array()
+            .is_some_and(|files| files.is_empty()),
+        "a re-apply changes nothing, so the report lists nothing: {execution}"
+    );
 
     let removed = jails_cmd(&root, None)
         .args(["remove", "fake", "--force"])

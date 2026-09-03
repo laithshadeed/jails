@@ -7,6 +7,92 @@ use super::*;
 /// every authority it names. This drives all four -- declaration, generated,
 /// migration history, and the SQL table -- and the two states that are not
 /// `consistent`.
+/// `--output json` carries the human report's value: the same status, the
+/// same file list, the same declaration.
+///
+/// **One projection, two encodings.** The JSON used to be the execution
+/// receipt -- four counts and a digest -- so a caller could not learn from it
+/// what a reader learns from the screen, and a preview printed the whole
+/// bundle, a third shape again. The bundle is what `--plan-out` writes.
+#[test]
+fn the_json_encoding_carries_the_same_report_as_the_screen() {
+    let root = model_project("model-one-json", EMPTY_MODEL);
+
+    let machine = jails_cmd(&root, None)
+        .args(["--output", "json", "g", "record", "Money", "amount:long"])
+        .output()
+        .unwrap();
+    assert!(
+        machine.status.success(),
+        "{}",
+        String::from_utf8_lossy(&machine.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&machine.stdout).unwrap();
+    assert_eq!(report["schema"], "jails.command-result.v2");
+    assert_eq!(report["status"], "applied");
+    assert!(
+        report.get("blobs").is_none() && report.get("trees").is_none(),
+        "the report is not the bundle: {report}"
+    );
+    let files = report["files"].as_array().unwrap();
+    assert!(
+        files
+            .iter()
+            .all(|entry| entry["verb"].is_string() && entry["path"].is_string())
+    );
+    assert_eq!(
+        report["model"].as_array().unwrap()[0],
+        "entity Money {",
+        "the declaration the mutation wrote is in the report: {report}"
+    );
+
+    // The same mutation on a second entity, read off the screen: the list the
+    // human sees and the list JSON carries are one value.
+    let human = jails_cmd(&root, None)
+        .args(["g", "record", "Note", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(human.status.success());
+    let printed = String::from_utf8_lossy(&human.stdout);
+    let listed = printed
+        .lines()
+        .filter(|line| {
+            ["create", "write", "patch", "delete", "append"]
+                .iter()
+                .any(|verb| line.starts_with(&format!("  {verb}")))
+        })
+        .count();
+    let machine = jails_cmd(&root, None)
+        .args(["--output", "json", "g", "record", "Third", "n:int"])
+        .output()
+        .unwrap();
+    assert!(machine.status.success());
+    let second: serde_json::Value = serde_json::from_slice(&machine.stdout).unwrap();
+    assert_eq!(
+        second["files"].as_array().unwrap().len(),
+        listed,
+        "a record's file list is the same length either way:\n{printed}\n{second}"
+    );
+
+    // A preview reports too, rather than printing the reviewed transition.
+    let preview = jails_cmd(&root, None)
+        .args([
+            "--output",
+            "json",
+            "--pretend",
+            "g",
+            "record",
+            "Fourth",
+            "n:int",
+        ])
+        .output()
+        .unwrap();
+    assert!(preview.status.success());
+    let preview: serde_json::Value = serde_json::from_slice(&preview.stdout).unwrap();
+    assert_eq!(preview["status"], "planned");
+    assert!(preview.get("blobs").is_none(), "{preview}");
+}
+
 /// No report line begins with an identifier and a colon.
 ///
 /// `Note: nothing to do…` reads as a label, and a reader scanning output for

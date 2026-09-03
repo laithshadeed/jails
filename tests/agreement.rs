@@ -168,30 +168,18 @@ fn would_remove(
     }
     let value: serde_json::Value =
         serde_json::from_str(&stdout).map_err(|error| format!("{error}: {stdout}"))?;
-    // **The exact plan, read the way the executor reads it.** A managed
-    // file is deleted when the tree the plan publishes no longer names a path
-    // the accepted one did; a reader file is deleted by its own operation.
-    let tree_paths = |digest: &serde_json::Value| -> BTreeSet<String> {
-        digest
-            .as_str()
-            .and_then(|digest| value["trees"][digest]["entries"].as_object())
-            .map(|entries| entries.keys().cloned().collect())
-            .unwrap_or_default()
-    };
-    let mut removed = BTreeSet::new();
-    for operation in value["plan"]["operations"].as_array().into_iter().flatten() {
-        match operation["kind"].as_str() {
-            Some("publish-merged-tree") => {
-                let was = tree_paths(&operation["before"]);
-                let now = tree_paths(&operation["after"]);
-                removed.extend(was.difference(&now).cloned());
-            }
-            Some("remove-reader-file") => {
-                removed.extend(operation["path"].as_str().map(str::to_string));
-            }
-            _ => {}
-        }
-    }
+    // **The report's own deletions, which is what the reader is shown.**
+    // `--output json` is one encoding of the report rather than the reviewed
+    // transition -- the bundle is what `--plan-out` writes -- and the report
+    // expands a managed tree to its files, so a path the plan stops naming
+    // arrives here as an ordinary `delete` beside a reader file's own.
+    let removed: BTreeSet<String> = value["files"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|entry| entry["verb"] == "delete")
+        .filter_map(|entry| entry["path"].as_str().map(str::to_string))
+        .collect();
     Ok(removed)
 }
 
