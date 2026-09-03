@@ -396,7 +396,7 @@ impl Linker {
                 "model-entity-reference",
                 path,
                 format!("`{label}` does not name an entity"),
-                "use an entity label declared under `[entities]`",
+                "use an entity label `.jails/model.jdl` declares",
             );
             None
         })

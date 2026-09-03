@@ -208,7 +208,7 @@ fn resolve(entity_name: &str, field_name: &str, invocation: &Invocation) -> Resu
         .find(|entity| entity.label == entity_label || entity.names.java_type == entity_name)
         .ok_or_else(|| {
             Failure::Told(format!(
-                "entity `{entity_name}` does not exist.\n       fix: name an entity declared under `[entities]`"
+                "entity `{entity_name}` does not exist.\n       fix: name an entity `.jails/model.jdl` declares"
             ))
         })?;
     let requested_field = java_to_label(field_name);
@@ -218,7 +218,7 @@ fn resolve(entity_name: &str, field_name: &str, invocation: &Invocation) -> Resu
         .find(|field| field.label == requested_field || field.names.java_member == field_name)
         .ok_or_else(|| {
             Failure::Told(format!(
-                "field `{entity_name}.{field_name}` does not exist.\n       fix: name a field declared under `[entities.{}.fields]`",
+                "field `{entity_name}.{field_name}` does not exist.\n       fix: name a field `entity {}` declares in `.jails/model.jdl`",
                 entity.label
             ))
         })?;

@@ -196,7 +196,7 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation, kind: Kind) -> Res
             && existing != arguments
         {
             return Err(Failure::Told(format!(
-                "`{}` already declares `{}{existing}`\n       fix: the indexed set is a generated column, so changing it is a migration jails does not write -- edit `{MODEL_PATH}` and add one by hand, or keep the current fields",
+                "`{}` already declares `{}{existing}`\n       fix: edit `{MODEL_PATH}` and add the migration by hand, or keep the current fields -- the indexed set is a generated column, so changing it is a migration jails does not write",
                 args.name,
                 kind.name()
             )));

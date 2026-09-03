@@ -146,9 +146,9 @@ pub fn pinned_algorithm_hint() -> Option<String> {
     let pinned = pinned.trim();
     (!pinned.is_empty()).then(|| {
         format!(
-            "\n       fix: this run pinned `--diff-algorithm={pinned}` from \
-             {DIFF_ALGORITHM_OVERRIDE}; git merge-file grew that option after 2.43, so unset it \
-             or set {DIFF_ALGORITHM_OVERRIDE}= to use git's default"
+            "\n       fix: unset {DIFF_ALGORITHM_OVERRIDE}, or set it empty to use git's \
+             default -- this run pinned `--diff-algorithm={pinned}` from it, and git \
+             merge-file grew that option after 2.43"
         )
     })
 }

@@ -214,7 +214,7 @@ fn same_entry(file: &File, path: &Path) -> Result<()> {
         .map_err(|error| format!("could not stat {}: {error}", path.display()))?;
     if named.is_symlink() {
         return Err(format!(
-            "{} is a symlink.\n       fix: the lock must be a real file; a symlink lets two \
+            "{} is a symlink.\n       fix: replace it with a real file -- a symlink lets two \
              runs lock two different inodes and both believe they hold it.",
             path.display()
         )
@@ -222,7 +222,7 @@ fn same_entry(file: &File, path: &Path) -> Result<()> {
     }
     if (held.dev(), held.ino()) != (named.dev(), named.ino()) {
         return Err(format!(
-            "{} changed while it was being locked.\n       fix: the lock is on an inode, not a \
+            "{} changed while it was being locked.\n       fix: retry -- the lock is on an inode, not a \
              name; a replaced file means two holders are possible. Retry.",
             path.display()
         )

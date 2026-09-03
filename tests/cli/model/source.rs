@@ -1614,7 +1614,10 @@ fn a_model_that_is_not_jdl_1_is_refused_by_name() {
         told.contains("`.jails/model.jdl` does not start with `jdl 1`"),
         "{told}"
     );
-    assert!(told.contains("fix: the model must be `jdl 1`"), "{told}");
+    assert!(
+        told.contains("fix: rewrite it to start with `jdl 1`"),
+        "{told}"
+    );
     fs::remove_dir_all(&root).ok();
 
     let root = temp_dir("model-only-toml");

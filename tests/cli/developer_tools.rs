@@ -742,6 +742,140 @@ fn quoted_jails_commands() -> Vec<(String, String)> {
     out
 }
 
+/// **Every `fix:` line says what to do.**
+///
+/// A refusal that names no next step leaves the reader to guess, and jails'
+/// whole argument for refusing rather than guessing is that it can say what
+/// would work instead. Twelve of them used to point at `[entities]`,
+/// `[capabilities]`, `[settings]` and `[dependencies]` -- tables of a format
+/// the model has not used since JDL, so the fix named a place that does not
+/// exist.
+///
+/// The rule is that a fix leads with the action: a backticked command, or an
+/// imperative verb. The verb list is closed and is extended deliberately,
+/// the way `UNJOURNEYED` is -- an open pattern would pass "the lock must be a
+/// real file", which states a fact and leaves the reader where they were.
+#[test]
+fn every_fix_line_leads_with_something_the_reader_can_do() {
+    // Sorted, and every entry earned by a refusal that exists.
+    const IMPERATIVES: &[&str] = &[
+        "add",
+        "adopt",
+        "carry",
+        "change",
+        "check",
+        "choose",
+        "compile",
+        "connect",
+        "correct",
+        "create",
+        "declare",
+        "destroy",
+        "drop",
+        "edit",
+        "evolve",
+        "export",
+        "free",
+        "generate",
+        "give",
+        "hold",
+        "import",
+        "insert",
+        "inspect",
+        "install",
+        "keep",
+        "mark",
+        "move",
+        "name",
+        "narrow",
+        "omit",
+        "pass",
+        "pin",
+        "preserve",
+        "provide",
+        "put",
+        "raise",
+        "re-plan",
+        "re-run",
+        "rebuild",
+        "regenerate",
+        "reinstall",
+        "remove",
+        "rename",
+        "repair",
+        "replace",
+        "report",
+        "rerun",
+        "restart",
+        "restore",
+        "retry",
+        "review",
+        "revive",
+        "rewrite",
+        "run",
+        "save",
+        "select",
+        "send",
+        "set",
+        "start",
+        "unset",
+        "update",
+        "upgrade",
+        "use",
+        "verify",
+        "wait",
+        "write",
+    ];
+    assert!(
+        IMPERATIVES.windows(2).all(|pair| pair[0] < pair[1]),
+        "keep the imperative list sorted so a duplicate is visible"
+    );
+
+    let mut unhelpful: Vec<String> = Vec::new();
+    let mut counted = 0usize;
+    for (file, literal) in production_message_literals() {
+        for tail in literal.split("fix: ").skip(1) {
+            let body = tail.trim_start();
+            if body.is_empty() {
+                continue;
+            }
+            counted += 1;
+            // A fix forwarded from a value is the value's to answer for; it
+            // is checked wherever that message is built.
+            if body.starts_with('{') {
+                continue;
+            }
+            // A backticked command or path is an action spelled out.
+            if body.starts_with('`') {
+                continue;
+            }
+            let first = body
+                .split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-')
+                .to_lowercase();
+            if IMPERATIVES.contains(&first.as_str()) {
+                continue;
+            }
+            unhelpful.push(format!("{file}: fix starts with `{first}` -- {body}"));
+        }
+    }
+    assert!(
+        counted > 300,
+        "the fix scanner found only {counted} lines -- it has lost the code"
+    );
+    unhelpful.sort();
+    unhelpful.dedup();
+    assert!(
+        unhelpful.is_empty(),
+        "{} fix line(s) do not lead with an action. Lead with a backticked command or an \
+         imperative verb, and add the verb to IMPERATIVES if it is a new one:\n{}",
+        unhelpful.len(),
+        unhelpful.join("\n")
+    );
+}
+
 /// **A vocabulary budget, gated.**
 ///
 /// Six words described jails to itself rather than to a reader.

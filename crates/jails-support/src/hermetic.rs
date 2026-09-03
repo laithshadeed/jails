@@ -300,7 +300,7 @@ fn signal_group(group: Pid, signal: Signal) -> Result<()> {
         Ok(()) => Ok(()),
         Err(nix::errno::Errno::ESRCH) => Ok(()),
         Err(error) => Err(format!(
-            "could not signal the tool's process group: {error}.\n       fix: a tool that \
+            "could not signal the tool's process group: {error}.\n       fix: report this as a bug -- a tool that \
              cannot be stopped is a refusal, never a detached success."
         )
         .into()),

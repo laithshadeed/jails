@@ -128,7 +128,7 @@ pub(crate) fn remove(
             .find(|candidate| candidate.kind == label)
             .ok_or_else(|| {
                 Failure::Told(format!(
-                    "capability `{label}` is not declared.\n       fix: remove a capability declared under `[capabilities]`"
+                    "capability `{label}` is not declared.\n       fix: name a capability `.jails/model.jdl` declares"
                 ))
             })?;
         if let Some(name) = &name
@@ -259,7 +259,7 @@ pub(crate) fn remove_dependency(
         .cloned()
         .ok_or_else(|| {
             Failure::Told(format!(
-                "dependency `{coordinate}` is not declared.\n       fix: remove a coordinate declared under `[dependencies]`"
+                "dependency `{coordinate}` is not declared.\n       fix: name a coordinate `.jails/model.jdl` declares"
             ))
         })?;
     let next_source =

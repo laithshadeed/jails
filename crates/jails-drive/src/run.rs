@@ -561,7 +561,7 @@ pub fn gradle(args: &[String], debug: bool) -> Result<()> {
     let root = find_project_root()?;
     if crate::build::detect(&root) != crate::build::Build::Gradle {
         return Err(jails_support::Failure::Told(
-            "`jails gradle` needs a Gradle project.\n       fix: this one is not built by \
+            "`jails gradle` needs a Gradle project.\n       fix: use `jails mvn` -- this project is not built by \
              Gradle -- `jails mvn` is the escape hatch for a Maven build."
                 .to_string(),
         ));

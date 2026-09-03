@@ -92,7 +92,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             .find(|entity| entity.label == label || entity.names.java_type == request.name)
             .ok_or_else(|| {
                 Failure::Told(format!(
-                    "entity `{}` does not exist.\n       fix: name an entity declared under `[entities]`",
+                    "entity `{}` does not exist.\n       fix: name an entity `.jails/model.jdl` declares",
                     request.name
                 ))
             })?;
@@ -378,7 +378,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             })
             .ok_or_else(|| {
                 Failure::Told(format!(
-                    "{} operation `{}` does not exist.\n       fix: name a matching operation declared under `[operations]`",
+                    "{} operation `{}` does not exist.\n       fix: name an operation `.jails/model.jdl` declares",
                     operation_kind(request.kind).expect("operation kind was checked"),
                     request.name
                 ))

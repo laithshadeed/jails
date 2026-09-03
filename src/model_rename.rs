@@ -28,7 +28,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
         RenameStrategy::SingleCutover => true,
         _ => {
             return Err(Failure::Told(
-                "entity rename implements `--strategy preserve-table` and `single-cutover`.\n       fix: a rolling or expand/contract rename is a campaign of plans rather than one; run the cutover when the readers are ready"
+                "entity rename implements `--strategy preserve-table` and `single-cutover`.\n       fix: run the cutover when the readers are ready -- a rolling or expand/contract rename is a campaign of plans rather than one"
                     .to_string(),
             ));
         }
@@ -61,7 +61,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
         .find(|entity| entity.label == selector || entity.names.java_type == selector)
         .ok_or_else(|| {
             Failure::Told(format!(
-                "entity `{}` does not exist.\n       fix: name an entity label or Java type declared under `[entities]`",
+                "entity `{}` does not exist.\n       fix: name an entity label or Java type `.jails/model.jdl` declares",
                 request.from
             ))
         })?;

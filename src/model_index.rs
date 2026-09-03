@@ -57,7 +57,7 @@ pub(crate) fn add(
         .find(|entity| entity.label == entity_label || entity.names.java_type == entity_name)
         .ok_or_else(|| {
             Failure::Told(format!(
-                "entity `{entity_name}` does not exist.\n       fix: name an entity declared under `[entities]`"
+                "entity `{entity_name}` does not exist.\n       fix: name an entity `.jails/model.jdl` declares"
             ))
         })?;
     if !entity.facets.contains(&Facet::Repository) {

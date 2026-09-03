@@ -560,7 +560,7 @@ pub(crate) fn event_component_declarations(
                     || parsed.max_length.is_some()
                 {
                     return Err(Failure::Told(format!(
-                        "event component `{token}` carries a table constraint.\n       fix: an event is not stored -- use `{name}:{ty}` without `@pk`, `@unique`, `@index` or a range"
+                        "event component `{token}` carries a table constraint.\n       fix: use `{name}:{ty}` without `@pk`, `@unique`, `@index` or a range -- an event is not stored"
                     )));
                 }
                 Ok(format!("{}: {}", parsed.label, parsed.type_name))
@@ -580,7 +580,7 @@ pub(crate) fn operation_field_label(model: &AppModel, entity: &str, token: &str)
         .find(|candidate| candidate.label == entity)
         .ok_or_else(|| {
             Failure::Told(format!(
-                "`{entity}` does not name a entity.\n       fix: choose an entity declared under `[entities]`"
+                "`{entity}` does not name a entity.\n       fix: choose an entity `.jails/model.jdl` declares"
             ))
         })?;
     if !token.contains(':') {

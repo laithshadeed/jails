@@ -22,7 +22,7 @@ fn constant_name(text: &str) -> Result<Name> {
         .collect();
     Name::parse(&normalised).map_err(|_| {
         jails_support::Failure::Told(format!(
-            "`{text}` is not a usable enum constant.\n       fix: a constant is a Java \
+            "`{text}` is not a usable enum constant.\n       fix: write a Java \
              identifier; write `NAME=wire` when the value on the wire is not one."
         ))
     })

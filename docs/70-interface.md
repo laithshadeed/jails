@@ -545,12 +545,14 @@ leaves it out instead.
 
 
 **I70.5 and I71.39 — every refusal is fact, fix, nothing written.**
-*Change* rewrite the twelve `[entities]`-style messages; every `fix:`
-line names a `jails` command, a file, or gives an imperative sentence;
-a gate scans `fix:` lines the way
-`every_command_a_message_tells_the_reader_to_run_is_one_that_exists`
-scans commands. *Done when* `grep -rn 'declared under \`\[' src crates`
-is empty and the gate is green.
+*Landed.* The twelve `[entities]`-style messages name
+`.jails/model.jdl` instead of a TOML table the model has not had since
+JDL, and `every_fix_line_leads_with_something_the_reader_can_do` holds the
+rest: a `fix:` leads with a backticked command or an imperative verb from a
+closed list, extended deliberately the way `UNJOURNEYED` is. An open
+pattern would have passed *the lock must be a real file*, which states a
+fact and leaves the reader where they were; eleven such lines were
+rewritten to lead with the action.
 
 **I71.10 — a vocabulary budget, gated.** *Landed, with one exemption.* The
 gate is `the_six_retired_words_appear_in_no_help_page_and_no_message`: it

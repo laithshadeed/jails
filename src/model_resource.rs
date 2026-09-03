@@ -144,7 +144,7 @@ pub(crate) fn add_field(request: AddFieldRequest, invocation: Invocation) -> Res
         })
         .ok_or_else(|| {
             Failure::Told(format!(
-                "entity `{}` does not exist.\n       fix: name an entity declared under `[entities]`",
+                "entity `{}` does not exist.\n       fix: name an entity `.jails/model.jdl` declares",
                 request.entity
             ))
         })?;

@@ -111,7 +111,7 @@ fn refuse_retired_toml() -> Failure {
 
 fn refuse_not_jdl_1() -> Failure {
     Failure::Told(format!(
-        "`{JDL_PATH}` does not start with `jdl 1`.\n       fix: the model must be `jdl 1`; rewrite it and check with `jails model check`"
+        "`{JDL_PATH}` does not start with `jdl 1`.\n       fix: rewrite it to start with `jdl 1`, then check it with `jails model check`"
     ))
 }
 

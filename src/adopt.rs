@@ -245,7 +245,7 @@ fn field_token(main_root: &Path, owner: &str, param: &Param) -> Result<String> {
         return Ok(format!("{}:{simple}{suffix}", param.name));
     }
     Err(Failure::Told(format!(
-        "component `{}` of `{owner}` has type `{written}`, which jails cannot record as a field type.\n       fix: the types jails knows are {}; a capitalised type this project declares under {MAIN_JAVA} passes through by name",
+        "component `{}` of `{owner}` has type `{written}`, which jails cannot record as a field type.\n       fix: use one of the types jails knows ({}), or a capitalised type this project declares under {MAIN_JAVA}, which passes through by name",
         param.name,
         known_java_spellings()
     )))
