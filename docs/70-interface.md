@@ -358,8 +358,10 @@ reader's -- is left alone. The documented resolution is *not* `rm
 .jails/compiler.lock.json && jails sync`: with no lock there is no merge
 base, so every managed path reads as reader-owned and the next command
 refuses (I71.8). Keeping either side and running `jails sync` is the
-resolution, and it loses nothing but the other side's record of what it had
-generated, because either projection is a real ancestor of both trees.
+resolution, and since I71.45 it loses nothing at all: either projection is
+a real ancestor of both trees, and the side whose lock did not survive is
+accepted rather than refused, because its files are byte-for-byte what the
+compiler renders for them.
 
 **I71.8 — a lost merge base is said out loud.** *Landed, and the premise
 was wrong.* jails does not treat the managed tree as accepted when the
