@@ -90,14 +90,17 @@ fn adopt_resource_registers_a_hand_written_record_as_the_readers_own() {
         fs::read_to_string(root.join(MESSAGE_PATH)).unwrap(),
         MESSAGE
     );
+    // Managed output lives beside the reader's sources, so "jails did not
+    // render it" is the lock's answer: the accepted projection never names
+    // the reader's path.
+    let lock = fs::read_to_string(root.join(".jails/compiler.lock.json")).unwrap();
     assert!(
-        !root
-            .join(".jails/generated/main/java/com/example/notes/domain/Message.java")
-            .exists()
+        !lock.contains("domain/Message.java"),
+        "the lock claims the reader's record: {lock}"
     );
     assert!(
         !root
-            .join(".jails/generated/test/java/com/example/notes/domain/MessageTest.java")
+            .join("src/test/java/com/example/notes/domain/MessageTest.java")
             .exists()
     );
     // The file rode in the plan as an exact input -- a `Present`
@@ -168,10 +171,10 @@ fn adopt_resource_pins_a_record_outside_the_domain_layer_and_passes_project_type
         model.contains("  fallback: Priority? @id(fld_message_fallback)\n"),
         "{model}"
     );
+    let lock = fs::read_to_string(root.join(".jails/compiler.lock.json")).unwrap();
     assert!(
-        !root
-            .join(".jails/generated/main/java/com/example/notes/model/Message.java")
-            .exists()
+        !lock.contains("model/Message.java"),
+        "the lock claims the reader's record: {lock}"
     );
 }
 
@@ -223,8 +226,23 @@ fn adopt_resource_refuses_by_name_and_writes_nothing() {
     }
     assert_eq!(snapshot_tree(&root), before, "a refusal wrote something");
 
-    // A type jails already renders is not adopted over: two records with one
-    // name is the collision the reader has to resolve.
+    // Generating over the reader's record is the collision the reader has
+    // to resolve: the render wants the path their file holds.
+    let collided = jails_cmd(&root, None)
+        .args(["g", "record", "Message", "title:string!"])
+        .output()
+        .unwrap();
+    assert!(
+        !collided.status.success(),
+        "generated over the reader's file"
+    );
+    assert!(
+        String::from_utf8_lossy(&collided.stderr).contains("already reader-owned"),
+        "{}",
+        String::from_utf8_lossy(&collided.stderr)
+    );
+    // And a type jails already renders is not adopted over.
+    fs::remove_file(root.join(MESSAGE_PATH)).unwrap();
     let generated = jails_cmd(&root, None)
         .args(["g", "record", "Message", "title:string!"])
         .output()
@@ -284,9 +302,9 @@ fn an_adopted_resource_evolves_renames_and_destroys_like_a_generated_one() {
         "{}",
         String::from_utf8_lossy(&query.stderr)
     );
-    let port = fs::read_to_string(root.join(
-        ".jails/generated/main/java/com/example/notes/application/queries/OpenMessagesQuery.java",
-    ))
+    let port = fs::read_to_string(
+        root.join("src/main/java/com/example/notes/application/queries/OpenMessagesQuery.java"),
+    )
     .unwrap();
     assert!(
         port.contains("import com.example.notes.domain.Message;"),

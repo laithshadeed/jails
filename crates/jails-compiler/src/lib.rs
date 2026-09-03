@@ -2933,9 +2933,9 @@ entity Task {
     }
 
     /// An adopted record leaves the tree without a transfer: the managed-ABI
-    /// refusal a plain `eject Note.record` meets does not apply, no
-    /// `EjectFile` is planned, and the companion test that would pin jails'
-    /// compact constructor is not rendered either.
+    /// refusal a plain `eject Note.record` meets does not apply, no reader
+    /// file is touched, and the companion test that would pin jails' compact
+    /// constructor is not rendered either.
     #[test]
     fn an_adopted_record_is_excluded_without_a_transfer_or_a_companion_test() {
         let model = jails_model::parse_jdl(MODEL).unwrap();
@@ -2974,11 +2974,11 @@ entity Task {
             artifacts.contains("art_ent_note_repository"),
             "{artifacts:?}"
         );
-        assert!(
-            !draft
-                .reader_document_intents
-                .iter()
-                .any(|intent| matches!(intent, DocumentIntent::EjectFile { .. }))
+        let before = compile_current(&snapshot).unwrap();
+        assert_eq!(
+            draft.reader_document_intents.len(),
+            before.reader_document_intents.len(),
+            "adoption is a lock edit and touches no reader file"
         );
     }
 
