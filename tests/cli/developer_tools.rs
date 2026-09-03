@@ -1063,6 +1063,73 @@ fn test_sources_without_comments() -> String {
     out
 }
 
+/// **A global flag that some commands quietly ignore is a flag that lies.**
+///
+/// `--pretend` is the promise that nothing is written. Every command here
+/// keeps it by construction -- each starts a tool and writes no project file
+/// -- so accepting the flag and then booting the JVM anyway is the reading a
+/// person is most likely to have and the most expensive one to be wrong
+/// about. The refusal is decided from the parsed command line, before
+/// anything is resolved, which is why it is instant.
+#[test]
+fn pretend_refuses_on_the_commands_that_only_start_something() {
+    let root = temp_dir("pretend-starts-something");
+    fs::write(
+        root.join("pom.xml"),
+        "<project><modelVersion>4.0.0</modelVersion><groupId>dev.example</groupId>\
+         <artifactId>sample</artifactId><version>0.0.1</version></project>",
+    )
+    .unwrap();
+    for (argv, word) in [
+        (vec!["test"], "test"),
+        (vec!["testd"], "testd"),
+        (vec!["run"], "run"),
+        (vec!["check"], "check"),
+        (vec!["build"], "build"),
+        (vec!["mvn", "--", "-v"], "mvn"),
+        (vec!["gradle", "--", "-v"], "gradle"),
+        (vec!["console"], "console"),
+        (vec!["bench"], "bench"),
+        (vec!["migrate", "--check"], "migrate"),
+        // `kafka lag` rather than `topics`: this refusal never reaches the
+        // broker, so it is not the journey the command inventory is asking
+        // for, and `lag` is the one kafka path that already has a real one.
+        (vec!["kafka", "lag"], "kafka"),
+        (vec!["db"], "db"),
+    ] {
+        let started = std::time::Instant::now();
+        // Before the subcommand, because `mvn` and `gradle` pass everything
+        // after `--` to the build tool -- including a flag meant for jails.
+        let output = jails_cmd(&root, None)
+            .arg("--pretend")
+            .args(&argv)
+            .output()
+            .unwrap();
+        let elapsed = started.elapsed();
+        assert!(
+            !output.status.success(),
+            "`jails {} --pretend` did not refuse",
+            argv.join(" ")
+        );
+        let told = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            told.contains(&format!(
+                "`{word}` starts a JVM and writes no project file, so `--pretend` has nothing \
+                 to show"
+            )),
+            "{told}"
+        );
+        assert!(told.contains(&format!("fix: run `jails {word}`")), "{told}");
+        // Generous against a loaded machine; the point is that nothing was
+        // started, and starting anything costs hundreds of milliseconds.
+        assert!(
+            elapsed < std::time::Duration::from_millis(500),
+            "`jails {} --pretend` took {elapsed:?}, so something was started",
+            argv.join(" ")
+        );
+    }
+}
+
 /// **A broker exception is a refusal, not twenty lines of Java.**
 ///
 /// Asking for the lag of a group that has never committed is the first thing

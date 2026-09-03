@@ -639,12 +639,6 @@ completes kinds, capabilities, entities, fields and markers.
 
 ### Change
 
-**I71.6 — `--pretend` refuses where it means nothing.** *Change* on `test`,
-`run`, `check`, `build`, `clean`, `mvn`, `gradle`, `console`, `bench`,
-`migrate`, `kafka`, `db`: *`test` runs a JVM and writes nothing;
-`--pretend` does not apply*, before any JVM starts. *Done when* `jails
-test --pretend` returns that line in under 10 ms.
-
 
 **I70.9 — global flags appear once.** *Landed:* the eight global flags
 carry one help line each, the rationale moved to `jails explain --flag

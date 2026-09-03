@@ -483,7 +483,10 @@ const FLAGS: &[(&str, &str, &str)] = &[
         "Run, but write nothing: print what would change and stop.",
         "Global on purpose. Rails puts `--pretend` on every generator rather than on the few \
 that seemed risky, and the value is that you never have to remember which commands support \
-it. Aliased as `--dry-run`.",
+it. Aliased as `--dry-run`. The commands that only start something -- `test`, `run`, `check`, \
+`build`, `mvn`, `gradle`, `console`, `bench`, `migrate`, `kafka`, `db` -- refuse it instead \
+of accepting it and booting a JVM anyway: a flag some commands quietly ignore is a flag that \
+lies about the one thing it promises.",
     ),
     (
         "output",

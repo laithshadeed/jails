@@ -62,6 +62,38 @@ use clap::{CommandFactory, Parser};
 
 pub(crate) use template_macro::template_here;
 
+/// The commands `--pretend` has nothing to say about, and the word each is
+/// spelled with.
+///
+/// **A global flag that some commands ignore is a flag that lies.**
+/// `--pretend` is the promise that nothing is written, and these commands
+/// keep that promise by construction: every one of them starts a tool and
+/// none of them writes a project file. Accepting the flag and then running
+/// the JVM anyway is the reading a person is most likely to have, and the
+/// most expensive one to be wrong about. Refusing costs a line and is
+/// decided before anything starts.
+///
+/// `clean` and `fmt` are absent deliberately: both change files, so
+/// `--pretend` is a question their build tool would have to answer, and
+/// jails does not answer it on the tool's behalf.
+fn starts_something(command: &Command) -> Option<&'static str> {
+    match command {
+        Command::Test { .. } => Some("test"),
+        Command::Testd { .. } => Some("testd"),
+        Command::Run { .. } => Some("run"),
+        Command::Check => Some("check"),
+        Command::Build => Some("build"),
+        Command::Mvn { .. } => Some("mvn"),
+        Command::Gradle { .. } => Some("gradle"),
+        Command::Console { .. } => Some("console"),
+        Command::Bench { .. } => Some("bench"),
+        Command::Migrate { .. } => Some("migrate"),
+        Command::Kafka { .. } => Some("kafka"),
+        Command::Db { .. } => Some("db"),
+        _ => None,
+    }
+}
+
 fn main() -> std::process::ExitCode {
     if let Some(result) = plan_command::requested() {
         return dispatch::finish(result);
@@ -72,6 +104,15 @@ fn main() -> std::process::ExitCode {
     };
     let debug = cli.debug;
     let pretend = cli.pretend;
+    if let Some(word) = starts_something(&cli.command)
+        && pretend
+    {
+        return dispatch::finish(Err(jails_support::Failure::Told(format!(
+            "`{word}` starts a JVM and writes no project file, so `--pretend` \
+             has nothing to show\n       fix: run `jails {word}` without \
+             `--pretend`"
+        ))));
+    }
 
     let invocation = Invocation {
         // The process directory, unless a caller resolves one: see

@@ -1256,6 +1256,14 @@ the companion test is emitted whole and `@Disabled`, naming the component.
   for real use, and the real-compile tests pin plain `mvn` through
   `real_path_without_mvnd()`.
 - **`jails run` must not swallow a failed startup**: see `run.rs` above.
+- **A global flag some commands ignore is a flag that lies.** `--pretend`
+  promises nothing is written; the commands that only start something
+  (`test`, `testd`, `run`, `check`, `build`, `mvn`, `gradle`, `console`,
+  `bench`, `migrate`, `kafka`, `db`) refuse it from the parsed command line
+  before anything is resolved, rather than accepting it and booting a JVM.
+  `main::starts_something` is the list, and `clean` and `fmt` are
+  deliberately not on it: both change files, so `--pretend` there is a
+  question the build tool would have to answer.
 - **clap `alias` is invisible to `clap_complete`**; use `visible_alias` for
   anything typed interactively. **Free-form `String` args don't tab-complete**;
   any closed value set is a `clap::ValueEnum`.
