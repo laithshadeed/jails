@@ -1114,6 +1114,116 @@ fn run_no_build_errors_clearly_when_target_is_missing() {
     );
 }
 
+/// **The second `jails run` on an unchanged tree does not start Maven.**
+///
+/// The default launcher resolves the classpath itself, and the runtime cache
+/// is keyed on the *content* of the sources, the outputs and the build file
+/// -- so a tree nobody has edited answers from what is already compiled. A
+/// `touch` is not an edit and must not cost a build; a byte is, and falls
+/// back to the build tool with its own output on the screen.
+///
+/// The fake `mvn` here fails if it is called at all, which is what turns
+/// "did not need Maven" from a timing claim into an assertion.
+#[test]
+fn a_second_run_over_unchanged_sources_launches_without_the_build_tool() {
+    if !real_java_available() {
+        skip("java/javac not found on PATH");
+        return;
+    }
+    let root = temp_dir("run-second-no-mvn");
+    let pkg_dir = common::generated(&root, "src/main/java/com/example/demo");
+    fs::create_dir_all(&pkg_dir).unwrap();
+    fs::write(root.join("pom.xml"), "<project></project>").unwrap();
+    let source = pkg_dir.join("App.java");
+    fs::write(
+        &source,
+        "package com.example.demo;\n\npublic class App {\n    public static void main(String[] args) {\n        System.out.println(\"second-run-ran\");\n    }\n}\n",
+    )
+    .unwrap();
+    let classes = root.join("target/classes");
+    fs::create_dir_all(&classes).unwrap();
+    assert!(
+        std::process::Command::new("javac")
+            .arg("-d")
+            .arg(&classes)
+            .arg(&source)
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let fake_dir = temp_dir("run-second-no-mvn-bin");
+    fs::create_dir_all(&fake_dir).unwrap();
+    for tool in ["mvn", "mvnd"] {
+        let path = fake_dir.join(tool);
+        fs::write(&path, "#!/bin/sh\nexit 17\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&path).unwrap().permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&path, perms).unwrap();
+        }
+    }
+    let path = format!("{}:{}", fake_dir.display(), real_path_without_mvnd());
+
+    // The first run resolves and caches; the second is the one the item is
+    // about, and both are asserted because a launcher that needed Maven once
+    // would fail here rather than merely be slow.
+    for attempt in 1..=2 {
+        let output = jails_cmd_with_path(&root, &path)
+            .arg("run")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "run {attempt}: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let printed = String::from_utf8_lossy(&output.stdout).to_string();
+        assert!(
+            printed.contains("second-run-ran"),
+            "run {attempt}: {printed}"
+        );
+        assert!(
+            printed.contains("classpath-resolved"),
+            "run {attempt} did not say which launcher it used: {printed}"
+        );
+    }
+
+    // A `touch` is not an edit: the cache is content-addressed, so the run
+    // still answers without the build tool.
+    let bytes = fs::read(&source).unwrap();
+    fs::write(&source, bytes).unwrap();
+    let touched = jails_cmd_with_path(&root, &path)
+        .arg("run")
+        .output()
+        .unwrap();
+    assert!(
+        touched.status.success(),
+        "a touch cost a build: {}",
+        String::from_utf8_lossy(&touched.stderr)
+    );
+
+    // A byte is. The fake build tool fails loudly, which is the fallback
+    // being taken rather than skipped.
+    fs::write(
+        &source,
+        "package com.example.demo;\n\npublic class App {\n    public static void main(String[] args) {\n        System.out.println(\"edited\");\n    }\n}\n",
+    )
+    .unwrap();
+    let edited = jails_cmd_with_path(&root, &path)
+        .arg("run")
+        .output()
+        .unwrap();
+    assert!(
+        !edited.status.success(),
+        "an edited source must reach the build tool: {}",
+        String::from_utf8_lossy(&edited.stdout)
+    );
+}
+
 #[test]
 fn run_no_build_runs_already_compiled_plain_classes_without_mvn() {
     if !real_java_available() {

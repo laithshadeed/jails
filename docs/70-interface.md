@@ -71,11 +71,13 @@ reopening a contract:
 | ~~10~~ | ~~I71.14~~ | ~~every mutation prints the JDL it wrote~~ |
 
 **Worth a prototype before a decision:** an LSP for the model (I71.19), an
-MCP server (I71.20), the manifest folded into the model (I71.21). Two came
-off this list by being built rather than prototyped, for the same reason:
-every part of each already existed. Bare `jails` as status (I71.17) is
-facts other commands compute, and `jails undo` (I71.15) is the last plan
-read backwards. `sync --watch` was prototyped and declined; §9 says why.
+MCP server (I71.20), the manifest folded into the model (I71.21). Three
+came off this list without a prototype, for the same reason: every part of
+each already existed. Bare `jails` as status (I71.17) is facts other
+commands compute, `jails undo` (I71.15) is the last plan read backwards,
+and the second `jails run` (I71.22) was already skipping Maven -- what it
+needed was the measurement and a gate. `sync --watch` was prototyped and
+declined; §9 says why.
 
 ---
 
@@ -1025,11 +1027,21 @@ floor, and caching it is the one thing that must not happen. A remembered
 `docker info` reports an engine that stopped ten minutes ago, which is the
 fact the row exists to check.
 
-**I71.22 — the second `jails run` skips Maven (prototype).** *Change* on a
-tree whose classes are newer than its sources, `java -cp` the main class
-directly (`launcher.rs` already decides staleness and knows the
-classpath), saying so in one line, and fall back to Maven loudly. *Done
-when* the second `jails run` on an unchanged tree answers in under 6 s.
+**I71.22 — the second `jails run` skips Maven.** *Landed, and measured
+rather than built: the launcher was already there and nothing held it.*
+`jails run` resolves the classpath itself, prints one line saying so --
+`jails: classpath-resolved; launching com.example.demo.DemoApplication` --
+and falls back to the build tool with the build tool's own output when it
+cannot. Measured on a generated Spring project with a scaffold: the second
+run reaches *Started DemoApplication* in **2.0 s**, against the item's 6.
+
+What was missing was the gate.
+`a_second_run_over_unchanged_sources_launches_without_the_build_tool` puts
+a `mvn` and an `mvnd` on PATH that fail if they are called at all, so "did
+not need Maven" is an assertion rather than a stopwatch reading. It also
+pins the two edges: the runtime cache is keyed on the *content* of the
+sources, the outputs and the build file, so a `touch` costs nothing and a
+byte falls back.
 
 ---
 
