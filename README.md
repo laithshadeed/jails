@@ -547,7 +547,7 @@ there the unit is a whole service block rather than a setting.)
   or cross-scope rows become 404, stale versions become 409, and generated
   real-database tests prove a stale retry cannot mutate twice.
 - `jails generate|g association <Name> childField=parentField... --on <Child>
-  --yields <Parent>` (alias `fk`) — an explicit persisted relationship between
+  --to <Parent>` (alias `fk`) — an explicit persisted relationship between
   existing scaffolds. It validates field/type/order compatibility, emits the
   target composite uniqueness and ordered PostgreSQL foreign key, defers the
   integrity check until commit so atomic units of work can write either order,

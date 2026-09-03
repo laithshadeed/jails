@@ -69,8 +69,17 @@ pub(crate) struct GenerateArgs {
     pub(crate) strategy_on: Option<String>,
     /// For `strategy`: what a matching implementation produces. Omit and
     /// the strategy is a predicate returning `boolean`. For
-    /// `durable-job`, the resource whose stable id proves completion.
-    #[arg(long = "yields", visible_alias = "returns", value_name = "TYPE")]
+    /// `durable-job`, the entity whose stable id proves completion. For
+    /// `association`, the parent -- spell it `--to` there, which is what a
+    /// foreign key does and what the generated Javadoc says:
+    ///
+    ///   jails g association CommentOwner --on Comment --to Note
+    #[arg(
+        long = "yields",
+        visible_alias = "returns",
+        visible_alias = "to",
+        value_name = "TYPE"
+    )]
     pub(crate) strategy_yields: Option<String>,
     /// For `query`, a second resource to read alongside `--on`, so a
     /// filter may name a component of either.

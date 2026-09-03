@@ -398,10 +398,15 @@ The flag is advertised and works, so R7 forbids the other way round. *Done
 when* the specification documents `@package` and `model fmt --check`
 passes on a model carrying one.
 
-**I71.38 — `to`, not `--yields`, for a relation's parent.** *Change* `g
-association … --on Comment --to Note`, `--yields` a hidden alias for one
-release; `explain association` says when a typed field is the better
-relation. *Done when* `g association --help` shows `--to`.
+**I71.38 — `to`, not `--yields`, for a relation's parent.** *Landed, with
+`--yields` still visible.* `--to` is one spelling of the same argument, and
+it is the one `association`'s help, the kind list, the README and
+`explain association` all use. Hiding `--yields` was declined: it is the
+right word for `strategy` (*what a matching implementation produces*) and
+`durable-job`, and clap hides an argument from every context or from none,
+so hiding it there would take the correct word away from the two kinds that
+own it. `explain association` now says when a typed field is the better
+relation.
 
 **I71.50 — the binary explains its own language.** *Change* `jails explain
 jdl` prints the declaration families, the attributes per declaration, the

@@ -92,7 +92,7 @@ pub enum ArtifactKind {
     #[cfg_attr(feature = "cli", value(name = "http-workflow", alias = "hflow"))]
     HttpWorkflow,
     /// A validated relational invariant between two existing scaffolds.
-    /// `--on` names the child, `--yields` the parent, and each field is an
+    /// `--on` names the child, `--to` the parent, and each field is an
     /// explicit `childField=parentField` mapping. Composite mappings enforce
     /// tenant-safe ownership in PostgreSQL instead of trusting HTTP checks.
     #[cfg_attr(feature = "cli", value(alias = "fk"))]

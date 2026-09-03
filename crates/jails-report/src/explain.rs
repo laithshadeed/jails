@@ -181,7 +181,12 @@ const EXPLANATIONS: &[Explanation] = &[
                records are read, types are checked across the boundary, composite keys are \
                free, and identifier length is checked. No `ON DELETE` behaviour is invented, \
                because that is a data decision. NAME is the association's own name.\n\n\
-               Example: `jails g association LoanMember memberId=id --on Loan --yields Member`.",
+               **A typed field is the better relation when the child does not need the \
+               parent's row.** A component whose type is a value the project owns -- an enum, \
+               a record with no table -- is a column, and an association would give it a \
+               foreign key to nothing. Reach for this when the parent is a stored entity and \
+               the invariant is that the child's row cannot outlive it.\n\n\
+               Example: `jails g association LoanMember memberId=id --on Loan --to Member`.",
     },
     Explanation {
         kind: ArtifactKind::Event,
