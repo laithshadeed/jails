@@ -73,9 +73,28 @@ pub(crate) fn set_entity_active(
         .map_err(jdl_edit_failure)
 }
 
-pub(crate) fn remove_entity(source: &str, entity_java_name: &str) -> Result<String> {
-    jails_model::remove_jdl_declaration(source, &["entity", "enum"], entity_java_name)
-        .map_err(jdl_edit_failure)
+/// Remove an entity declaration and the `eject ... @adopted` lines that name
+/// it.
+///
+/// An adopted boundary goes with its owner because it records nothing jails
+/// wrote: the reader's file was theirs before the declaration and stays
+/// theirs after it. A *transferred* ejection is not touched here -- the
+/// removal guard refuses before this runs -- because JDL v1 §16.4 makes
+/// removing that line an error.
+pub(crate) fn remove_entity(
+    source: &str,
+    model: &jails_model::AppModel,
+    entity: &jails_model::Entity,
+) -> Result<String> {
+    use jails_model::StableId;
+    let mut next =
+        jails_model::remove_jdl_declaration(source, &["entity", "enum"], &entity.names.java_type)
+            .map_err(jdl_edit_failure)?;
+    for ejection in model.adopted_ejections_of(entity.id.as_str()) {
+        next = jails_model::remove_jdl_declaration(&next, &["eject"], &ejection.label)
+            .map_err(jdl_edit_failure)?;
+    }
+    Ok(next)
 }
 
 pub(crate) fn remove_operation(source: &str, operation_java_name: &str) -> Result<String> {
@@ -99,7 +118,7 @@ pub(crate) fn rename_entity(
     pinned_table: Option<&str>,
     pinned_route: Option<(&str, &str)>,
 ) -> Result<String> {
-    let mut renamed = jails_model::rename_jdl_declaration(
+    let renamed = jails_model::rename_jdl_declaration(
         source,
         &["entity", "enum"],
         current_java_name,
@@ -107,6 +126,12 @@ pub(crate) fn rename_entity(
         stable_id,
     )
     .map_err(jdl_edit_failure)?;
+    // The boundary paths that name this entity follow it: `eject
+    // Note.record` resolves by Java type on every read, and left behind it
+    // would name an entity the renamed source no longer declares.
+    let mut renamed =
+        jails_model::rename_jdl_ejection_owner(&renamed, current_java_name, next_java_name)
+            .map_err(jdl_edit_failure)?;
     if let Some(table) = pinned_table {
         let cst = jails_model::parse_jdl_cst(&renamed).map_err(jdl_edit_failure)?;
         let owner = jails_model::field_syntax::java_to_label(next_java_name);

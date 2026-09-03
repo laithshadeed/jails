@@ -6,6 +6,7 @@
 
 use super::*;
 
+mod adopt;
 mod build;
 mod capability;
 mod database;

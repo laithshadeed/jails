@@ -15,8 +15,9 @@ pub(crate) use edit::{
     remove_operation, remove_setting, remove_unit, rename_entity, set_entity_active,
 };
 use operation::operation_declaration;
+pub(crate) use render::entity_declaration;
 pub(crate) use render::{EntityDeclaration, normalize_package};
-use render::{entity_declaration, enum_declaration, field_label_of, quoted_list};
+use render::{enum_declaration, field_label_of, quoted_list};
 pub(crate) use render::{java_type_name, relation_member_name, render_v1_field_line};
 
 use crate::ArtifactKind;

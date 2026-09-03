@@ -830,6 +830,12 @@ there the unit is a whole service block rather than a setting.)
   names. `--strategy rolling` is refused by name: a rolling or
   expand/contract rename is a *campaign* of ordinary plans run as the readers
   are ready, and the tool will not own the waiting between them.
+- `jails adopt resource <Name>` — register a type you wrote in the model, so
+  `resource field`, `rename resource` and `destroy` work on it. Reads the
+  record's components off `src/main/java`, maps each Java type through the
+  field-type table or refuses by component, and marks the record yours with
+  `eject <Name>.record @adopted`; your file is a plan input, never an output.
+  See *A codebase jails did not create*.
 - Every mutating command accepts `--pretend --plan-out <file>`. The named plan
   is atomically written mode 0600 outside the project transaction and contains
   the exact prepared bytes plus root, generation, protocol, toolchain,
@@ -1530,6 +1536,70 @@ Run `jails adopt --pretend` first.
 `jails model init` is the step after it: it writes the `app` block of
 `.jails/model.jdl` from what the project already says about itself, and
 nothing else.
+
+### `jails adopt resource <Name>`
+
+For a type you wrote before jails knew the project. Once the model exists,
+`jails resource field add Message ...`, `jails rename resource Message ...`
+and `jails destroy record Message` all answer *"no `Message` is declared"*
+about a record that is plainly there — because the model is what those
+commands read, and nothing put it in the model. `adopt resource` does:
+
+```text
+jails adopt resource Message
+  adopt   Message  src/main/java/com/example/notes/domain/Message.java
+  field   id:uuid
+  field   title:string
+  field   body:string?
+  yours   Message.record  -- jails will not write `src/main/java/.../Message.java`
+```
+
+It finds the one `Message.java` under `src/main/java` (two is a refusal that
+names both, the way `jails src` lists rather than picks), reads its record
+components — or a class's constructor parameters — with the same small Java
+reader `beans` uses, and maps each Java type onto a field type through the
+one table in `Field syntax`, read backwards: `UUID` is `uuid` because `uuid`
+renders to `UUID`. A component is required unless it is `Optional<T>`. A type
+the table does not render to is refused **by component**, naming the type and
+the types it knows; a capitalised type the project itself declares under
+`src/main/java` — an enum of its own — passes through by name, exactly as
+`jails g record Message priority:Priority` would. Nothing is guessed at.
+
+What it writes is the `entity` declaration beside one line that says whose
+the record is:
+
+```jdl
+entity Message @id(ent_message) {
+  id: uuid @id(fld_message_id)
+  title: string @id(fld_message_title)
+  body: string? @id(fld_message_body)
+}
+
+eject Message.record @id(eject_ca48573a411aefbe) @adopted
+```
+
+`@adopted` is `eject` without the transfer: the compiler leaves the record
+out of `.jails/generated`, writes nothing at your path, and takes your file
+into the plan as an exact input — a precondition with its digest, never an
+output — so the plan refuses if the file changes between preview and apply.
+No companion test is rendered for it either: the one jails writes pins the
+null rejection of the compact constructor jails renders, which a record jails
+did not render need not have. A record outside the `domain` layer is pinned
+with `@package` rather than moved. Your repository, service or controller
+stay yours and unmodelled: jails does not guess which of its facets they are.
+
+From then on the entity is one the resource commands know. `resource field
+add` evolves the model — the field in your record is yours to add, and the
+generated code that reads it compiles against your file. `rename resource`
+follows you rather than leading: while your file still names `Message` it
+refuses with `manual-edit-required` and the path, and once you have renamed
+the type it moves the declaration and the `eject Message.record` line with
+it. `destroy record` removes the declaration and its `@adopted` line together
+and leaves your file where it is — and refuses, like any destroy, while an
+operation still points at the entity.
+
+Adopting a type twice is a no-op that says so. `--pretend` previews the plan;
+`--output json` reports the execution.
 
 ### `jails architecture baseline`
 

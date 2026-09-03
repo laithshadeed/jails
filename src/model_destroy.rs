@@ -163,7 +163,8 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                     }),
                     crate::model_generate_jdl::remove_entity(
                         &current.source,
-                        &entity.names.java_type,
+                        &current.model,
+                        entity,
                     )?,
                 ),
             }
@@ -176,7 +177,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             }
             (
                 Evolution::none(),
-                crate::model_generate_jdl::remove_entity(&current.source, &entity.names.java_type)?,
+                crate::model_generate_jdl::remove_entity(&current.source, &current.model, entity)?,
             )
         };
         (evolution, next)

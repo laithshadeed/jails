@@ -28,6 +28,7 @@ stop	jails-project	service-lifecycle	compose::stop_cmd
 src	jails-report	read-only	source::src
 bench	jails-drive	external-process	bench::bench
 adopt	jails	one-shot-write	adopt::layout
+adopt resource	jails	project-mutation	adopt::resource
 doctor	jails-report	read-only	doctor::doctor
 why	jails-report	read-only+external-process	why::command
 stats	jails-project	read-only	inspect::stats

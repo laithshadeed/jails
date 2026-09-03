@@ -42,14 +42,4 @@ mise run verify-rewrite
 
 # Open items
 
-## P8.11a — the adoption half of P8.11
-
-**`jails adopt resource <Name>`** registers an existing hand-written type
-into the model so `resource field`, `destroy` and `rename resource` work on
-it. Today they refuse: *"no `Message` is recorded in this project"*. It
-writes a declaration plus the `eject` lines that say the reader owns the
-implementation, so it needs the readable boundary path (`Message.record`,
-`Message.repo.fake`) to link -- A3.15's registry, which is the compiler's
-and the linker's -- before it can be written. The `modernize` half closed:
-on a modelled project it recompiles the model against the versions it moved,
-the way `jails sync` does.
+None open. Retiring this file is its own item (S51.7).

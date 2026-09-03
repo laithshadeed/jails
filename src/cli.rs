@@ -127,6 +127,22 @@ pub(crate) struct Cli {
 }
 
 #[derive(Subcommand)]
+pub(crate) enum AdoptCommand {
+    /// Register a type you wrote in the model, as an entity whose record is yours
+    ///
+    /// Reads the record's components (or a class's constructor parameters)
+    /// off `src/main/java`, maps each Java type onto a jails field type --
+    /// refusing, by component, on one it cannot -- and writes the `entity`
+    /// declaration beside an `eject <Name>.record @adopted` line. Your file
+    /// is never written; it is captured as an exact input of the plan.
+    Resource {
+        /// The simple type name, e.g. `Message`
+        #[arg(value_name = "NAME")]
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
 pub(crate) enum ResourceCommand {
     /// Reconcile recorded identity, generated source, and sealed migrations
     Status {
@@ -670,7 +686,14 @@ pub(crate) enum Command {
     /// base package, maps the ones it recognises onto jails' layers, and
     /// reports the ones it does not rather than guessing. Never touches
     /// `[project] capabilities` -- `jails sync` acts on that list.
-    Adopt,
+    ///
+    /// `jails adopt resource <Name>` is the other half: it registers a type
+    /// you wrote in the model, so `resource field`, `rename resource` and
+    /// `destroy` work on it, and marks its record as yours.
+    Adopt {
+        #[command(subcommand)]
+        command: Option<AdoptCommand>,
+    },
     /// Upgrade the build to the Spring Boot and JDK jails generates against
     ///
     /// One commit, five edits. A Boot 2.7 project on JDK 21 is not one change

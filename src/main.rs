@@ -314,7 +314,10 @@ fn main() -> std::process::ExitCode {
         },
         Command::Start { services } => compose::start(&services, debug),
         Command::Stop { services } => compose::stop_cmd(&services, debug),
-        Command::Adopt => adopt::layout(invocation),
+        Command::Adopt { command } => match command {
+            None => adopt::layout(invocation),
+            Some(cli::AdoptCommand::Resource { name }) => adopt::resource(name, invocation),
+        },
         Command::Modernize => modernize::run(invocation),
         Command::Src { type_name, json } => source::src(&type_name, json),
         Command::Bench {

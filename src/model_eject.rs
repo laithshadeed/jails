@@ -53,9 +53,7 @@ pub(crate) fn run(reference: String, invocation: Invocation) -> Result<()> {
         )));
     }
 
-    let label = format!("eject_{}", &hex(&sha256(semantic_id.as_bytes()))[..16]);
-    let id = EjectionId::parse(label.clone())
-        .map_err(|error| Failure::Told(format!("could not assign ejection identity: {error}")))?;
+    let id = ejection_id(&semantic_id)?;
     let mut next_source = current.source.clone();
     if !next_source.ends_with('\n') {
         next_source.push('\n');
@@ -70,6 +68,16 @@ pub(crate) fn run(reference: String, invocation: Invocation) -> Result<()> {
         authored_migration: None,
         reader_paths,
     })
+}
+
+/// The identity of the ejection naming one semantic target.
+///
+/// Derived from the target, so `jails model eject` and `jails adopt resource`
+/// give one boundary one id whichever wrote the line.
+pub(crate) fn ejection_id(semantic_id: &str) -> Result<EjectionId> {
+    let label = format!("eject_{}", &hex(&sha256(semantic_id.as_bytes()))[..16]);
+    EjectionId::parse(label)
+        .map_err(|error| Failure::Told(format!("could not assign ejection identity: {error}")))
 }
 
 /// The artifact id `reference` names: itself when it is already an artifact

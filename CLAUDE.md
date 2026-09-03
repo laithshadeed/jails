@@ -463,7 +463,20 @@ would be the second copy.
   directory names onto the layers, written as `[layout]` rows. An
   unrecognised directory is reported, not guessed; two candidates for one layer
   writes neither; it never touches `[project] capabilities`. `core` is
-  deliberately not a synonym for `domain`.
+  deliberately not a synonym for `domain`. **`jails adopt resource <Name>`**
+  is the other half and an ordinary model mutation: it reads the one
+  `<Name>.java` under `src/main/java` with `java::type_info`, maps each
+  component through `BuiltinType::from_java` (the table read backwards; an
+  unmapped type refuses by component, a capitalised type the project
+  declares passes through), and hands `finish_generation` the `entity`
+  declaration plus `eject <Name>.record @adopted` with the reader's file in
+  `reader_paths`. `@adopted` is an ejection without the transfer: the
+  compiler drops the artifact from the tree and plans no `EjectFile`, the
+  companion test is not rendered (`emit_companion_test`), the removal guard
+  ignores it, `destroy` removes the line with the entity and `rename
+  resource` re-points it (`rename_ejection_owner`). A rename is the
+  model following the reader: `refuse_reader_java` refuses while their file
+  still names the old type.
 - **`crates/jails-project/src/documents/pom.rs`** -- **the one reader of
   `pom.xml`, and the one thing that splices into it.** Capture asks it what
   the build declares, the dependency and build-feature adapters beside it ask
