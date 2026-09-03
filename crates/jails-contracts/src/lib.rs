@@ -3,6 +3,7 @@
 //! These types deliberately contain bytes and observations, never filesystem
 //! handles, project roots, parsers, renderers, or executor implementations.
 
+pub mod bytes_field;
 mod draft;
 pub mod lock_bytes;
 mod path;

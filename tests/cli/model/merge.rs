@@ -214,7 +214,6 @@ fn compiler_upgrade_uses_the_exact_accepted_projection_as_merge_base() {
     // The file records a managed file's bytes as the text they are; the type
     // decodes from the form `serde` derives, which is also the digest's
     // preimage below. The reader does the same on the way in.
-    jails_contracts::lock_bytes::expand(&mut lock);
     let mut projection: jails_contracts::RenderedTree =
         serde_json::from_value(lock["projection"].clone()).unwrap();
     let generated_path =

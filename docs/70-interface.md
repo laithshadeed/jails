@@ -768,12 +768,20 @@ digest, blobs only for entries not already in the lock, the lock named
 as the bundle's base. *Done when* `--plan-out` for one record is a few
 kilobytes and the 924,449-line bundle is under 200 lines.
 
-**I70.23 — capture reads what the plan needs.** *Change* stat each locked
-path and read only what moved; memoise the per-node render across a run;
-serialise the lock only for changed entries; add one scale test in
-`tests/cli` asserting a thirty-entity mutation costs under five times a
-one-entity one. *Done when* `g scaffold Thing31` on the thirty-entity
-project is under 50 ms.
+**I70.23 — capture reads what the plan needs.** *Part landed, and the
+premise measured.* Reading and hashing all 1,421 files of a hundred-entity
+project is 22 ms; the capture was 122 ms, and 95 ms of it was the lock's
+text being rewritten into an array of `serde_json::Number` so the type
+could decode it. The fields read either shape now
+(`jails_contracts::bytes_field`), and `sha256` hashes the input where it is
+instead of copying it first -- capture is 64 ms.
+
+*Declined:* "stat each locked path and read only what moved". Two files of
+equal length are not equal, so a stat cannot answer whether a managed file
+changed, and a capture that guesses wrong produces a wrong merge rather
+than a slow one. What remains after this is `materialize` at 116 ms, which
+is the projection serialised as fourteen megabytes of JSON to compute the
+digest the lock rule fixes -- that belongs with I71.4.
 
 **I70.25 — "nothing to do" is decided before compiling.** *Change* when
 the edited source equals the source on disk and the lock's model digest

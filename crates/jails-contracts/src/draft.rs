@@ -118,6 +118,12 @@ impl Provenance {
 pub struct RenderedFile {
     pub kind: FileKind,
     pub mode: FileMode,
+    /// The file's exact bytes.
+    ///
+    /// `alias = "text"` and the flexible reader because the compiler lock
+    /// stores this as a JSON string: see [`crate::bytes_field`]. Writing is
+    /// unchanged, so the digest preimage is too.
+    #[serde(alias = "text", deserialize_with = "crate::bytes_field::deserialize")]
     pub bytes: Vec<u8>,
     pub provenance: Provenance,
 }
@@ -131,6 +137,8 @@ pub struct RenderedFile {
 pub struct RenderedReaderFacet {
     pub path: ProjectPath,
     pub kind: ReaderFacetKind,
+    /// See [`RenderedFile::bytes`].
+    #[serde(alias = "text", deserialize_with = "crate::bytes_field::deserialize")]
     pub bytes: Vec<u8>,
     pub provenance: Provenance,
 }

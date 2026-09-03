@@ -67,6 +67,15 @@ the next capture cannot tell it from one. `write_atomic` stages under
 reads the parent of every path the plan publishes, never a whole tree, and
 runs under the lock.
 
+**The lock is written as text and read as either shape.**
+`jails_contracts::lock_bytes` compacts a `Vec<u8>` to a JSON string on the
+way out; `jails_contracts::bytes_field` decodes a string *or* an array on
+the way in, through `#[serde(alias = "text", deserialize_with = ...)]`.
+Serialization is untouched, which is what keeps `projection_digest`'s
+preimage the form `serde` derives -- so a lock written by any release still
+verifies. Rewriting text into an array to decode it cost 95 ms of a 122 ms
+capture at a hundred entities.
+
 **`.jails/model.jdl` is the one editable source.** `model_command::read_source`
 is the funnel every mutation reads its model through; it refuses anything
 else by name. `app plan|apply` reads a manifest and writes declarations into

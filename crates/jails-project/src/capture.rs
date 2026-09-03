@@ -154,8 +154,26 @@ struct CompilerLockV3 {
     /// before this existed still decodes and still verifies, and the only
     /// thing it cannot do is restore a migration -- which is exactly what it
     /// could not do before either.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "migration_bytes")]
     migration_bytes: BTreeMap<ProjectPath, Vec<u8>>,
+}
+
+/// The migrations map, whichever shape the lock stores its values in.
+///
+/// The same reason as [`jails_contracts::bytes_field`]: the values are file
+/// bytes and the lock writes them as text.
+fn migration_bytes<'de, D>(deserializer: D) -> Result<BTreeMap<ProjectPath, Vec<u8>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(serde::Deserialize)]
+    struct Entry(#[serde(deserialize_with = "jails_contracts::bytes_field::deserialize")] Vec<u8>);
+
+    let raw = BTreeMap::<ProjectPath, Entry>::deserialize(deserializer)?;
+    Ok(raw
+        .into_iter()
+        .map(|(path, Entry(bytes))| (path, bytes))
+        .collect())
 }
 
 #[derive(Debug)]
@@ -646,13 +664,13 @@ fn accepted_compiler_state(
 }
 
 fn decode_compiler_lock(bytes: &[u8]) -> Result<AcceptedCompilerState, Diagnostic> {
-    let mut header: serde_json::Value = serde_json::from_slice(bytes).map_err(lock_undecodable)?;
-    // **Back to the shape the types decode from, whatever the file holds.**
-    // A v4 lock stores a generated file's bytes as text; every earlier one
-    // stores an array and has nothing to expand. Either way what the
-    // verification below digests is the one form `serde` derives, so a lock
-    // from any release is checked under one rule.
-    jails_contracts::lock_bytes::expand(&mut header);
+    let header: serde_json::Value = serde_json::from_slice(bytes).map_err(lock_undecodable)?;
+    // **Either shape decodes straight into the type.** A v4 lock stores a
+    // generated file's bytes as text and every earlier one stores an array of
+    // integers; `jails_contracts::bytes_field` reads both, so neither is
+    // rewritten into the other on the way in. What the verification below
+    // digests is still the one form `serde` derives, so a lock from any
+    // release is checked under one rule.
     let schema = header
         .get("schema")
         .and_then(serde_json::Value::as_str)

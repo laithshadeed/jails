@@ -90,19 +90,35 @@ pub fn sha256(input: &[u8]) -> [u8; DIGEST_BYTES] {
         0x5be0cd19,
     ];
 
-    let mut message = input.to_vec();
+    // **The input is read where it is, and only the tail is built.** Copying
+    // it to append eight bytes of length costs a second allocation the size
+    // of the thing being hashed, and the largest thing jails hashes is the
+    // accepted projection serialised as JSON -- fourteen megabytes on a
+    // hundred-entity project, hashed on every capture and every plan. The
+    // padding is at most two blocks whatever the input is.
     let bit_length = (input.len() as u64).wrapping_mul(8);
-    message.push(0x80);
-    while message.len() % 64 != 56 {
-        message.push(0);
-    }
-    message.extend_from_slice(&bit_length.to_be_bytes());
+    let (blocks, remainder) = input.as_chunks::<64>();
+    let mut tail = [0u8; 128];
+    tail[..remainder.len()].copy_from_slice(remainder);
+    tail[remainder.len()] = 0x80;
+    // 56 bytes of the last block are the message; the final eight are the
+    // length. One block when the remainder leaves room for both, two when it
+    // does not.
+    let tail_blocks = match remainder.len() < 56 {
+        true => 1,
+        false => 2,
+    };
+    let length_at = tail_blocks * 64 - 8;
+    tail[length_at..length_at + 8].copy_from_slice(&bit_length.to_be_bytes());
 
     // Both sizes are constants, so both are `as_chunks`. The inner one earns
     // it twice over: a `&[u8; 4]` is exactly what `from_be_bytes` wants, so
     // the `try_into().expect("four bytes")` -- a fallible conversion standing
-    // in for a fact the padding loop above already guarantees -- disappears.
-    for chunk in message.as_chunks::<64>().0 {
+    // in for a fact the padding above already guarantees -- disappears.
+    for chunk in blocks
+        .iter()
+        .chain(tail[..tail_blocks * 64].as_chunks::<64>().0)
+    {
         let mut w = [0u32; 64];
         for (index, word) in chunk.as_chunks::<4>().0.iter().enumerate() {
             w[index] = u32::from_be_bytes(*word);

@@ -15,6 +15,13 @@
 //! the preimage alone, so a lock written by the previous release verifies
 //! unchanged and is rewritten in the new shape by the next mutation.
 //!
+//! **This is the writing half only.** Reading is
+//! [`crate::bytes_field`]: the fields decode from text or from an array
+//! directly, so nothing rewrites one into the other on the way in. There used
+//! to be an `expand` here that did, and on a hundred-entity project it cost
+//! 95 ms of a 122 ms capture -- three million `serde_json::Number`
+//! allocations to recover bytes that were already contiguous in the file.
+//!
 //! The transform is deliberately narrow -- it names the two places bytes live
 //! rather than walking for any field called `bytes` -- because a blind walk
 //! would reach into a model whose own fields it knows nothing about.
@@ -61,41 +68,6 @@ pub fn compact(lock: &mut Value) {
     }
 }
 
-/// Rewrite a lock read from disk back into the shape the types decode from.
-///
-/// Applied to every version: a lock written before this existed carries
-/// arrays, finds nothing to expand, and decodes as it always did.
-pub fn expand(lock: &mut Value) {
-    if let Some(files) = lock
-        .get_mut("projection")
-        .and_then(|projection| projection.get_mut("files"))
-        .and_then(Value::as_object_mut)
-    {
-        for file in files.values_mut() {
-            expand_entry(file);
-        }
-    }
-    if let Some(facets) = lock
-        .get_mut("projection")
-        .and_then(|projection| projection.get_mut("reader_facets"))
-        .and_then(Value::as_object_mut)
-    {
-        for facet in facets.values_mut() {
-            expand_entry(facet);
-        }
-    }
-    if let Some(migrations) = lock
-        .get_mut("migration_bytes")
-        .and_then(Value::as_object_mut)
-    {
-        for bytes in migrations.values_mut() {
-            if let Some(text) = bytes.as_str().map(str::to_string) {
-                *bytes = array_of(text.as_bytes());
-            }
-        }
-    }
-}
-
 fn compact_entry(entry: &mut Value) {
     let Some(object) = entry.as_object_mut() else {
         return;
@@ -105,27 +77,6 @@ fn compact_entry(entry: &mut Value) {
     };
     object.remove("bytes");
     object.insert(TEXT.to_string(), Value::String(text));
-}
-
-fn expand_entry(entry: &mut Value) {
-    let Some(object) = entry.as_object_mut() else {
-        return;
-    };
-    let Some(text) = object.get(TEXT).and_then(Value::as_str).map(str::to_string) else {
-        return;
-    };
-    object.remove(TEXT);
-    object.insert("bytes".to_string(), array_of(text.as_bytes()));
-}
-
-/// The array `serde` derives for a `Vec<u8>`.
-fn array_of(bytes: &[u8]) -> Value {
-    Value::Array(
-        bytes
-            .iter()
-            .map(|byte| Value::Number((*byte).into()))
-            .collect(),
-    )
 }
 
 /// The bytes as text, when every one of them is part of valid UTF-8.
@@ -142,10 +93,9 @@ fn as_text(bytes: &Value) -> Option<String> {
 mod tests {
     use super::*;
 
-    /// Compact and expand are inverse, which is what lets the digest stay a
-    /// digest of the expanded form while the file holds the compact one.
+    /// What the compact form writes, and what it leaves alone.
     #[test]
-    fn expanding_a_compacted_lock_returns_the_bytes_it_started_with() {
+    fn compacting_writes_text_and_keeps_what_is_not_utf8() {
         let mut lock = serde_json::json!({
             "projection": {
                 "files": {
@@ -173,19 +123,10 @@ mod tests {
         assert_eq!(lock["projection"]["reader_facets"]["compose"]["text"], "a");
         assert_eq!(lock["migration_bytes"]["src/V1.sql"], "bc");
 
-        expand(&mut lock);
-        assert_eq!(lock, before);
-    }
-
-    /// A lock that never saw this transform expands to itself.
-    #[test]
-    fn a_lock_written_before_this_existed_is_unchanged_by_expanding_it() {
-        let mut lock = serde_json::json!({
-            "projection": {"files": {"src/A.java": {"bytes": [104]}}},
-        });
-        let before = lock.clone();
-        expand(&mut lock);
-        assert_eq!(lock, before);
+        // There is no inverse here any more: `crate::bytes_field` reads
+        // either shape straight into `Vec<u8>`, which is what removed the
+        // rewrite this module used to do on the way in.
+        let _ = before;
     }
 
     /// The compact form is smaller by the factor the item is about.
@@ -193,7 +134,7 @@ mod tests {
     fn text_is_a_quarter_of_the_size_of_the_array() {
         let body = "public record Note(String title) {}\n".repeat(20);
         let mut lock = serde_json::json!({
-            "projection": {"files": {"src/Note.java": {"bytes": array_of(body.as_bytes())}}},
+            "projection": {"files": {"src/Note.java": {"bytes": body.as_bytes()}}},
         });
         let expanded = serde_json::to_vec(&lock).unwrap().len();
         compact(&mut lock);

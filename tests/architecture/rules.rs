@@ -382,6 +382,8 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-model", "setting", 2),
     ("jails-model", "unit", 2),
     // Portable values shared by the pure compiler and filesystem boundary.
+    // A serde reader with no dependency of its own.
+    ("jails-contracts", "bytes_field", 1),
     ("jails-contracts", "draft", 3),
     ("jails-contracts", "lock_bytes", 3),
     ("jails-contracts", "path", 3),
