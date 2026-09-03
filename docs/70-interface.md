@@ -70,14 +70,15 @@ reopening a contract:
 | ~~9~~ | ~~I71.29~~, ~~I71.26~~, ~~I71.28~~ | ~~README, the specification and the binary agree~~ |
 | ~~10~~ | ~~I71.14~~ | ~~every mutation prints the JDL it wrote~~ |
 
-**Worth a prototype before a decision:** an LSP for the model (I71.19), an
-MCP server (I71.20), the manifest folded into the model (I71.21). Three
-came off this list without a prototype, for the same reason: every part of
-each already existed. Bare `jails` as status (I71.17) is facts other
-commands compute, `jails undo` (I71.15) is the last plan read backwards,
-and the second `jails run` (I71.22) was already skipping Maven -- what it
-needed was the measurement and a gate. `sync --watch` was prototyped and
-declined; §9 says why.
+**Worth a prototype before a decision:** an LSP for the model (I71.19),
+the manifest folded into the model (I71.21). Four came off this list
+without a prototype, for the same reason: every part of each already
+existed. Bare `jails` as status (I71.17) is facts other commands compute,
+`jails undo` (I71.15) is the last plan read backwards, the MCP server
+(I71.20) is the clap tree in a JSON-RPC envelope, and the second `jails
+run` (I71.22) was already skipping Maven -- what it needed was the
+measurement and a gate. `sync --watch` was prototyped and declined; §9
+says why.
 
 ---
 
@@ -843,13 +844,42 @@ budget. The line says what is declared and which command runs it;
 `jails doctor` is where the machine gets asked.
 
 
-**I71.20 — agents are readers too: `jails mcp` (prototype).** *Change* add
-`jails mcp`, a Model Context Protocol server over stdio. `AGENTS.md`
-is written for them, `commands --json` is a tool schema, `--output json`
-the wire. A Model Context Protocol server over stdio derived from the same
-clap tree runs nothing inside jails, so it is not the plugin system the
-scope bar refuses. Expose I70.8's twenty words plus `commands` and
-`explain`; an agent that needs the protocol commands has the CLI.
+**I71.20 — agents are readers too: `jails mcp`.** *Landed, past the
+prototype.* `jails mcp` is a Model Context Protocol server over stdio:
+one JSON-RPC message per line in, one per line out, speaking revision
+`2025-06-18`. `initialize`, `ping`, `tools/list` and `tools/call` are the
+four methods; a notification is answered with silence, which is what the
+protocol asks for and what a client hangs on when a server gets it wrong.
+
+**The catalogue is the clap tree, not a second list.** `tools/list`
+returns the twenty visible subcommands plus `commands` — twenty-one, and
+`commands` is deliberately the one hidden command exposed, because it is
+how an agent reaches the other seventy without a list of ninety on the
+first screen. Each tool's `inputSchema` is derived from the subcommand's
+own arguments: a flag's help text becomes the property description, a
+`ValueEnum` becomes a JSON `enum`, and a required positional becomes a
+required property. `jails g scaffold --index` and its kin therefore reach
+an agent as schema the moment they reach the terminal.
+
+**Calling a tool re-executes this binary.** The argv is spelled in the
+tree's declaration order — flags by long name, then positionals by
+`get_index()` — because a JSON object has no order worth trusting and a
+positional's meaning is its position. Nothing is loaded into the jails
+process and there is no registry to add to, which is what keeps this on
+the right side of the scope bar's "no plugin system": the server is a
+client of the CLI, and it is classified in the board as exactly that.
+
+Refusal has two shapes and they are not the same shape. A tool name the
+server does not have is a JSON-RPC error, because the client asked for
+something that is not there. A command that ran and refused is
+`isError: true` with jails' own reason and `fix:` line in the text, because
+the agent asked a well-formed question and jails answered no — hiding that
+behind a transport failure is how an agent learns to retry instead of read.
+
+Measured: the handshake and the full catalogue together are **4 ms**, and
+the catalogue is 18 kB of JSON. `tests/cli/agent_protocol.rs` drives a
+real process over its own stdin: handshake, `tools/list`, a `tools/call`
+that writes `Note.java` into the fixture, and a name that is refused.
 
 ---
 

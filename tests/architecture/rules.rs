@@ -41,6 +41,9 @@ fn owns_terminal_output(path: &Path) -> bool {
         // `undo` prints the inverse plan it is about to run, and the one
         // line it prints after running it.
         || relative == "src/undo.rs"
+        // The protocol server writes one JSON-RPC message per line to
+        // stdout; that is the whole of what it does.
+        || relative == "src/mcp.rs"
         || relative == "src/model_generate.rs"
         // The two halves `model_generate` was split into, and both are here for
         // its reason rather than a new one. `report` is the preview, the
@@ -508,6 +511,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails", "model_status", 9),
     ("jails", "status", 9),
     ("jails", "undo", 9),
+    ("jails", "mcp", 9),
     ("jails", "model_ownership", 9),
     ("jails", "model_relocate", 9),
     ("jails", "model_migration", 9),
@@ -621,6 +625,14 @@ const SUBPROCESS_CLASSIFICATION: &[(&str, &str)] = &[
     // The executor's own runner and tool resolver.
     ("process", "the one executor"),
     ("hermetic", "the one executor"),
+    // The CLI re-entered. `jails mcp` starts *this binary* with a
+    // subcommand's own argv and forwards what it printed, so whatever that
+    // subcommand is classified as above is what actually ran. It is the one
+    // row that claims nothing of its own: no lock, no write, no tool
+    // resolution -- naming it a probe would be a lie the moment an agent
+    // calls `generate`, and naming it the executor would claim a writer it
+    // does not have.
+    ("mcp", "the CLI re-entered"),
 ];
 
 /// Which module a file belongs to: `(crate, module)`.
@@ -693,8 +705,9 @@ fn every_module_that_starts_a_process_is_classified() {
         "\n\n{unclassified:?} start a subprocess and are not in \
          SUBPROCESS_CLASSIFICATION.\n\
          The rows are: derived build process, external runtime effect, \
-         read-only client/probe, new-project bootstrap, transaction input, or the one \
-         executor. Say which, so `one writer` is not overclaimed.\n"
+         read-only client/probe, new-project bootstrap, transaction input, the one \
+         executor, or the CLI re-entered. Say which, so `one writer` is not \
+         overclaimed.\n"
     );
 
     let stale: Vec<&String> = classified.difference(&starts).collect();

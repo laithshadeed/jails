@@ -587,6 +587,14 @@ pub(crate) enum Command {
     /// not committed; `git` is what reverses more than one.
     #[command(hide = true)]
     Undo,
+    /// Serve the twenty commands over the Model Context Protocol, on stdio
+    ///
+    /// One JSON-RPC message per line. Every tool is a subcommand of this
+    /// binary, spelled by the same clap tree the terminal is parsed with, and
+    /// calling one re-executes the binary: there is no registry to add to and
+    /// nothing an outside process can make jails load.
+    #[command(hide = true)]
+    Mcp,
     /// Remove what a matching add call would have created
     #[command(visible_alias = "rm")]
     #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]

@@ -219,6 +219,18 @@ source: the next change can be made by hand in the file and applied with
   runs, with the code, the model path as `subject` and a zero-based range in
   `.jails/model.jdl`. It refuses without `--output json`, because an adapter
   must never parse human output.
+- `jails mcp` — a Model Context Protocol server over stdio, for agents. One
+  JSON-RPC message per line in, one per line out; `initialize`, `ping`,
+  `tools/list` and `tools/call`. The tools are the twenty subcommands the
+  first screen names plus `commands`, and each one's `inputSchema` is
+  derived from that subcommand's own arguments, so a flag added to the CLI
+  reaches an agent as schema in the same change. Calling one re-executes
+  this binary with that argv: nothing is loaded into the jails process and
+  there is no registry to add to, which is why this is not the plugin
+  system the scope bar refuses. A command that ran and refused comes back
+  as a tool result with `isError` set and jails' own `fix:` line in it; a
+  tool name the server does not have is a protocol error naming
+  `jails commands`.
 - `jails new <name> [--deps web,jdbc] [--java 26] [--no-git] [--no-devtools]`
   — new Spring Boot project via start.spring.io. `git init` + `.gitignore`
   and `spring-boot-devtools` (needed for `run --watch`) are on by default.

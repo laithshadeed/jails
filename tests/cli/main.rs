@@ -16,6 +16,7 @@
 #[path = "../common/mod.rs"]
 mod common;
 
+mod agent_protocol;
 mod app;
 mod behavior_matrix;
 mod capabilities;

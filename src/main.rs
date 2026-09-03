@@ -26,6 +26,7 @@ mod dispatch;
 mod editor_command;
 mod editor_complete;
 mod facade;
+mod mcp;
 mod model_capability;
 mod model_command;
 mod model_destroy;
@@ -288,6 +289,7 @@ fn main() -> std::process::ExitCode {
         Command::Sync { no_start } => model_command::ensure_owned(invocation.clone())
             .and_then(|()| model_command::sync(no_start, invocation)),
         Command::Undo => undo::run(invocation),
+        Command::Mcp => mcp::run(),
         Command::Remove {
             capabilities,
             name,
