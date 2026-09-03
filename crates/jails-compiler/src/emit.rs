@@ -123,19 +123,19 @@ fn package_infos(output: &mut RenderedTree, jspecify: bool) -> Result<(), Compil
     if !jspecify {
         return Ok(());
     }
-    const ROOT: &str = ".jails/generated/main/java/";
+    let root = format!("{}/", jails_contracts::SourceRoot::MainJava.path());
     let packages: std::collections::BTreeSet<String> = output
         .files
         .iter()
         .filter(|(_, file)| file.kind == FileKind::JavaMain)
         .filter_map(|(path, _)| {
-            let rest = path.as_str().strip_prefix(ROOT)?;
+            let rest = path.as_str().strip_prefix(root.as_str())?;
             let (directory, _) = rest.rsplit_once('/')?;
             Some(directory.to_string())
         })
         .collect();
     for directory in packages {
-        let path = ProjectPath::parse(format!("{ROOT}{directory}/package-info.java"))
+        let path = ProjectPath::parse(format!("{root}{directory}/package-info.java"))
             .map_err(CompileError::new)?;
         if output.files.contains_key(&path) {
             continue;

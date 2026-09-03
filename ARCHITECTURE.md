@@ -23,7 +23,7 @@ flowchart LR
     MATERIALIZE --> PLAN["PlanBundle: digest + operations + blobs"]
     PLAN --> PREVIEW["preview / export"]
     PLAN --> EXECUTOR["the one executor"]
-    EXECUTOR --> TREE[".jails/generated"]
+    EXECUTOR --> TREE["managed files under src/, named by the lock"]
 ```
 
 Capture reads every external fact once into a `WorkspaceSnapshot`. The front
@@ -50,16 +50,21 @@ it and never plans again.
 
 ## Managed output
 
-Reproducible output lives below `.jails/generated` and is merge-managed. The
-accepted model renders BASE, capture supplies OURS, and the next model renders
-THEIRS. Clean merges are frozen into the plan; conflicts refuse without writes.
-The compiler lock records the accepted model and projection digests and
-advances to THEIRS, so hand edits remain deltas.
+Reproducible output lives beside the reader's own sources under `src/` -- the
+source roots JDL v1 §9.7 places each layer in -- and is merge-managed. A file
+is jails' because the accepted projection in `.jails/compiler.lock.json`
+names its path, never because of where it is: capture reads the lock's paths
+first, the accepted model renders BASE, the captured file is OURS, and the
+next model renders THEIRS. Clean merges are frozen into the plan; conflicts
+refuse without writes. The lock advances to THEIRS, so hand edits remain
+deltas. A reader file already at a path the next render wants is a collision,
+refused with the file named.
 
 Migrations, model revisions and explicit reader-file patches are irreproducible
-operations and appear in the plan as themselves. `model eject <artifact-id>`
-transfers one implementation boundary into reader source and excludes it from
-later managed trees; records and ports remain managed ABI.
+operations and appear in the plan as themselves. `model eject <boundary>` is a
+lock edit: the boundary's files leave the accepted projection and stay where
+they are, and later renders neither rewrite nor delete them; records and ports
+remain managed ABI.
 
 Every reader-owned file jails edits -- `pom.xml`, `build.gradle`,
 `compose.yaml`, `application.properties`, `jails.toml` -- is changed by an

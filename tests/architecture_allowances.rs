@@ -144,11 +144,11 @@ fn run_case(case: &Case) -> Option<String> {
 fn project(root: &Path) {
     copy("tests/golden/scaffold-spring/pom.xml", root.join("pom.xml"));
     copy(
-        "tests/golden/scaffold-spring/.jails/generated/test/java/com/example/demo/ArchitectureTest.java",
+        "tests/golden/scaffold-spring/src/test/java/com/example/demo/ArchitectureTest.java",
         root.join("src/test/java/com/example/demo/ArchitectureTest.java"),
     );
     copy(
-        "tests/golden/scaffold-spring/.jails/generated/test/resources/archunit.properties",
+        "tests/golden/scaffold-spring/src/test/resources/archunit.properties",
         root.join("src/test/resources/archunit.properties"),
     );
     write(

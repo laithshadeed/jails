@@ -633,7 +633,7 @@
   "model_digest": "sha256:f6326c6f134d195a7c76d7502486c9f5d196601eeb2c2b20e077f1b0af5e9d30",
   "projection": {
     "files": {
-      ".jails/generated/main/java/com/example/notes/adapters/Json.java": {
+      "src/main/java/com/example/notes/adapters/Json.java": {
         "bytes": "<4356 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
@@ -647,7 +647,7 @@
           ]
         }
       },
-      ".jails/generated/main/java/com/example/notes/adapters/jdbc/JdbcCreateCommand.java": {
+      "src/main/java/com/example/notes/adapters/jdbc/JdbcCreateCommand.java": {
         "bytes": "<1395 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
@@ -662,7 +662,7 @@
           ]
         }
       },
-      ".jails/generated/main/java/com/example/notes/adapters/jdbc/JdbcNoteRepository.java": {
+      "src/main/java/com/example/notes/adapters/jdbc/JdbcNoteRepository.java": {
         "bytes": "<1684 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
@@ -676,7 +676,7 @@
           ]
         }
       },
-      ".jails/generated/main/java/com/example/notes/adapters/jdbc/JdbcOpenQuery.java": {
+      "src/main/java/com/example/notes/adapters/jdbc/JdbcOpenQuery.java": {
         "bytes": "<1144 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
@@ -691,7 +691,7 @@
           ]
         }
       },
-      ".jails/generated/main/java/com/example/notes/adapters/jdbc/JdbcRenameTransition.java": {
+      "src/main/java/com/example/notes/adapters/jdbc/JdbcRenameTransition.java": {
         "bytes": "<1218 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
@@ -706,7 +706,7 @@
           ]
         }
       },
-      ".jails/generated/main/java/com/example/notes/application/commands/CreateCommand.java": {
+      "src/main/java/com/example/notes/application/commands/CreateCommand.java": {
         "bytes": "<661 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
@@ -719,7 +719,7 @@
           ]
         }
       },
-      ".jails/generated/main/java/com/example/notes/application/queries/OpenQuery.java": {
+      "src/main/java/com/example/notes/application/queries/OpenQuery.java": {
         "bytes": "<473 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
@@ -732,7 +732,7 @@
           ]
         }
       },
-      ".jails/generated/main/java/com/example/notes/application/transitions/RenameTransition.java": {
+      "src/main/java/com/example/notes/application/transitions/RenameTransition.java": {
         "bytes": "<625 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
@@ -745,7 +745,7 @@
           ]
         }
       },
-      ".jails/generated/main/java/com/example/notes/domain/Note.java": {
+      "src/main/java/com/example/notes/domain/Note.java": {
         "bytes": "<558 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
@@ -758,7 +758,7 @@
           ]
         }
       },
-      ".jails/generated/main/java/com/example/notes/domain/Outcome.java": {
+      "src/main/java/com/example/notes/domain/Outcome.java": {
         "bytes": "<408 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
@@ -771,7 +771,7 @@
           ]
         }
       },
-      ".jails/generated/main/java/com/example/notes/domain/TimeOrderedUuid.java": {
+      "src/main/java/com/example/notes/domain/TimeOrderedUuid.java": {
         "bytes": "<1199 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
@@ -784,7 +784,7 @@
           ]
         }
       },
-      ".jails/generated/main/java/com/example/notes/domain/events/CreatedEvent.java": {
+      "src/main/java/com/example/notes/domain/events/CreatedEvent.java": {
         "bytes": "<518 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
@@ -797,7 +797,7 @@
           ]
         }
       },
-      ".jails/generated/main/java/com/example/notes/repository/NoteRepository.java": {
+      "src/main/java/com/example/notes/repository/NoteRepository.java": {
         "bytes": "<466 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
@@ -810,7 +810,7 @@
           ]
         }
       },
-      ".jails/generated/main/java/com/example/notes/service/NotifierService.java": {
+      "src/main/java/com/example/notes/service/NotifierService.java": {
         "bytes": "<212 bytes elided>",
         "kind": "java-main",
         "mode": "regular",
@@ -823,7 +823,7 @@
           ]
         }
       },
-      ".jails/generated/test/java/com/example/notes/TestcontainersConfig.java": {
+      "src/test/java/com/example/notes/TestcontainersConfig.java": {
         "bytes": "<3825 bytes elided>",
         "kind": "java-test",
         "mode": "regular",
@@ -837,7 +837,7 @@
           ]
         }
       },
-      ".jails/generated/test/java/com/example/notes/adapters/JsonTest.java": {
+      "src/test/java/com/example/notes/adapters/JsonTest.java": {
         "bytes": "<3651 bytes elided>",
         "kind": "java-test",
         "mode": "regular",
@@ -851,7 +851,7 @@
           ]
         }
       },
-      ".jails/generated/test/java/com/example/notes/adapters/jdbc/JdbcCreateCommandIT.java": {
+      "src/test/java/com/example/notes/adapters/jdbc/JdbcCreateCommandIT.java": {
         "bytes": "<1196 bytes elided>",
         "kind": "java-test",
         "mode": "regular",
@@ -866,7 +866,7 @@
           ]
         }
       },
-      ".jails/generated/test/java/com/example/notes/adapters/jdbc/JdbcNoteRepositoryIT.java": {
+      "src/test/java/com/example/notes/adapters/jdbc/JdbcNoteRepositoryIT.java": {
         "bytes": "<1113 bytes elided>",
         "kind": "java-test",
         "mode": "regular",
@@ -881,7 +881,7 @@
           ]
         }
       },
-      ".jails/generated/test/java/com/example/notes/adapters/jdbc/JdbcOpenQueryIT.java": {
+      "src/test/java/com/example/notes/adapters/jdbc/JdbcOpenQueryIT.java": {
         "bytes": "<1385 bytes elided>",
         "kind": "java-test",
         "mode": "regular",
@@ -896,7 +896,7 @@
           ]
         }
       },
-      ".jails/generated/test/java/com/example/notes/adapters/jdbc/JdbcRenameTransitionIT.java": {
+      "src/test/java/com/example/notes/adapters/jdbc/JdbcRenameTransitionIT.java": {
         "bytes": "<1470 bytes elided>",
         "kind": "java-test",
         "mode": "regular",
@@ -911,7 +911,7 @@
           ]
         }
       },
-      ".jails/generated/test/java/com/example/notes/domain/NoteTest.java": {
+      "src/test/java/com/example/notes/domain/NoteTest.java": {
         "bytes": "<542 bytes elided>",
         "kind": "java-test",
         "mode": "regular",
@@ -924,7 +924,7 @@
           ]
         }
       },
-      ".jails/generated/test/java/com/example/notes/domain/OutcomeTest.java": {
+      "src/test/java/com/example/notes/domain/OutcomeTest.java": {
         "bytes": "<684 bytes elided>",
         "kind": "java-test",
         "mode": "regular",
@@ -937,7 +937,7 @@
           ]
         }
       },
-      ".jails/generated/test/java/com/example/notes/repository/NoteRepositoryContract.java": {
+      "src/test/java/com/example/notes/repository/NoteRepositoryContract.java": {
         "bytes": "<1753 bytes elided>",
         "kind": "java-test",
         "mode": "regular",
@@ -950,7 +950,7 @@
           ]
         }
       },
-      ".jails/generated/test/java/com/example/notes/service/NotifierServiceTest.java": {
+      "src/test/java/com/example/notes/service/NotifierServiceTest.java": {
         "bytes": "<343 bytes elided>",
         "kind": "java-test",
         "mode": "regular",
@@ -963,7 +963,7 @@
           ]
         }
       },
-      ".jails/generated/test/java/com/example/notes/testkit/NoteFactory.java": {
+      "src/test/java/com/example/notes/testkit/NoteFactory.java": {
         "bytes": "<1064 bytes elided>",
         "kind": "java-test",
         "mode": "regular",
@@ -1334,9 +1334,8 @@
           ]
         }
       }
-    },
-    "root": ".jails/generated"
+    }
   },
-  "projection_digest": "sha256:0c090eee1129f4ace639006544c0571ee2d60d0d8c4c95f1da7f7b8b86cfc3af",
+  "projection_digest": "sha256:246ef4a85aec87e2896de9a97689d993fb79f2eff117591b943403f87759752f",
   "schema": "jails.compiler-lock.v3"
 }

@@ -69,7 +69,7 @@ mod tests {
 
     #[test]
     fn paths_never_escape_the_captured_project() {
-        assert!(ProjectPath::parse(".jails/generated/main/java").is_ok());
+        assert!(ProjectPath::parse("src/main/java").is_ok());
         assert!(ProjectPath::parse("../outside").is_err());
         assert!(ProjectPath::parse("/absolute").is_err());
         assert!(ProjectPath::parse("a//b").is_err());

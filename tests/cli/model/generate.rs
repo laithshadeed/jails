@@ -131,7 +131,7 @@ entity Tx {
         String::from_utf8_lossy(&generated.stderr)
     );
 
-    let base = root.join(".jails/generated/main/java/com/example/ledger");
+    let base = root.join("src/main/java/com/example/ledger");
     let port = fs::read_to_string(base.join("domain/Elig.java")).unwrap();
     assert!(port.contains("public interface Elig"), "{port}");
 
@@ -197,7 +197,7 @@ app Gym {
         );
     }
 
-    let base = root.join(".jails/generated/main/java/com/example/gym/domain");
+    let base = root.join("src/main/java/com/example/gym/domain");
     assert!(base.join("Currency.java").is_file());
     assert!(base.join("SourceRef.java").is_file());
 
@@ -261,7 +261,7 @@ app Demo {
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    let tests = root.join(".jails/generated/test/java/com/example/demo/domain");
+    let tests = root.join("src/test/java/com/example/demo/domain");
 
     // A component that can be null-checked gives the test something real.
     let note = fs::read_to_string(tests.join("NoteTest.java")).unwrap();
@@ -382,10 +382,8 @@ app Notes {
     assert!(field("created_at").semantics.default.is_some());
     assert!(field("updated_at").semantics.updated);
 
-    let record = fs::read_to_string(
-        root.join(".jails/generated/main/java/com/example/notes/domain/Task.java"),
-    )
-    .unwrap();
+    let record =
+        fs::read_to_string(root.join("src/main/java/com/example/notes/domain/Task.java")).unwrap();
     assert!(record.contains("attempts must be positive"), "{record}");
     assert!(record.contains("credits.isPresent()"), "{record}");
     let migration =
@@ -439,7 +437,7 @@ fn familiar_record_generation_is_a_model_patch_in_canonical_projects() {
         fs::read_to_string(root.join(".jails/model.jdl")).unwrap(),
         EMPTY_MODEL
     );
-    assert!(!root.join(".jails/generated").exists());
+    assert!(!root.join(".jails/compiler.lock.json").exists());
 
     let applied = jails_cmd(&root, None)
         .args([
@@ -461,10 +459,8 @@ fn familiar_record_generation_is_a_model_patch_in_canonical_projects() {
     assert!(model.contains("entity Note @id(ent_note)"), "{model}");
     assert!(model.contains("@id(fld_note_title)"), "{model}");
 
-    let source = fs::read_to_string(
-        root.join(".jails/generated/main/java/com/example/notes/domain/Note.java"),
-    )
-    .unwrap();
+    let source =
+        fs::read_to_string(root.join("src/main/java/com/example/notes/domain/Note.java")).unwrap();
     assert!(source.contains("Optional<String> body"), "{source}");
     assert!(source.contains("Objects.requireNonNull(title"), "{source}");
     assert!(source.contains("title = title.trim()"), "{source}");
@@ -521,10 +517,8 @@ fn record_compiler_preserves_the_legacy_semantic_contract() {
     );
 
     let old = common::read_generated(&legacy, "src/main/java/com/example/demo/domain/Note.java");
-    let new = fs::read_to_string(
-        compiled.join(".jails/generated/main/java/com/example/notes/domain/Note.java"),
-    )
-    .unwrap();
+    let new = fs::read_to_string(compiled.join("src/main/java/com/example/notes/domain/Note.java"))
+        .unwrap();
     for contract in [
         "Optional<String> body",
         "Objects.requireNonNull(title",
@@ -582,10 +576,8 @@ entity Task {
         String::from_utf8_lossy(&synced.stderr)
     );
 
-    let record = fs::read_to_string(
-        root.join(".jails/generated/main/java/com/example/ord/domain/Task.java"),
-    )
-    .unwrap();
+    let record =
+        fs::read_to_string(root.join("src/main/java/com/example/ord/domain/Task.java")).unwrap();
     let components = record
         .split_once("public record Task(")
         .expect("a record declaration")
@@ -622,10 +614,9 @@ fn canonical_enum_frontend_writes_a_typed_wire_vocabulary() {
     assert!(model.contains("enum Status @id(ent_status)"), "{model}");
     assert!(model.contains("  OPEN\n"), "{model}");
     assert!(model.contains(r#"IN_PROGRESS = "in_progress""#), "{model}");
-    let source = fs::read_to_string(
-        root.join(".jails/generated/main/java/com/example/notes/domain/Status.java"),
-    )
-    .unwrap();
+    let source =
+        fs::read_to_string(root.join("src/main/java/com/example/notes/domain/Status.java"))
+            .unwrap();
     assert!(source.contains("IN_PROGRESS(\"in_progress\")"), "{source}");
     assert!(source.contains("Status fromWire(String value)"), "{source}");
 }
@@ -663,7 +654,7 @@ fn familiar_scaffold_generation_is_one_semantic_entity_profile() {
         "ports/http/NoteHttpPort.java",
     ] {
         assert!(
-            root.join(".jails/generated/main/java/com/example/notes")
+            root.join("src/main/java/com/example/notes")
                 .join(relative)
                 .is_file(),
             "semantic scaffold profile did not emit {relative}"
@@ -707,10 +698,9 @@ fn scaffold_profile_preserves_the_legacy_domain_and_repository_contracts() {
 
     let old_record =
         common::read_generated(&legacy, "src/main/java/com/example/demo/domain/Note.java");
-    let new_record = fs::read_to_string(
-        compiled.join(".jails/generated/main/java/com/example/notes/domain/Note.java"),
-    )
-    .unwrap();
+    let new_record =
+        fs::read_to_string(compiled.join("src/main/java/com/example/notes/domain/Note.java"))
+            .unwrap();
     for contract in [
         "UUID id",
         "String title",
@@ -727,8 +717,7 @@ fn scaffold_profile_preserves_the_legacy_domain_and_repository_contracts() {
         "src/main/java/com/example/demo/app/NoteRepository.java",
     );
     let new_repository = fs::read_to_string(
-        compiled
-            .join(".jails/generated/main/java/com/example/notes/repository/NoteRepository.java"),
+        compiled.join("src/main/java/com/example/notes/repository/NoteRepository.java"),
     )
     .unwrap();
     for contract in [
@@ -775,7 +764,7 @@ app Demo {
         );
     }
 
-    let web = root.join(".jails/generated/main/java/com/example/demo/web");
+    let web = root.join("src/main/java/com/example/demo/web");
     let controller = fs::read_to_string(web.join("NoteController.java")).unwrap();
     assert!(controller.contains("@RestController"), "{controller}");
     // The table name, not a second pluraliser: a route that does not match the
@@ -809,14 +798,13 @@ app Demo {
 
     // The port stays: it is managed ABI, whatever now serves the resource.
     assert!(
-        root.join(".jails/generated/main/java/com/example/demo/ports/http/NoteHttpPort.java")
+        root.join("src/main/java/com/example/demo/ports/http/NoteHttpPort.java")
             .is_file()
     );
 
-    let test = fs::read_to_string(
-        root.join(".jails/generated/test/java/com/example/demo/web/NoteControllerTest.java"),
-    )
-    .unwrap();
+    let test =
+        fs::read_to_string(root.join("src/test/java/com/example/demo/web/NoteControllerTest.java"))
+            .unwrap();
     // An anonymous class, not a lambda: the port has four methods and is not a
     // functional interface.
     assert!(test.contains("new NoteRepository() {"), "{test}");
@@ -929,17 +917,16 @@ fn canonical_client_emits_its_registration_dependency_and_base_url() {
     assert!(source.contains("component client Ledger"), "{source}");
 
     for relative in [
-        ".jails/generated/main/java/com/example/demo/clients/LedgerClient.java",
-        ".jails/generated/main/java/com/example/demo/clients/LedgerClientConfig.java",
-        ".jails/generated/test/java/com/example/demo/clients/LedgerClientTest.java",
+        "src/main/java/com/example/demo/clients/LedgerClient.java",
+        "src/main/java/com/example/demo/clients/LedgerClientConfig.java",
+        "src/test/java/com/example/demo/clients/LedgerClientTest.java",
     ] {
         assert!(root.join(relative).exists(), "`{relative}` was not written");
     }
 
-    let interface = fs::read_to_string(
-        root.join(".jails/generated/main/java/com/example/demo/clients/LedgerClient.java"),
-    )
-    .unwrap();
+    let interface =
+        fs::read_to_string(root.join("src/main/java/com/example/demo/clients/LedgerClient.java"))
+            .unwrap();
     assert!(
         interface.contains("package com.example.demo.clients;"),
         "{interface}"
@@ -958,7 +945,7 @@ fn canonical_client_emits_its_registration_dependency_and_base_url() {
     assert!(!interface.contains("{{"), "{interface}");
 
     let config = fs::read_to_string(
-        root.join(".jails/generated/main/java/com/example/demo/clients/LedgerClientConfig.java"),
+        root.join("src/main/java/com/example/demo/clients/LedgerClientConfig.java"),
     )
     .unwrap();
     assert!(
@@ -995,10 +982,8 @@ fn canonical_client_emits_its_registration_dependency_and_base_url() {
         String::from_utf8_lossy(&synced.stderr)
     );
     assert_eq!(
-        fs::read_to_string(
-            root.join(".jails/generated/main/java/com/example/demo/clients/LedgerClient.java")
-        )
-        .unwrap(),
+        fs::read_to_string(root.join("src/main/java/com/example/demo/clients/LedgerClient.java"))
+            .unwrap(),
         interface
     );
 }
@@ -1033,15 +1018,15 @@ fn canonical_fetcher_emits_the_bounds_that_make_it_safe() {
     );
 
     for relative in [
-        ".jails/generated/main/java/com/example/demo/clients/PageFetcher.java",
-        ".jails/generated/main/java/com/example/demo/clients/SafePageFetcher.java",
-        ".jails/generated/test/java/com/example/demo/clients/SafePageFetcherTest.java",
+        "src/main/java/com/example/demo/clients/PageFetcher.java",
+        "src/main/java/com/example/demo/clients/SafePageFetcher.java",
+        "src/test/java/com/example/demo/clients/SafePageFetcherTest.java",
     ] {
         assert!(root.join(relative).exists(), "`{relative}` was not written");
     }
 
     let adapter = fs::read_to_string(
-        root.join(".jails/generated/main/java/com/example/demo/clients/SafePageFetcher.java"),
+        root.join("src/main/java/com/example/demo/clients/SafePageFetcher.java"),
     )
     .unwrap();
     assert!(!adapter.contains("{{"), "{adapter}");
@@ -1097,11 +1082,11 @@ fn canonical_jobs_share_one_scheduling_config() {
     }
 
     for relative in [
-        ".jails/generated/main/java/com/example/demo/jobs/ReconcileJob.java",
-        ".jails/generated/main/java/com/example/demo/jobs/ExpireJob.java",
-        ".jails/generated/main/java/com/example/demo/jobs/SchedulingConfig.java",
-        ".jails/generated/test/java/com/example/demo/jobs/ReconcileJobTest.java",
-        ".jails/generated/test/java/com/example/demo/jobs/ExpireJobTest.java",
+        "src/main/java/com/example/demo/jobs/ReconcileJob.java",
+        "src/main/java/com/example/demo/jobs/ExpireJob.java",
+        "src/main/java/com/example/demo/jobs/SchedulingConfig.java",
+        "src/test/java/com/example/demo/jobs/ReconcileJobTest.java",
+        "src/test/java/com/example/demo/jobs/ExpireJobTest.java",
     ] {
         assert!(root.join(relative).exists(), "`{relative}` was not written");
     }
@@ -1110,10 +1095,9 @@ fn canonical_jobs_share_one_scheduling_config() {
     // waits for the first however unrelated they are -- and nothing reports
     // it, the jobs simply do not run. This file is generated to fix that, so
     // the fix is what is asserted.
-    let config = fs::read_to_string(
-        root.join(".jails/generated/main/java/com/example/demo/jobs/SchedulingConfig.java"),
-    )
-    .unwrap();
+    let config =
+        fs::read_to_string(root.join("src/main/java/com/example/demo/jobs/SchedulingConfig.java"))
+            .unwrap();
     assert!(!config.contains("{{"), "{config}");
     assert!(
         config.contains("package com.example.demo.jobs;"),
@@ -1157,27 +1141,26 @@ fn canonical_socket_and_webhook_split_their_framework_half_from_their_testable_o
     }
 
     for relative in [
-        ".jails/generated/main/java/com/example/demo/web/ChatSocketHandler.java",
-        ".jails/generated/main/java/com/example/demo/web/ChatSocketConfig.java",
-        ".jails/generated/test/java/com/example/demo/web/ChatSocketHandlerTest.java",
-        ".jails/generated/main/java/com/example/demo/StripeVerifier.java",
-        ".jails/generated/main/java/com/example/demo/web/StripeWebhookController.java",
-        ".jails/generated/test/java/com/example/demo/StripeVerifierTest.java",
+        "src/main/java/com/example/demo/web/ChatSocketHandler.java",
+        "src/main/java/com/example/demo/web/ChatSocketConfig.java",
+        "src/test/java/com/example/demo/web/ChatSocketHandlerTest.java",
+        "src/main/java/com/example/demo/StripeVerifier.java",
+        "src/main/java/com/example/demo/web/StripeWebhookController.java",
+        "src/test/java/com/example/demo/StripeVerifierTest.java",
     ] {
         assert!(root.join(relative).exists(), "`{relative}` was not written");
     }
 
-    let config = fs::read_to_string(
-        root.join(".jails/generated/main/java/com/example/demo/web/ChatSocketConfig.java"),
-    )
-    .unwrap();
+    let config =
+        fs::read_to_string(root.join("src/main/java/com/example/demo/web/ChatSocketConfig.java"))
+            .unwrap();
     assert!(config.contains("/ws/chat"), "{config}");
     assert!(!config.contains("{{"), "{config}");
 
     // The controller lives in `web` and the verifier in the base package, so
     // the import is real rather than a sibling one that would not compile.
     let controller = fs::read_to_string(
-        root.join(".jails/generated/main/java/com/example/demo/web/StripeWebhookController.java"),
+        root.join("src/main/java/com/example/demo/web/StripeWebhookController.java"),
     )
     .unwrap();
     assert!(
@@ -1187,10 +1170,9 @@ fn canonical_socket_and_webhook_split_their_framework_half_from_their_testable_o
     assert!(controller.contains("X-Stripe-Signature"), "{controller}");
     assert!(!controller.contains("{{"), "{controller}");
 
-    let verifier = fs::read_to_string(
-        root.join(".jails/generated/main/java/com/example/demo/StripeVerifier.java"),
-    )
-    .unwrap();
+    let verifier =
+        fs::read_to_string(root.join("src/main/java/com/example/demo/StripeVerifier.java"))
+            .unwrap();
     assert!(verifier.contains("app.stripe.secret"), "{verifier}");
 
     let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
@@ -1231,7 +1213,7 @@ fn canonical_auth_refuses_without_security_then_pins_the_expiry_nothing_else_wou
     assert!(stderr.contains("cap security"), "{stderr}");
     assert!(
         !root
-            .join(".jails/generated/main/java/com/example/demo/ApiTokens.java")
+            .join("src/main/java/com/example/demo/ApiTokens.java")
             .exists(),
         "the refusal wrote a file"
     );
@@ -1256,14 +1238,11 @@ fn canonical_auth_refuses_without_security_then_pins_the_expiry_nothing_else_wou
     );
 
     let tokens =
-        fs::read_to_string(root.join(".jails/generated/main/java/com/example/demo/ApiTokens.java"))
-            .unwrap();
+        fs::read_to_string(root.join("src/main/java/com/example/demo/ApiTokens.java")).unwrap();
     assert!(!tokens.contains("{{"), "{tokens}");
     assert!(tokens.contains("urn:com.example.demo"), "{tokens}");
-    let test = fs::read_to_string(
-        root.join(".jails/generated/test/java/com/example/demo/ApiTokensTest.java"),
-    )
-    .unwrap();
+    let test =
+        fs::read_to_string(root.join("src/test/java/com/example/demo/ApiTokensTest.java")).unwrap();
     assert!(test.contains("exp"), "{test}");
 }
 
@@ -1315,11 +1294,11 @@ fn canonical_idempotency_appends_its_table_once_and_only_when_new() {
     );
 
     for relative in [
-        ".jails/generated/main/java/com/example/demo/domain/PaymentReceipt.java",
-        ".jails/generated/main/java/com/example/demo/application/PaymentReceipts.java",
-        ".jails/generated/main/java/com/example/demo/adapters/jdbc/JdbcPaymentReceipts.java",
-        ".jails/generated/main/java/com/example/demo/service/PaymentGuard.java",
-        ".jails/generated/test/java/com/example/demo/service/PaymentGuardTest.java",
+        "src/main/java/com/example/demo/domain/PaymentReceipt.java",
+        "src/main/java/com/example/demo/application/PaymentReceipts.java",
+        "src/main/java/com/example/demo/adapters/jdbc/JdbcPaymentReceipts.java",
+        "src/main/java/com/example/demo/service/PaymentGuard.java",
+        "src/test/java/com/example/demo/service/PaymentGuardTest.java",
     ] {
         assert!(root.join(relative).exists(), "`{relative}` was not written");
     }
@@ -1345,9 +1324,9 @@ fn canonical_idempotency_appends_its_table_once_and_only_when_new() {
     );
 
     // The claim the guard is built on, which select-then-insert would lose.
-    let store = fs::read_to_string(root.join(
-        ".jails/generated/main/java/com/example/demo/adapters/jdbc/JdbcPaymentReceipts.java",
-    ))
+    let store = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/adapters/jdbc/JdbcPaymentReceipts.java"),
+    )
     .unwrap();
     assert!(store.contains("on conflict do nothing"), "{store}");
     assert!(store.contains("payment_receipts"), "{store}");
@@ -1394,19 +1373,18 @@ fn canonical_handlers_share_one_error_envelope_without_a_framework() {
     }
 
     for relative in [
-        ".jails/generated/main/java/com/example/demo/api/WorkItemHandler.java",
-        ".jails/generated/main/java/com/example/demo/api/NoteHandler.java",
-        ".jails/generated/main/java/com/example/demo/domain/ApiError.java",
-        ".jails/generated/test/java/com/example/demo/domain/ApiErrorTest.java",
-        ".jails/generated/test/java/com/example/demo/api/WorkItemHandlerTest.java",
+        "src/main/java/com/example/demo/api/WorkItemHandler.java",
+        "src/main/java/com/example/demo/api/NoteHandler.java",
+        "src/main/java/com/example/demo/domain/ApiError.java",
+        "src/test/java/com/example/demo/domain/ApiErrorTest.java",
+        "src/test/java/com/example/demo/api/WorkItemHandlerTest.java",
     ] {
         assert!(root.join(relative).exists(), "`{relative}` was not written");
     }
 
-    let handler = fs::read_to_string(
-        root.join(".jails/generated/main/java/com/example/demo/api/WorkItemHandler.java"),
-    )
-    .unwrap();
+    let handler =
+        fs::read_to_string(root.join("src/main/java/com/example/demo/api/WorkItemHandler.java"))
+            .unwrap();
     assert!(!handler.contains("{{"), "{handler}");
     // Nothing framework-shaped: the JDK's own handler is the whole surface.
     assert!(
@@ -1421,10 +1399,9 @@ fn canonical_handlers_share_one_error_envelope_without_a_framework() {
 
     // The envelope is rendered from the shared template, so this is the shape
     // the golden trees already pin.
-    let envelope = fs::read_to_string(
-        root.join(".jails/generated/main/java/com/example/demo/domain/ApiError.java"),
-    )
-    .unwrap();
+    let envelope =
+        fs::read_to_string(root.join("src/main/java/com/example/demo/domain/ApiError.java"))
+            .unwrap();
     assert!(
         envelope.contains(
             "public record ApiError(String code, String message, Map<String, String> details)"
@@ -1480,28 +1457,27 @@ fn canonical_presence_refuses_without_storage_then_shares_the_scheduler() {
     }
 
     for relative in [
-        ".jails/generated/main/java/com/example/demo/application/OnlinePresence.java",
-        ".jails/generated/main/java/com/example/demo/adapters/jdbc/JdbcOnlinePresence.java",
-        ".jails/generated/test/java/com/example/demo/adapters/jdbc/JdbcOnlinePresenceIT.java",
+        "src/main/java/com/example/demo/application/OnlinePresence.java",
+        "src/main/java/com/example/demo/adapters/jdbc/JdbcOnlinePresence.java",
+        "src/test/java/com/example/demo/adapters/jdbc/JdbcOnlinePresenceIT.java",
         // One config, and presence declared it before the job did.
-        ".jails/generated/main/java/com/example/demo/jobs/SchedulingConfig.java",
+        "src/main/java/com/example/demo/jobs/SchedulingConfig.java",
     ] {
         assert!(root.join(relative).exists(), "`{relative}` was not written");
     }
 
-    let store =
-        fs::read_to_string(root.join(
-            ".jails/generated/main/java/com/example/demo/adapters/jdbc/JdbcOnlinePresence.java",
-        ))
-        .unwrap();
+    let store = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/adapters/jdbc/JdbcOnlinePresence.java"),
+    )
+    .unwrap();
     assert!(store.contains("online_presence"), "{store}");
     assert!(!store.contains("{{"), "{store}");
 
     // The integration test imports the container the model already knows it
     // has, rather than being `@Disabled` for want of reading the test tree.
-    let integration = fs::read_to_string(root.join(
-        ".jails/generated/test/java/com/example/demo/adapters/jdbc/JdbcOnlinePresenceIT.java",
-    ))
+    let integration = fs::read_to_string(
+        root.join("src/test/java/com/example/demo/adapters/jdbc/JdbcOnlinePresenceIT.java"),
+    )
     .unwrap();
     assert!(
         integration.contains("@Import(TestcontainersConfig.class)"),
@@ -1604,10 +1580,10 @@ fn canonical_cli_registers_its_commands_and_claims_the_entry_point() {
     );
 
     for relative in [
-        ".jails/generated/main/java/com/example/demo/cli/AdminCli.java",
-        ".jails/generated/test/java/com/example/demo/cli/AdminCliTest.java",
-        ".jails/generated/main/java/com/example/demo/cli/GreetCommand.java",
-        ".jails/generated/test/java/com/example/demo/cli/GreetCommandTest.java",
+        "src/main/java/com/example/demo/cli/AdminCli.java",
+        "src/test/java/com/example/demo/cli/AdminCliTest.java",
+        "src/main/java/com/example/demo/cli/GreetCommand.java",
+        "src/test/java/com/example/demo/cli/GreetCommandTest.java",
     ] {
         assert!(root.join(relative).exists(), "`{relative}` was not written");
     }
@@ -1682,7 +1658,7 @@ fn canonical_search_and_seed_write_their_projections_and_compile() {
     );
     assert!(model.contains("use seed"), "{model}");
 
-    let generated = root.join(".jails/generated");
+    let generated = root.join("src");
     let read = |relative: &str| {
         fs::read_to_string(generated.join(relative))
             .unwrap_or_else(|error| panic!("{relative}: {error}"))

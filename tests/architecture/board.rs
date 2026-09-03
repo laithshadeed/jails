@@ -53,7 +53,11 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // resolved `Project`, because which build it asks -- Maven's
                 // `dependency:build-classpath` or Gradle's `jailsClasspath`
                 // task -- is a fact the `Project` already holds.
-                ceiling: 77,
+                //
+                // 77 -> 76: S60.7 put managed output beside the reader's
+                // sources, so `doctor`'s storage check reads one test tree and
+                // the helper that listed two is gone.
+                ceiling: 76,
                 // Withdrawn, not reached: the count includes modules whose
                 // subject *is* a path, so a target under the ceiling reads as
                 // a demand to stop writing modules. The row below is the
@@ -366,7 +370,10 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // asks the resolved `Project` instead, and a question that is
                 // one method call is shorter than one that is a reader call
                 // with three arguments.
-                ceiling: 1474,
+                //
+                // 1474 -> 1468: S60.7. Managed tests are written beside the
+                // reader's, so the storage wiring check reads one test tree.
+                ceiling: 1468,
                 // Withdrawn, not reached: none of the hand-written checks is a
                 // re-encoded dependency fact, so a lower target measures a
                 // saving that is not there. Ratchet against growth.

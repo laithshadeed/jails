@@ -570,8 +570,7 @@ fn a_field_reaches_the_companions_named_by_yields_as_well_as_on() {
 
     // The association's probe builds a row out of the child's column list, so
     // it goes stale the moment the child gains one.
-    let probe =
-        ".jails/generated/test/java/com/example/demo/adapters/jdbc/ItemOwnerAssociationIT.java";
+    let probe = "src/test/java/com/example/demo/adapters/jdbc/ItemOwnerAssociationIT.java";
     assert!(plan.contains(probe), "{probe} missing from:\n{plan}");
     let source = fs::read_to_string(root.join(probe)).unwrap();
     assert!(source.contains("memo"), "{probe}:\n{source}");
@@ -1600,12 +1599,9 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
         .unwrap();
     assert!(changed.status.success(), "{changed:?}");
     let shown = String::from_utf8_lossy(&changed.stdout);
-    // The managed path, because that is where the file is: generated output
-    // lives under `.jails/generated` and the reader's own tree is theirs.
+    // The path the compiler wrote, beside the reader's own sources.
     assert!(
-        shown.contains(
-            "diff --jails replace .jails/generated/main/java/com/example/demo/domain/Note.java"
-        ),
+        shown.contains("diff --jails replace src/main/java/com/example/demo/domain/Note.java"),
         "{shown}"
     );
     assert!(shown.contains("@@ -"), "{shown}");
@@ -1616,7 +1612,7 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
     // which is the thing worth checking, and a marker saying "three-way" is
     // not.
     assert!(
-        shown.contains(".jails/generated/test/java/com/example/demo/domain/NoteTest.java"),
+        shown.contains("src/test/java/com/example/demo/domain/NoteTest.java"),
         "{shown}"
     );
     assert!(
@@ -1719,7 +1715,7 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
         "{json}"
     );
     assert!(
-        json.contains(".jails/generated/main/java/com/example/demo/domain/Fresh.java"),
+        json.contains("src/main/java/com/example/demo/domain/Fresh.java"),
         "{json}"
     );
     // The JSON is the machine's answer, so the human's postscript is not in
@@ -1759,7 +1755,7 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
         .expect("the managed tree is published");
     let after = merged_tree["after"].as_str().unwrap();
     let entries = &merged_value["trees"][after]["entries"];
-    let blob = entries[".jails/generated/test/java/com/example/demo/domain/NoteTest.java"]["blob"]
+    let blob = entries["src/test/java/com/example/demo/domain/NoteTest.java"]["blob"]
         .as_str()
         .expect("the merged companion is in the published tree");
     let merged_test = merged_value["blobs"][blob].as_array().unwrap();
@@ -1790,9 +1786,7 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
     // whether it is asked before or after, and the plan is the same value
     // either way -- which is what makes the two answers agree.
     assert!(
-        applied.contains(
-            "diff --jails create .jails/generated/main/java/com/example/demo/domain/Fresh.java"
-        ),
+        applied.contains("diff --jails create src/main/java/com/example/demo/domain/Fresh.java"),
         "{applied}"
     );
     assert!(applied.contains("PublishMergedTree { root:"), "{applied}");
@@ -3430,7 +3424,7 @@ fn scaffold_writes_http_requests_and_factory_builds_typed_test_data() {
             .unwrap()
             .success()
     );
-    let requests = common::read_generated(&root, "requests/notes.http");
+    let requests = common::read_generated(&root, "src/test/http/notes.http");
     assert!(requests.contains("POST {{baseUrl}}/notes"), "{requests}");
     assert!(requests.contains("GET {{baseUrl}}/notes"), "{requests}");
     assert!(
@@ -3629,7 +3623,7 @@ fn a_timestamped_scaffold_does_not_ask_the_caller_for_its_audit_columns() {
 
     // And the sendable collection describes a request that can be made -- as
     // does the generated controller test, which sends that same body.
-    let requests = common::read_generated(&root, "requests/notes.http");
+    let requests = common::read_generated(&root, "src/test/http/notes.http");
     assert!(!requests.contains("createdAt"), "{requests}");
     let controller_test = common::read_generated(
         &root,
@@ -3668,7 +3662,7 @@ fn a_scoped_scaffold_documents_only_the_request_its_controller_answers() {
             .success()
     );
 
-    let requests = common::read_generated(&root, "requests/notes.http");
+    let requests = common::read_generated(&root, "src/test/http/notes.http");
     assert!(requests.contains("POST {{baseUrl}}/notes"), "{requests}");
     assert!(!requests.contains("GET {{baseUrl}}"), "{requests}");
 
@@ -4104,26 +4098,18 @@ fn record_and_command_compile_and_pass_in_a_plain_cli_project() {
 
     // `class` is the one kind that lands in the base package rather than a
     // subpackage -- a wrong `place()` here would compile and still be wrong.
-    // Under `.jails/generated`: reproducible output is merge-managed there,
-    // compiled through an added source root. A project created from an
-    // application manifest writes into `src`, which is what
-    // `verified_plain_toolbox` below is.
+    // Under `src`, merge-managed, whichever way the project was made --
+    // `verified_plain_toolbox` below comes from an application manifest.
     assert!(
-        root.join(".jails/generated/main/java/com/example/demo/MoneyMoved.java")
+        root.join("src/main/java/com/example/demo/MoneyMoved.java")
             .exists()
     );
     assert!(
-        root.join(".jails/generated/test/java/com/example/demo/MoneyMovedTest.java")
+        root.join("src/test/java/com/example/demo/MoneyMovedTest.java")
             .exists()
     );
-    // And the negatives, which are what a regression actually trips over: the
-    // reader's own tree is untouched, and no `.jails/ledger.toml` appears.
-    assert!(
-        !root
-            .join("src/main/java/com/example/demo/MoneyMoved.java")
-            .exists(),
-        "the class was written into the reader's own tree"
-    );
+    // And the negative, which is what a regression actually trips over: no
+    // `.jails/ledger.toml` appears.
     assert!(
         !root.join(".jails/ledger.toml").exists(),
         "a canonical project was given a legacy ledger"
@@ -4222,7 +4208,7 @@ fn generators_compose_through_user_owned_field_types() {
     }
 
     let value = fs::read_to_string(
-        root.join(".jails/generated/main/java/com/example/gym/domain/CanonicalTransaction.java"),
+        root.join("src/main/java/com/example/gym/domain/CanonicalTransaction.java"),
     )
     .unwrap();
     assert!(
@@ -4268,11 +4254,10 @@ fn generators_compose_through_user_owned_field_types() {
     // component whose type is a record *this project already has* by reading
     // the record: `SourceRef` was generated two commands ago, so refusing to
     // build one would be the tool forgetting what it just wrote.
-    let test =
-        fs::read_to_string(root.join(
-            ".jails/generated/test/java/com/example/gym/domain/CanonicalTransactionTest.java",
-        ))
-        .unwrap();
+    let test = fs::read_to_string(
+        root.join("src/test/java/com/example/gym/domain/CanonicalTransactionTest.java"),
+    )
+    .unwrap();
     // The constant by name rather than by position: `values()[0]` starts
     // standing for a different value the moment somebody reorders the enum,
     // and nothing in the diff says so.
@@ -4311,10 +4296,9 @@ fn generators_compose_through_user_owned_field_types() {
         .status()
         .unwrap();
     assert!(status.success(), "generate value with a sealed type failed");
-    let stamped = fs::read_to_string(
-        root.join(".jails/generated/test/java/com/example/gym/domain/StampedTest.java"),
-    )
-    .unwrap();
+    let stamped =
+        fs::read_to_string(root.join("src/test/java/com/example/gym/domain/StampedTest.java"))
+            .unwrap();
     assert!(stamped.contains("new Outcome.Accepted()"), "{stamped}");
     assert!(
         !stamped.contains("@Disabled"),
@@ -5138,8 +5122,8 @@ fn destroy_strategy_removes_the_implementations_it_did_not_name() {
 /// A reader's own implementation is theirs, and the removal says so.
 ///
 /// An implementation of a deleted interface stops the project compiling, and
-/// it is not jails' file: the port lives under `.jails/generated` and a class
-/// in `src/main/java` implementing it is the reader's. So the file survives
+/// it is not jails' file: the port is managed and a class the reader wrote
+/// implementing it is theirs. So the file survives
 /// and the removal names it.
 #[test]
 fn destroy_names_the_reader_source_a_removal_strands() {
@@ -5860,10 +5844,7 @@ fn what_jails_generates_for_boot_2_compiles_and_what_cannot_refuses_by_name() {
     // under the managed tree, and a walk of one of them would report a clean
     // result over the half that could not contain the problem.
     let mut checked = 0;
-    let mut stack = vec![
-        root.join("src/test/java"),
-        root.join(".jails/generated/test/java"),
-    ];
+    let mut stack = vec![root.join("src/test/java"), root.join("src/test/java")];
     while let Some(dir) = stack.pop() {
         if !dir.is_dir() {
             continue;
@@ -6616,7 +6597,7 @@ fn the_documented_body_carries_only_what_the_request_record_declares() {
     assert_eq!(declared, vec!["subject"], "{request}");
 
     for path in [
-        "requests/tickets.http",
+        "src/test/http/tickets.http",
         "src/test/java/com/example/demo/web/TicketControllerTest.java",
     ] {
         let text = common::read_generated(&root, path);
@@ -6631,7 +6612,7 @@ fn the_documented_body_carries_only_what_the_request_record_declares() {
     // The `{{id}}` a GET and a DELETE need is still there: it is sampled from
     // the key's own type rather than read back out of a body that no longer
     // carries it.
-    let collection = common::read_generated(&root, "requests/tickets.http");
+    let collection = common::read_generated(&root, "src/test/http/tickets.http");
     assert!(collection.contains("@id = 1"), "{collection}");
     assert!(
         collection.contains("GET {{baseUrl}}/tickets/{{id}}"),
@@ -6683,7 +6664,7 @@ fn a_scaffold_answers_on_the_collection_route_it_was_given() {
     // The editor collection is the same one value, not a second derivation --
     // which is the drift `sql::table_name` being the only pluraliser exists to
     // stop.
-    let requests = common::read_generated(&root, "requests/users.http");
+    let requests = common::read_generated(&root, "src/test/http/users.http");
     assert!(
         requests.contains("POST {{baseUrl}}/admin_api/users"),
         "{requests}"

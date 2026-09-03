@@ -6,32 +6,19 @@
 
 use std::path::{Path, PathBuf};
 
-/// The Java source roots this project actually has, each with the relative
-/// name to print for it.
+/// The Java source root of one source set, with the relative name to print
+/// for it.
 ///
-/// Both trees, because reproducible output lives under `.jails/generated`
-/// and a route jails emitted and cannot see is worse than a gap: the reader
-/// cannot tell an unlisted route from an absent one, and `jails routes` would
-/// answer "No routes found under src/main/java" about a project whose every
-/// controller jails had just written.
-///
-/// Present-only, reader's tree first. A project with no generated tree gets
-/// exactly the plain scan and its message.
-///
-/// The label travels with the path so nothing downstream needs the root again:
-/// this is the one function here that re-derives a fact from a primitive, and
-/// the architecture gate counts it.
+/// One tree per set: managed output lives beside the reader's own sources
+/// under `src/`, so a route jails emitted and a route the reader wrote are
+/// found by the same scan. The label travels with the path so nothing
+/// downstream needs the root again.
 pub fn source_roots(root: &Path, set: SourceSet) -> Vec<(PathBuf, &'static str)> {
-    let (reader, generated) = match set {
-        SourceSet::Main => ("src/main/java", GENERATED_MAIN_JAVA),
-        SourceSet::Test => ("src/test/java", GENERATED_TEST_JAVA),
+    let reader = match set {
+        SourceSet::Main => "src/main/java",
+        SourceSet::Test => "src/test/java",
     };
-    let mut roots = vec![(root.join(reader), reader)];
-    let path = root.join(generated);
-    if path.is_dir() {
-        roots.push((path, generated));
-    }
-    roots
+    vec![(root.join(reader), reader)]
 }
 
 #[derive(Clone, Copy)]
@@ -49,11 +36,6 @@ pub(crate) fn source_files_in(roots: &[(PathBuf, &'static str)]) -> Vec<PathBuf>
 }
 
 /// Name the roots that were walked, so an empty report says where it looked.
-///
-/// Printing `src/main/java` while also scanning `.jails/generated/main/java`
-/// would be the same defect one layer up: a reader who has just generated a
-/// controller needs to know the generated tree was searched and came back
-/// empty, not that it was never opened.
 pub fn scanned(roots: &[(PathBuf, &'static str)]) -> String {
     roots
         .iter()
@@ -61,9 +43,3 @@ pub fn scanned(roots: &[(PathBuf, &'static str)]) -> String {
         .collect::<Vec<_>>()
         .join(" and ")
 }
-
-/// Where the compiler writes. A literal rather than an import because
-/// `jails-project` does not depend on the canonical ladder, and this is the
-/// one fact about it a reader-facing report needs.
-const GENERATED_MAIN_JAVA: &str = ".jails/generated/main/java";
-const GENERATED_TEST_JAVA: &str = ".jails/generated/test/java";

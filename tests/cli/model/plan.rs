@@ -162,13 +162,13 @@ fn model_apply_consumes_the_reviewed_plan_without_recompiling() {
         "{}",
         String::from_utf8_lossy(&applied.stderr)
     );
-    let record = root.join(".jails/generated/main/java/com/example/notes/domain/Note.java");
+    let record = root.join("src/main/java/com/example/notes/domain/Note.java");
     let source = fs::read_to_string(record).unwrap();
     assert!(source.contains("public record Note"), "{source}");
     assert!(source.contains("UUID id"), "{source}");
-    let command = fs::read_to_string(root.join(
-        ".jails/generated/main/java/com/example/notes/application/commands/CreateNoteCommand.java",
-    ))
+    let command = fs::read_to_string(
+        root.join("src/main/java/com/example/notes/application/commands/CreateNoteCommand.java"),
+    )
     .unwrap();
     assert!(
         command.contains("String ROUTE = \"POST /notes\""),
@@ -221,7 +221,7 @@ fn model_apply_rejects_a_stale_plan_before_writing() {
     assert!(!applied.status.success());
     let stderr = String::from_utf8(applied.stderr).unwrap();
     assert!(stderr.contains("stale exact plan"), "{stderr}");
-    assert!(!root.join(".jails/generated").exists());
+    assert!(!root.join(".jails/compiler.lock.json").exists());
 }
 
 /// The digest a reader reviews is the digest that gets applied: preview, plan

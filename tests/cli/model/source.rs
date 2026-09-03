@@ -228,9 +228,8 @@ entity Task {
 
 /// A project can run its own formatter.
 ///
-/// Reproducible output lives under `.jails/generated`, rendered from the
-/// model, so the only thing in the formatter's path is the reader's own code,
-/// which is what the command is for.
+/// Managed output is merge-managed, so the formatter's pass over it is an
+/// ordinary reader edit the next generation keeps.
 #[test]
 fn a_canonical_project_runs_its_own_formatter() {
     if !real_mvn_available() {
@@ -275,7 +274,7 @@ app Demo {
 ///
 /// What it writes is the app block and nothing else. The reader's Java is not
 /// adopted, moved or rewritten; what changes is that the next `jails g`
-/// renders through the compiler into `.jails/generated`.
+/// renders through the compiler, and the lock says which files are jails'.
 #[test]
 fn model_init_makes_a_foreign_project_canonical_without_touching_its_sources() {
     let root = temp_dir("model-init-foreign");
@@ -316,7 +315,7 @@ fn model_init_makes_a_foreign_project_canonical_without_touching_its_sources() {
         String::from_utf8_lossy(&generated.stderr)
     );
     assert!(
-        root.join(".jails/generated/main/java/com/example/demo/domain/Note.java")
+        root.join("src/main/java/com/example/demo/domain/Note.java")
             .is_file()
     );
     assert!(
@@ -817,14 +816,12 @@ enum Status @id(ent_status) {
         "{}",
         String::from_utf8_lossy(&synced.stderr)
     );
-    let task = fs::read_to_string(
-        root.join(".jails/generated/main/java/com/example/notes/domain/Task.java"),
-    )
-    .unwrap();
+    let task =
+        fs::read_to_string(root.join("src/main/java/com/example/notes/domain/Task.java")).unwrap();
     assert!(task.contains("String title"), "{task}");
     assert!(task.contains("Optional<Boolean> done"), "{task}");
     assert!(
-        root.join(".jails/generated/main/java/com/example/notes/domain/Status.java")
+        root.join("src/main/java/com/example/notes/domain/Status.java")
             .is_file()
     );
     let frozen = jails_cmd(&root, None)
@@ -842,7 +839,7 @@ enum Status @id(ent_status) {
 fn canonical_sync_recompiles_model_state_without_the_legacy_store() {
     let root = model_project("model-sync", MODEL);
     apply_canonical_model(&root, "initial-sync");
-    let record = root.join(".jails/generated/main/java/com/example/notes/domain/Note.java");
+    let record = root.join("src/main/java/com/example/notes/domain/Note.java");
     let contents = fs::read_to_string(&record).unwrap();
     let split = contents.rfind("\n}").unwrap();
     fs::write(
@@ -867,10 +864,8 @@ fn canonical_sync_recompiles_model_state_without_the_legacy_store() {
     );
     assert!(fs::read_to_string(&record).unwrap().contains("handWritten"));
     assert!(
-        root.join(
-            ".jails/generated/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java"
-        )
-        .is_file()
+        root.join("src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java")
+            .is_file()
     );
     for legacy in ["objects", "receipts", "journal", "state"] {
         assert!(
@@ -926,7 +921,7 @@ fn canonical_projects_fail_closed_before_legacy_mutation_routes() {
 /// A command run from a subdirectory is about the same project.
 ///
 /// The dispatch switch and the build-file walk are one walk: `jails g record`
-/// typed in `src/main/java` renders into `.jails/generated` and writes no
+/// typed in `src/main/java` renders through the compiler and writes no
 /// `.jails/ledger.toml`.
 #[test]
 fn a_canonical_command_run_from_a_subdirectory_is_still_canonical() {
@@ -951,7 +946,7 @@ fn a_canonical_command_run_from_a_subdirectory_is_still_canonical() {
         String::from_utf8_lossy(&generated.stderr)
     );
     assert!(
-        root.join(".jails/generated/main/java/com/example/demo/domain/Sub.java")
+        root.join("src/main/java/com/example/demo/domain/Sub.java")
             .exists(),
         "the record was not written to the managed tree"
     );
@@ -1105,7 +1100,7 @@ fields = ["OPEN", "CLOSED"]
         );
     }
     assert!(
-        root.join(".jails/generated/main/java/com/example/books/domain/Loan.java")
+        root.join("src/main/java/com/example/books/domain/Loan.java")
             .is_file(),
         "and be compiled into the managed tree"
     );
@@ -1355,8 +1350,7 @@ entity Task {
         String::from_utf8_lossy(&frozen.stderr)
     );
     let record =
-        fs::read_to_string(jdl.join(".jails/generated/main/java/com/example/ord/domain/Task.java"))
-            .unwrap();
+        fs::read_to_string(jdl.join("src/main/java/com/example/ord/domain/Task.java")).unwrap();
     let delta = record.find("delta").expect("the added component");
     let gamma = record.find("gamma").expect("the existing component");
     assert!(

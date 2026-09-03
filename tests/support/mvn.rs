@@ -167,15 +167,12 @@ fn tree(root: &Path) -> BTreeMap<String, (bool, String)> {
             let name = entry.file_name().to_string_lossy().into_owned();
             if kind.is_dir() {
                 if name == ".jails" && dir == root {
-                    // Maven reads the generated source root and nothing
-                    // else under `.jails/`: the model spells the project
-                    // name the directory gave it, and the lock carries the
-                    // model's digest, so keying them would make every scratch
-                    // directory a different proof of the same Java.
-                    let generated = path.join("generated");
-                    if generated.is_dir() {
-                        pending.push(generated);
-                    }
+                    // Maven reads nothing under `.jails/`: managed output
+                    // lives beside the reader's sources under `src/`, the
+                    // model spells the project name the directory gave it, and
+                    // the lock carries the model's digest, so keying them
+                    // would make every scratch directory a different proof of
+                    // the same Java.
                 } else if !(NOT_AN_INPUT.contains(&name.as_str())
                     || name.starts_with(".jails-staged-"))
                 {

@@ -173,15 +173,31 @@ fn would_remove(
     }
     let value: serde_json::Value =
         serde_json::from_str(&stdout).map_err(|error| format!("{error}: {stdout}"))?;
-    Ok(value
-        .pointer("/report/data/operations")
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|operation| operation["kind"] == "delete")
-        .filter_map(|operation| operation["path"]["project"].as_str())
-        .map(|path| path.replace('\\', "/"))
-        .collect())
+    // **The exact plan, read the way the executor reads it.** A managed
+    // file is deleted when the tree the plan publishes no longer names a path
+    // the accepted one did; a reader file is deleted by its own operation.
+    let tree_paths = |digest: &serde_json::Value| -> BTreeSet<String> {
+        digest
+            .as_str()
+            .and_then(|digest| value["trees"][digest]["entries"].as_object())
+            .map(|entries| entries.keys().cloned().collect())
+            .unwrap_or_default()
+    };
+    let mut removed = BTreeSet::new();
+    for operation in value["plan"]["operations"].as_array().into_iter().flatten() {
+        match operation["kind"].as_str() {
+            Some("publish-merged-tree") => {
+                let was = tree_paths(&operation["before"]);
+                let now = tree_paths(&operation["after"]);
+                removed.extend(was.difference(&now).cloned());
+            }
+            Some("remove-reader-file") => {
+                removed.extend(operation["path"].as_str().map(str::to_string));
+            }
+            _ => {}
+        }
+    }
+    Ok(removed)
 }
 
 /// Apply the destroy whose preview was just checked, so later iterations see

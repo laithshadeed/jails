@@ -61,9 +61,10 @@ aborting half.** `crates/jails-workspace/tests/crash.rs` trips every point in
 `fault::POINTS` twice -- once with an injected `Err`, once in a child process
 that `abort()`s inside the trip -- and each row asserts its own point tripped.
 An `Err` unwinds, so a staged temporary's guard removes it; a real crash leaves
-it on disk, where `verify_preconditions` would read it as an unmanaged file
-inside the managed tree and refuse permanently. `write_atomic` stages under
-`.jails-staged-` so `sweep_staged` can recognise its own debris, and the sweep
+it on disk, in a source root, where the build reads it as the reader's and
+the next capture cannot tell it from one. `write_atomic` stages under
+`.jails-staged-` so `sweep_staged` can recognise its own debris; the sweep
+reads the parent of every path the plan publishes, never a whole tree, and
 runs under the lock.
 
 **`.jails/model.jdl` is the one editable source.** `model_command::read_source`
@@ -73,16 +74,32 @@ the model, one way -- that is not a second editable source, because the model
 is what every later command reads. `app init` writes the manifest and is the
 one subcommand that refuses on a modelled project.
 
-**Managed output is merge-managed below `.jails/generated`.** The accepted
-model renders BASE, capture supplies OURS, the next model renders THEIRS. Clean
+**Managed output lives beside the reader's sources under `src/`, and the lock
+says what is managed.** `jails_contracts::SourceRoot` is JDL v1 §9.7's
+source-root table with one owner, and every emitter spells a root through it;
+nothing under `.jails/` holds Java, SQL or resources, and no build file
+declares a second source root. A file is jails' because the accepted
+projection in `.jails/compiler.lock.json` names its path -- `RenderedTree` is
+a set of project paths with no root, and no prefix test survives anywhere.
+Capture reads the lock first and observes every path it names; after the
+compile, the two pipelines observe the paths the render wants that the lock
+does not own (`capture::observe_rendered_paths`), so a reader file already
+there is a collision the materializer refuses by name. The accepted model
+renders BASE, the captured file is OURS, the next model renders THEIRS. Clean
 merges are frozen into the plan; conflicts refuse without writes; the lock
-advances to THEIRS so hand edits remain deltas. Migrations, model revisions and
-explicit reader-file patches are irreproducible and stay visible in the plan.
-`model eject <boundary>` -- a readable path such as `Note.repo.fake`, or an
-artifact id -- transfers one ejectable implementation into reader
-source with a `Missing` before-image -- transfer is creation, never
-reconciliation -- and excludes it from later managed trees. Records and ports
-remain managed ABI. Ejection never infers ownership from edited bytes.
+advances to THEIRS so hand edits remain deltas. The executor publishes the
+`after` tree and deletes exactly what the `before` tree held and `after` does
+not; it walks no directory, and a deletion empties its package directories up
+to the source-set root, which stays. Every walk of the reader's sources --
+the `` splice, the dispatcher registration, the textual
+`rename`, the stranded-reference report -- skips the lock's paths, because
+what the compiler wrote is the compiler's to change. Migrations, model
+revisions and explicit reader-file patches are irreproducible and stay visible
+in the plan. `model eject <boundary>` -- a readable path such as
+`Note.repo.fake`, or an artifact id -- is a lock edit, not a move: the
+boundary's files stay where they are and leave the accepted projection, and
+later renders neither rewrite nor delete them. Records and ports remain
+managed ABI. Ejection never infers ownership from edited bytes.
 
 **Convention is recorded, not hidden: `jails model explain`.** Every name the
 compiler derives is a `DerivedValue` in `AppModel.derived`, keyed by owner and

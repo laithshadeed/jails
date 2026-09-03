@@ -9,7 +9,6 @@ pub(crate) use template::{Template, template};
 
 mod ejectable;
 pub(crate) use ejectable::component_kind_is_emitted;
-pub use ejectable::implementation_paths;
 
 mod emit_architecture;
 mod emit_capability;
@@ -32,15 +31,14 @@ mod recipe;
 mod refuse;
 
 use jails_contracts::{
-    BuildDependency, BuildFeature, BuildSystem, DocumentIntent, FileKind, JavaSourceSet, PlanDraft,
-    ProjectPath, PropertyEntry, RenderedTree, SemanticPlan, WorkspaceSnapshot,
+    BuildDependency, BuildFeature, BuildSystem, DocumentIntent, PlanDraft, ProjectPath,
+    PropertyEntry, RenderedTree, SemanticPlan, WorkspaceSnapshot,
 };
 use jails_model::{DependencyScope, Evolution, SettingTarget};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{Display, Formatter};
 
 pub const COMPILER_VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const MANAGED_ROOT: &str = ".jails/generated";
 
 /// Reader files outside the generated tree that the current model may merge.
 /// Frontends capture these before planning so collision/refusal checks are
@@ -123,26 +121,13 @@ impl Compiler {
             snapshot.accepted_model.as_ref(),
             &next_model,
         ));
-        let root = ProjectPath::parse(MANAGED_ROOT).map_err(CompileError::new)?;
-        let baseline_model = snapshot.accepted_model.as_ref().or_else(|| {
-            snapshot
-                .files
-                .keys()
-                .any(|path| path.as_str().starts_with(MANAGED_ROOT))
-                .then_some(&snapshot.model.model)
-        });
-        let mut baseline = snapshot
-            .accepted_projection
-            .clone()
-            .unwrap_or_else(|| RenderedTree::new(root.clone()));
-        if baseline.root != root {
-            return Err(CompileError::new(format!(
-                "accepted compiler projection has root `{}` instead of `{root}`\n       fix: restore a known-good `.jails/compiler.lock.json`",
-                baseline.root
-            )));
-        }
+        // **BASE is the accepted projection, and only the lock carries one.**
+        // A v1 lock holds the accepted model and no projection, so BASE is
+        // that model rendered by this compiler; no lock at all is a project
+        // with no managed file, whatever is on disk.
+        let mut baseline = snapshot.accepted_projection.clone().unwrap_or_default();
         if snapshot.accepted_projection.is_none()
-            && let Some(model) = baseline_model
+            && let Some(model) = snapshot.accepted_model.as_ref()
         {
             emit::emit(model, &mut baseline, snapshot)?;
             let ejected = model
@@ -154,23 +139,17 @@ impl Compiler {
                 .files
                 .retain(|_, file| !ejected.contains(file.provenance.ejection_target()));
         }
-        let mut generated = RenderedTree::new(root);
+        let mut generated = RenderedTree::new();
         emit::emit(&next_model, &mut generated, snapshot)?;
-        let previous_ejections = snapshot
-            .model
-            .model
-            .ejections
-            .values()
-            .map(|ejection| ejection.target.as_str())
-            .collect::<BTreeSet<_>>();
+        // **Ejection is a lock edit, not a move.** The boundary's files leave
+        // the projection and stay where they are on disk, which is already
+        // the reader's tree; the materializer sees an artifact in BASE and not
+        // in THEIRS whose boundary is ejected and neither deletes nor
+        // rewrites it.
         let desired_ejections = next_model
             .ejections
             .values()
             .map(|ejection| ejection.target.as_str())
-            .collect::<BTreeSet<_>>();
-        let newly_ejected = desired_ejections
-            .difference(&previous_ejections)
-            .copied()
             .collect::<BTreeSet<_>>();
         // **An adopted boundary was never jails' to transfer.** `jails adopt
         // resource` registers a type the reader wrote, and the line it
@@ -187,8 +166,7 @@ impl Compiler {
             .collect::<BTreeSet<_>>();
         let mut matched_ejections = BTreeSet::new();
         let mut non_ejectable = BTreeSet::new();
-        let mut ejection_intents = Vec::new();
-        generated.files.retain(|path, file| {
+        generated.files.retain(|_, file| {
             let boundary = file.provenance.ejection_target();
             if !desired_ejections.contains(boundary) {
                 return true;
@@ -200,44 +178,6 @@ impl Compiler {
             if !file.provenance.ejectable {
                 non_ejectable.insert(boundary.to_string());
                 return true;
-            }
-            let was_already_ejected = previous_ejections.contains(boundary);
-            if !was_already_ejected && newly_ejected.contains(boundary) {
-                let destination = match file.kind {
-                    FileKind::JavaMain => path
-                        .as_str()
-                        .strip_prefix(".jails/generated/main/java/")
-                        .map(|suffix| format!("src/main/java/{suffix}")),
-                    FileKind::JavaTest => path
-                        .as_str()
-                        .strip_prefix(".jails/generated/test/java/")
-                        .map(|suffix| format!("src/test/java/{suffix}")),
-                    FileKind::Resource => path
-                        .as_str()
-                        .strip_prefix(".jails/generated/main/resources/")
-                        .map(|suffix| format!("src/main/resources/{suffix}"))
-                        .or_else(|| {
-                            path.as_str()
-                                .strip_prefix(".jails/generated/test/resources/")
-                                .map(|suffix| format!("src/test/resources/{suffix}"))
-                        }),
-                    FileKind::HttpCollection => None,
-                };
-                let Some(destination) = destination else {
-                    return true;
-                };
-                let bytes = snapshot
-                    .files
-                    .get(path)
-                    .map(|captured| captured.bytes.clone())
-                    .unwrap_or_else(|| file.bytes.clone());
-                ejection_intents.push(DocumentIntent::EjectFile {
-                    source: path.clone(),
-                    path: ProjectPath::parse(destination)
-                        .expect("a generated Java path maps to a project path"),
-                    bytes,
-                    semantic_ids: file.provenance.semantic_ids.clone(),
-                });
             }
             false
         });
@@ -262,48 +202,6 @@ impl Compiler {
                 &unmatched,
             ));
         }
-        // **A source root is declared only for a tree that has something in
-        // it**, main included. Declaring the main root the moment a project
-        // becomes canonical edits the reader's build file for a directory that
-        // may stay empty -- `jails add dependency` declares no Java at all --
-        // and the edit then outlives every reason for it, so retiring the last
-        // declaration could not restore the pom it started from. The adapter
-        // removes the block when no root is wanted, which makes this the whole
-        // of the inverse.
-        //
-        // **One walk, and both build systems read it.** Maven and Gradle
-        // declare a root differently and want the same four answers, so the
-        // question "is there anything in this tree" is asked once, here, and
-        // the two arms below only spell what they were given. Asked twice it
-        // was eight near-identical `if` blocks over four roots, which is where
-        // a fifth root gets added to one build system and not the other.
-        // Membership is the path prefix rather than the `FileKind`, because
-        // that is literally the question a source root asks.
-        let wanted_roots = [
-            (".jails/generated/main/java", JavaSourceSet::Main),
-            (".jails/generated/test/java", JavaSourceSet::Test),
-            (
-                ".jails/generated/test/resources",
-                JavaSourceSet::TestResources,
-            ),
-            (
-                ".jails/generated/main/resources",
-                JavaSourceSet::MainResources,
-            ),
-        ]
-        .into_iter()
-        .filter(|(root, _)| {
-            generated
-                .files
-                .keys()
-                .any(|path| path.as_str().starts_with(&format!("{root}/")))
-        })
-        .map(|(root, source_set)| {
-            ProjectPath::parse(root)
-                .map(|path| (path, source_set))
-                .map_err(CompileError::new)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
         let mut build_features = next_model
             .units
             .values()
@@ -430,35 +328,12 @@ impl Compiler {
         );
         let dependencies = required.into_sorted();
         let mut reader_document_intents = match snapshot.project.build_system {
-            BuildSystem::Maven => {
-                let mut roots = wanted_roots
-                    .into_iter()
-                    .map(|(path, source_set)| jails_contracts::MavenSourceRoot { source_set, path })
-                    .collect::<Vec<_>>();
-                roots.sort();
-                vec![
-                    DocumentIntent::EnsureMavenSourceRoots { roots },
-                    DocumentIntent::ReconcileBuildFeatures {
-                        features: build_features.clone(),
-                    },
-                    DocumentIntent::ReconcileDependencies { dependencies },
-                ]
-            }
-            BuildSystem::Gradle => wanted_roots
-                .into_iter()
-                .map(
-                    |(path, source_set)| DocumentIntent::EnsureGradleSourceRoot {
-                        path,
-                        source_set,
-                    },
-                )
-                .chain([
-                    DocumentIntent::ReconcileBuildFeatures {
-                        features: build_features.clone(),
-                    },
-                    DocumentIntent::ReconcileDependencies { dependencies },
-                ])
-                .collect(),
+            BuildSystem::Maven | BuildSystem::Gradle => vec![
+                DocumentIntent::ReconcileBuildFeatures {
+                    features: build_features.clone(),
+                },
+                DocumentIntent::ReconcileDependencies { dependencies },
+            ],
             BuildSystem::Unknown if dependencies.is_empty() && build_features.is_empty() => {
                 Vec::new()
             }
@@ -468,7 +343,6 @@ impl Compiler {
                 ));
             }
         };
-        reader_document_intents.extend(ejection_intents);
         for (target, path) in [
             (
                 SettingTarget::Main,
@@ -1515,16 +1389,16 @@ mod tests {
         // parent to manage it must receive.
         let draft = compile_current(&snapshot).unwrap();
         let expected = [
-            ".jails/generated/test/java/com/example/demo/testkit/Fake.java",
-            ".jails/generated/test/java/com/example/demo/testkit/FakeTest.java",
-            ".jails/generated/main/java/com/example/demo/api/AdminServer.java",
-            ".jails/generated/test/java/com/example/demo/api/AdminServerTest.java",
-            ".jails/generated/test/java/com/example/demo/testkit/Clocks.java",
-            ".jails/generated/test/java/com/example/demo/testkit/Ids.java",
-            ".jails/generated/test/java/com/example/demo/testkit/Fixtures.java",
-            ".jails/generated/test/java/com/example/demo/testkit/Cli.java",
-            ".jails/generated/test/java/com/example/demo/testkit/TestkitTest.java",
-            ".jails/generated/test/resources/fixtures/example.json",
+            "src/test/java/com/example/demo/testkit/Fake.java",
+            "src/test/java/com/example/demo/testkit/FakeTest.java",
+            "src/main/java/com/example/demo/api/AdminServer.java",
+            "src/test/java/com/example/demo/api/AdminServerTest.java",
+            "src/test/java/com/example/demo/testkit/Clocks.java",
+            "src/test/java/com/example/demo/testkit/Ids.java",
+            "src/test/java/com/example/demo/testkit/Fixtures.java",
+            "src/test/java/com/example/demo/testkit/Cli.java",
+            "src/test/java/com/example/demo/testkit/TestkitTest.java",
+            "src/test/resources/fixtures/example.json",
         ];
         for path in expected {
             let file = draft
@@ -1563,12 +1437,13 @@ mod tests {
                 .count(),
             1
         );
-        assert!(draft.reader_document_intents.iter().any(|intent| {
-            matches!(intent, DocumentIntent::EnsureMavenSourceRoots { roots }
-                if roots
-                    .iter()
-                    .any(|root| root.source_set == JavaSourceSet::TestResources))
-        }));
+        assert!(
+            draft
+                .generated
+                .files
+                .keys()
+                .any(|path| path.as_str().starts_with("src/test/resources/"))
+        );
     }
 
     #[test]
@@ -1582,9 +1457,9 @@ mod tests {
         snapshot.project.spring_boot = Some("4.0.0".to_string());
         let draft = compile_current(&snapshot).unwrap();
         let expected = [
-            ".jails/generated/main/java/com/example/demo/adapters/StoreDatabase.java",
-            ".jails/generated/main/java/com/example/demo/adapters/StoreMigrations.java",
-            ".jails/generated/test/java/com/example/demo/adapters/StoreDatabaseTest.java",
+            "src/main/java/com/example/demo/adapters/StoreDatabase.java",
+            "src/main/java/com/example/demo/adapters/StoreMigrations.java",
+            "src/test/java/com/example/demo/adapters/StoreDatabaseTest.java",
         ];
         for path in expected {
             let file = draft
@@ -1594,12 +1469,13 @@ mod tests {
                 .unwrap_or_else(|| panic!("missing {path}"));
             assert_eq!(file.provenance.ejection_id.as_deref(), Some("cap_sqlite"));
         }
-        assert!(!draft.reader_document_intents.iter().any(|intent| {
-            matches!(intent, DocumentIntent::EnsureMavenSourceRoots { roots }
-                if roots
-                    .iter()
-                    .any(|root| root.source_set == JavaSourceSet::MainResources))
-        }));
+        assert!(
+            !draft
+                .generated
+                .files
+                .keys()
+                .any(|path| path.as_str().starts_with("src/main/resources/"))
+        );
         assert_eq!(draft.migrations.len(), 1);
         assert_eq!(draft.migrations[0].logical_name, "sqlite_init");
         assert_eq!(
@@ -1639,10 +1515,8 @@ mod tests {
             .generated
             .files
             .get(
-                &ProjectPath::parse(
-                    ".jails/generated/test/java/com/example/demo/adapters/H2DatabaseTest.java",
-                )
-                .unwrap(),
+                &ProjectPath::parse("src/test/java/com/example/demo/adapters/H2DatabaseTest.java")
+                    .unwrap(),
             )
             .expect("missing H2 database test");
         assert_eq!(test.provenance.ejection_id.as_deref(), Some("cap_h2"));
@@ -1712,10 +1586,8 @@ mod tests {
             .generated
             .files
             .get(
-                &ProjectPath::parse(
-                    ".jails/generated/test/java/com/example/demo/ActuatorEndpointsTest.java",
-                )
-                .unwrap(),
+                &ProjectPath::parse("src/test/java/com/example/demo/ActuatorEndpointsTest.java")
+                    .unwrap(),
             )
             .expect("missing Actuator endpoint contract test");
         assert_eq!(test.provenance.ejection_id.as_deref(), Some("cap_actuator"));
@@ -1773,8 +1645,8 @@ mod tests {
         snapshot.project.spring_boot = Some("4.1.0".to_string());
         let draft = compile_current(&snapshot).unwrap();
         for path in [
-            ".jails/generated/main/java/com/example/demo/CacheConfig.java",
-            ".jails/generated/test/java/com/example/demo/CacheConfigTest.java",
+            "src/main/java/com/example/demo/CacheConfig.java",
+            "src/test/java/com/example/demo/CacheConfigTest.java",
         ] {
             let file = draft
                 .generated
@@ -1842,8 +1714,8 @@ mod tests {
         let classic = compile("3.4.0");
         for draft in [&modern, &classic] {
             for path in [
-                ".jails/generated/main/java/com/example/demo/CorsConfig.java",
-                ".jails/generated/test/java/com/example/demo/CorsConfigTest.java",
+                "src/main/java/com/example/demo/CorsConfig.java",
+                "src/test/java/com/example/demo/CorsConfigTest.java",
             ] {
                 let file = draft
                     .generated
@@ -1894,10 +1766,8 @@ mod tests {
                     .generated
                     .files
                     .get(
-                        &ProjectPath::parse(
-                            ".jails/generated/test/java/com/example/demo/CorsConfigTest.java",
-                        )
-                        .unwrap(),
+                        &ProjectPath::parse("src/test/java/com/example/demo/CorsConfigTest.java")
+                            .unwrap(),
                     )
                     .unwrap()
                     .bytes
@@ -1944,10 +1814,10 @@ mod tests {
         let classic = compile("3.4.0");
         for draft in [&modern, &classic] {
             for path in [
-                ".jails/generated/main/java/com/example/demo/MetricsConfig.java",
-                ".jails/generated/main/java/com/example/demo/AppMetrics.java",
-                ".jails/generated/test/java/com/example/demo/AppMetricsTest.java",
-                ".jails/generated/test/java/com/example/demo/PrometheusScrapeTest.java",
+                "src/main/java/com/example/demo/MetricsConfig.java",
+                "src/main/java/com/example/demo/AppMetrics.java",
+                "src/test/java/com/example/demo/AppMetricsTest.java",
+                "src/test/java/com/example/demo/PrometheusScrapeTest.java",
             ] {
                 let file = draft
                     .generated
@@ -1966,10 +1836,8 @@ mod tests {
                     .generated
                     .files
                     .get(
-                        &ProjectPath::parse(
-                            ".jails/generated/main/java/com/example/demo/MetricsConfig.java",
-                        )
-                        .unwrap(),
+                        &ProjectPath::parse("src/main/java/com/example/demo/MetricsConfig.java")
+                            .unwrap(),
                     )
                     .unwrap()
                     .bytes
@@ -2043,11 +1911,11 @@ mod tests {
         let classic = compile("3.4.0").unwrap();
         for draft in [&modern, &classic] {
             for path in [
-                ".jails/generated/main/java/com/example/demo/SecurityConfig.java",
-                ".jails/generated/main/java/com/example/demo/ProductionSecurityConfig.java",
-                ".jails/generated/main/java/com/example/demo/ScopeAuthorizer.java",
-                ".jails/generated/test/java/com/example/demo/SecurityConfigTest.java",
-                ".jails/generated/test/java/com/example/demo/ScopeAuthorizerTest.java",
+                "src/main/java/com/example/demo/SecurityConfig.java",
+                "src/main/java/com/example/demo/ProductionSecurityConfig.java",
+                "src/main/java/com/example/demo/ScopeAuthorizer.java",
+                "src/test/java/com/example/demo/SecurityConfigTest.java",
+                "src/test/java/com/example/demo/ScopeAuthorizerTest.java",
             ] {
                 let file = draft
                     .generated
@@ -2064,7 +1932,7 @@ mod tests {
                     .files
                     .get(
                         &ProjectPath::parse(
-                            ".jails/generated/test/java/com/example/demo/SecurityConfigTest.java",
+                            "src/test/java/com/example/demo/SecurityConfigTest.java",
                         )
                         .unwrap(),
                     )
@@ -2119,10 +1987,10 @@ mod tests {
         let draft = compile_current(&snapshot).unwrap();
 
         for path in [
-            ".jails/generated/main/java/com/example/demo/EventHub.java",
-            ".jails/generated/main/java/com/example/demo/SchedulingConfig.java",
-            ".jails/generated/main/java/com/example/demo/web/EventStreamController.java",
-            ".jails/generated/test/java/com/example/demo/EventHubTest.java",
+            "src/main/java/com/example/demo/EventHub.java",
+            "src/main/java/com/example/demo/SchedulingConfig.java",
+            "src/main/java/com/example/demo/web/EventStreamController.java",
+            "src/test/java/com/example/demo/EventHubTest.java",
         ] {
             let file = draft
                 .generated
@@ -2137,7 +2005,7 @@ mod tests {
                 .files
                 .get(
                     &ProjectPath::parse(
-                        ".jails/generated/main/java/com/example/demo/web/EventStreamController.java",
+                        "src/main/java/com/example/demo/web/EventStreamController.java",
                     )
                     .unwrap(),
                 )
@@ -2189,8 +2057,8 @@ mod tests {
         let draft = compile_current(&snapshot).unwrap();
 
         for path in [
-            ".jails/generated/main/java/com/example/demo/adapters/KeyValueStore.java",
-            ".jails/generated/test/java/com/example/demo/adapters/KeyValueStoreIT.java",
+            "src/main/java/com/example/demo/adapters/KeyValueStore.java",
+            "src/test/java/com/example/demo/adapters/KeyValueStoreIT.java",
         ] {
             let file = draft
                 .generated
@@ -2261,10 +2129,10 @@ mod tests {
         let draft = compile_current(&spring).unwrap();
 
         for path in [
-            ".jails/generated/main/java/com/example/demo/messaging/KafkaConfig.java",
-            ".jails/generated/main/java/com/example/demo/messaging/NonRetryableException.java",
-            ".jails/generated/test/java/com/example/demo/messaging/KafkaConfigTest.java",
-            ".jails/generated/test/java/com/example/demo/KafkaTestcontainersConfig.java",
+            "src/main/java/com/example/demo/messaging/KafkaConfig.java",
+            "src/main/java/com/example/demo/messaging/NonRetryableException.java",
+            "src/test/java/com/example/demo/messaging/KafkaConfigTest.java",
+            "src/test/java/com/example/demo/KafkaTestcontainersConfig.java",
         ] {
             let file = draft
                 .generated
@@ -2360,8 +2228,8 @@ mod tests {
         let draft = compile_current(&snapshot).unwrap();
 
         for path in [
-            ".jails/generated/main/java/com/example/demo/Mailer.java",
-            ".jails/generated/test/java/com/example/demo/MailerIT.java",
+            "src/main/java/com/example/demo/Mailer.java",
+            "src/test/java/com/example/demo/MailerIT.java",
         ] {
             let file = draft
                 .generated
@@ -2469,8 +2337,8 @@ mod tests {
         let draft = compile_current(&snapshot).unwrap();
 
         for path in [
-            ".jails/generated/test/java/com/example/demo/testkit/Faults.java",
-            ".jails/generated/test/java/com/example/demo/testkit/FaultsTest.java",
+            "src/test/java/com/example/demo/testkit/Faults.java",
+            "src/test/java/com/example/demo/testkit/FaultsTest.java",
         ] {
             let file = draft
                 .generated
@@ -2588,9 +2456,9 @@ mod tests {
             .unwrap();
         assert_eq!(
             path.as_str(),
-            ".jails/generated/test/java/com/example/notes/testkit/NoteFactory.java"
+            "src/test/java/com/example/notes/testkit/NoteFactory.java"
         );
-        assert_eq!(file.kind, FileKind::JavaTest);
+        assert_eq!(file.kind, jails_contracts::FileKind::JavaTest);
         assert!(file.provenance.ejectable);
         let source = String::from_utf8(file.bytes.clone()).unwrap();
         assert!(source.contains("public static NoteFactory aNote()"));
@@ -2892,10 +2760,9 @@ entity Task {
                 .unwrap_or_else(|| panic!("missing generated source `{suffix}`"))
         };
 
-        let context_path = ProjectPath::parse(
-            ".jails/generated/main/java/com/example/work/application/ExecutionContext.java",
-        )
-        .unwrap();
+        let context_path =
+            ProjectPath::parse("src/main/java/com/example/work/application/ExecutionContext.java")
+                .unwrap();
         let context = draft.generated.files.get(&context_path).unwrap();
         assert_eq!(context.provenance.artifact_id, "art_app_execution_context");
         assert!(!context.provenance.ejectable);
@@ -3023,7 +2890,7 @@ entity Task {
         assert!(!transition.contains("param(\"status\""), "{transition}");
     }
     #[test]
-    fn a_new_ejection_transfers_matching_units_and_removes_them_from_the_tree() {
+    fn a_new_ejection_removes_the_boundary_from_the_tree_and_moves_nothing() {
         let model = jails_model::parse_jdl(MODEL).unwrap();
         let snapshot = WorkspaceSnapshot::detached(model);
         let before = compile_current(&snapshot).unwrap();
@@ -3040,12 +2907,18 @@ entity Task {
             draft.generated.files.len() + 1,
             before.generated.files.len()
         );
-        let transferred = draft
-            .reader_document_intents
-            .iter()
-            .filter(|intent| matches!(intent, DocumentIntent::EjectFile { .. }))
-            .count();
-        assert_eq!(transferred, 1);
+        assert_eq!(
+            draft.reader_document_intents.len(),
+            before.reader_document_intents.len(),
+            "ejection is a lock edit and touches no reader file"
+        );
+        assert!(
+            !draft
+                .generated
+                .files
+                .values()
+                .any(|file| file.provenance.artifact_id == "art_ent_note_repository_memory")
+        );
         assert!(
             draft
                 .generated
@@ -3159,7 +3032,7 @@ entity Task {
             .unwrap();
         assert_eq!(
             path.as_str(),
-            ".jails/generated/main/java/com/example/notes/adapters/jdbc/JdbcOpenNotesQuery.java"
+            "src/main/java/com/example/notes/adapters/jdbc/JdbcOpenNotesQuery.java"
         );
         assert!(file.provenance.ejectable);
         assert_eq!(file.provenance.compiler_pass, "capability-db-query");

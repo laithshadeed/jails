@@ -30,7 +30,7 @@
 
 use jails_contracts::{
     ContentDigest, DocumentIntent, FileImageRef, FileKind, FileMode, ModelFileUpdate, Plan,
-    PlanBundle, PlanDraft, PlanInput, PlannedOperation, ProjectPath, TreeEntry, TreeManifest,
+    PlanBundle, PlanDraft, PlanInput, PlannedOperation, ProjectPath, TreeManifest,
     WorkspaceSnapshot,
 };
 use jails_support::{hex, sha256};
@@ -121,8 +121,7 @@ pub fn materialize(
     restore: Restore,
 ) -> Result<PlanBundle, String> {
     let mut blobs = BTreeMap::new();
-    let before = captured_tree(snapshot, &draft.generated.root, &mut blobs)?;
-    let after = crate::reconcile::tree(snapshot, &draft, &mut blobs, restore)?;
+    let (before, after) = crate::reconcile::trees(snapshot, &draft, &mut blobs, restore)?;
     let managed_tree_changed = before != after;
     let before_id = if before.entries.is_empty() {
         None
@@ -144,7 +143,7 @@ pub fn materialize(
     }
     let mut operations = if managed_tree_changed {
         vec![PlannedOperation::PublishMergedTree {
-            root: draft.generated.root.clone(),
+            root: ProjectPath::parse(jails_contracts::SourceRoot::PARENT)?,
             before: before_id,
             after: after_id,
         }]
@@ -187,8 +186,21 @@ pub fn materialize(
         &mut operations,
         restore,
     )?;
+    // **What is managed is decided by the projections, not the tree.** The
+    // document adapters find their targets by shape among the captured
+    // files, and a managed test or dispatcher sits beside the reader's own;
+    // it is excluded by name, because what the compiler wrote is the
+    // compiler's to change.
+    let managed = draft
+        .baseline
+        .files
+        .keys()
+        .chain(draft.generated.files.keys())
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
     materialize_document_intents(
         snapshot,
+        &managed,
         &draft.reader_document_intents,
         &mut blobs,
         &mut operations,
@@ -365,6 +377,7 @@ fn materialize_compiler_lock(
 
 fn materialize_document_intents(
     snapshot: &WorkspaceSnapshot,
+    managed: &std::collections::BTreeSet<ProjectPath>,
     intents: &[DocumentIntent],
     blobs: &mut BTreeMap<ContentDigest, Vec<u8>>,
     operations: &mut Vec<PlannedOperation>,
@@ -373,25 +386,6 @@ fn materialize_document_intents(
     let mut removals = BTreeMap::<ProjectPath, ProjectPath>::new();
     for intent in intents {
         match intent {
-            DocumentIntent::EnsureMavenSourceRoots { roots } => {
-                update_document(
-                    snapshot,
-                    &mut desired,
-                    ProjectPath::parse("pom.xml")?,
-                    |text| crate::documents::ensure_maven_source_roots(text, roots),
-                )?;
-            }
-            DocumentIntent::EnsureGradleSourceRoot { path, source_set } => {
-                let (build, kotlin) = gradle_build_file(snapshot)?;
-                update_document(snapshot, &mut desired, build, |text| {
-                    crate::documents::ensure_gradle_source_root(
-                        text,
-                        path.as_str(),
-                        *source_set,
-                        kotlin,
-                    )
-                })?;
-            }
             DocumentIntent::ReconcileSpringTestImport {
                 class,
                 package,
@@ -402,7 +396,9 @@ fn materialize_document_intents(
                 // `spring_boot_test_targets` reads the snapshot rather than
                 // the disk -- the whole point of the capture is that this set
                 // was observed once.
-                for path in crate::documents::spring_boot_test_targets(snapshot, class, *wanted) {
+                for path in
+                    crate::documents::spring_boot_test_targets(snapshot, managed, class, *wanted)
+                {
                     update_document(snapshot, &mut desired, path, |text| {
                         Ok(match wanted {
                             true => {
@@ -420,7 +416,7 @@ fn materialize_document_intents(
                 // more than one: the generated command's Javadoc carries the
                 // line to paste, and splicing into a file jails cannot
                 // uniquely identify is worse than saying nothing.
-                if let Some(path) = crate::documents::command_dispatcher(snapshot) {
+                if let Some(path) = crate::documents::command_dispatcher(snapshot, managed) {
                     update_document(snapshot, &mut desired, path, |text| {
                         Ok(crate::documents::ensure_command_registration(
                             text, class, package,
@@ -501,16 +497,6 @@ fn materialize_document_intents(
                 update_optional_document(snapshot, &mut desired, path.clone(), |text| {
                     crate::documents::reconcile_properties(text, previous, properties)
                 })?;
-            }
-            DocumentIntent::EjectFile { path, bytes, .. } => {
-                if snapshot.files.contains_key(path) {
-                    return Err(format!(
-                        "reader source `{path}` already exists\n       fix: move or remove the destination before ejecting"
-                    ));
-                }
-                if desired.insert(path.clone(), bytes.clone()).is_some() {
-                    return Err(format!("two ejections target reader source `{path}`"));
-                }
             }
             DocumentIntent::AdoptJava { source, path, .. } => {
                 if desired.contains_key(source) {
@@ -683,34 +669,6 @@ pub(crate) fn file_image(
         len: bytes.len() as u64,
         mode,
     })
-}
-
-fn captured_tree(
-    snapshot: &WorkspaceSnapshot,
-    root: &ProjectPath,
-    blobs: &mut BTreeMap<ContentDigest, Vec<u8>>,
-) -> Result<TreeManifest, String> {
-    let mut tree = TreeManifest::default();
-    for (path, file) in &snapshot.files {
-        if !path.is_within(root) {
-            continue;
-        }
-        let blob = digest(&file.bytes)?;
-        blobs.insert(blob.clone(), file.bytes.clone());
-        tree.entries.insert(
-            path.clone(),
-            TreeEntry {
-                kind: file_kind(path),
-                mode: if file.executable {
-                    FileMode::Executable
-                } else {
-                    FileMode::Regular
-                },
-                blob,
-            },
-        );
-    }
-    Ok(tree)
 }
 
 pub(crate) fn file_kind(path: &ProjectPath) -> FileKind {

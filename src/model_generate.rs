@@ -132,7 +132,7 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
     capture_paths.extend(jails_compiler::external_project_paths(&next_model));
     capture_paths.sort();
     capture_paths.dedup();
-    let snapshot = jails_project::capture::capture(
+    let mut snapshot = jails_project::capture::capture(
         &root,
         model_path,
         current.source.as_bytes(),
@@ -163,6 +163,15 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
     // side effect -- the materializer allocates its version from the observed
     // history and refuses if the path it lands on already exists.
     clock.mark("compile");
+    // The one observation the capture could not make: which paths the render
+    // wants is known only now, and a reader file already at one of them is a
+    // collision the materializer refuses by name.
+    jails_project::capture::observe_rendered_paths(
+        &root,
+        &mut snapshot,
+        draft.generated.files.keys(),
+    )
+    .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
     draft.migrations.extend(authored_migration);
     // **What the compiler noticed but would not refuse over.** A warning that
     // stays inside the draft is a warning nobody reads; these are the shapes
@@ -207,7 +216,13 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
     if let Some(refusal) = refuse_unconfirmed_deletions(&bundle, &invocation) {
         return refusal;
     }
-    let stranded = report::stranded_reader_references(&root, &snapshot.model.model, &next_model);
+    let managed = snapshot
+        .accepted_projection
+        .as_ref()
+        .map(|projection| projection.files.keys().cloned().collect())
+        .unwrap_or_default();
+    let stranded =
+        report::stranded_reader_references(&root, &snapshot.model.model, &next_model, &managed);
     // **Said only once the model exists, and only if it does.** Reading the
     // plan for a model file with no before-image says it at the one moment
     // it is true, where announcing it before the mutation would announce a
@@ -228,7 +243,8 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
         eprintln!("  create  {}", crate::model_command::JDL_PATH);
         eprintln!(
             "This project is canonical now: `jails g` renders through the compiler into \
-             `.jails/generated`, and your own sources under `src/` stay yours."
+             `src/`, and `.jails/compiler.lock.json` says which files are jails'; your \
+             own sources stay yours."
         );
     }
     if invocation.output == Output::Human {

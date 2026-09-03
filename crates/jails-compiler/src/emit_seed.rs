@@ -25,9 +25,9 @@ use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile}
 use jails_model::{AppModel, Capability, Entity, Package, StableId, TypeRef, boundary};
 use std::collections::BTreeSet;
 
-const JAVA_MAIN_ROOT: &str = ".jails/generated/main/java";
-const JAVA_TEST_ROOT: &str = ".jails/generated/test/java";
-const RESOURCE_ROOT: &str = ".jails/generated/main/resources";
+const JAVA_MAIN_ROOT: &str = jails_contracts::SourceRoot::MainJava.path();
+const JAVA_TEST_ROOT: &str = jails_contracts::SourceRoot::TestJava.path();
+const RESOURCE_ROOT: &str = jails_contracts::SourceRoot::MainResources.path();
 
 const SEEDER: crate::Template = crate::template!("spring/seeder_java.java");
 const TEST: crate::Template = crate::template!("spring/seeder_test_java.java");

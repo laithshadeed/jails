@@ -132,7 +132,7 @@ pub(crate) fn report_plan(
             println!("  test-disabled  {path}");
         }
         // **Said out loud, because the lines above look exactly like a report
-        // of what happened.** `create .jails/generated/...` reads the same
+        // of what happened.** `create src/main/java/...` reads the same
         // whether it is a preview or a receipt, and the one place a reader can
         // tell them apart should not be the flag they typed a moment ago.
         if invocation.pretend {
@@ -164,11 +164,14 @@ pub(crate) fn write_bundle(path: &Path, bundle: &jails_contracts::PlanBundle) ->
 /// Matched on the whole identifier, the same rule `rename` follows. It reads
 /// the tree rather than the capture, and that is deliberate: which reader
 /// directories a plan captures follows from what it needs to *write*, while
-/// this needs to look everywhere the reader keeps Java.
+/// this needs to look everywhere the reader keeps Java. `managed` is what
+/// the accepted projection names: those files sit in the same tree and are
+/// jails' to change, so they are not the reader's to be told about.
 pub(crate) fn stranded_reader_references(
     root: &std::path::Path,
     current_model: &jails_model::AppModel,
     next_model: &jails_model::AppModel,
+    managed: &std::collections::BTreeSet<jails_contracts::ProjectPath>,
 ) -> Vec<String> {
     let surviving: std::collections::BTreeSet<&str> = declared_types(next_model).collect();
     let removed: Vec<&str> = declared_types(current_model)
@@ -189,6 +192,11 @@ pub(crate) fn stranded_reader_references(
                 .unwrap_or(&path)
                 .to_string_lossy()
                 .replace('\\', "/");
+            if jails_contracts::ProjectPath::parse(relative.clone())
+                .is_ok_and(|relative| managed.contains(&relative))
+            {
+                continue;
+            }
             for name in &removed {
                 if !names_identifier(&blanked, name) {
                     continue;

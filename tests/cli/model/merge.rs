@@ -27,7 +27,7 @@ entity Task @id(ent_task) {
     write_spring_fixture(&root);
     apply_canonical_model(&root, "jdl-v1-initial");
 
-    let record = root.join(".jails/generated/main/java/com/example/notes/domain/Task.java");
+    let record = root.join("src/main/java/com/example/notes/domain/Task.java");
     let source = fs::read_to_string(&record).unwrap();
     let split = source.rfind("\n}").unwrap();
     fs::write(
@@ -60,7 +60,7 @@ entity Task @id(ent_task) {
 #[test]
 fn jdl_generate_edit_generate_preserves_clean_edits_and_refuses_overlap() {
     let root = jdl_project("model-jdl-iterative-record", NOTES_JDL);
-    let generated = root.join(".jails/generated/main/java/com/example/notes/domain/Task.java");
+    let generated = root.join("src/main/java/com/example/notes/domain/Task.java");
 
     let first = jails_cmd(&root, None)
         .args(["g", "record", "Task", "title:string!(1..200)"])
@@ -141,7 +141,7 @@ fn jdl_generate_edit_generate_preserves_clean_edits_and_refuses_overlap() {
 #[test]
 fn compiler_upgrade_uses_the_exact_accepted_projection_as_merge_base() {
     let root = jdl_project("model-compiler-upgrade-base", NOTES_JDL);
-    let generated = root.join(".jails/generated/main/java/com/example/notes/domain/Task.java");
+    let generated = root.join("src/main/java/com/example/notes/domain/Task.java");
     let first = jails_cmd(&root, None)
         .args(["g", "record", "Task", "title:string!"])
         .output()
@@ -171,10 +171,9 @@ fn compiler_upgrade_uses_the_exact_accepted_projection_as_merge_base() {
         serde_json::from_slice(&fs::read(&lock_path).unwrap()).unwrap();
     let mut projection: jails_contracts::RenderedTree =
         serde_json::from_value(lock["projection"].clone()).unwrap();
-    let generated_path = jails_contracts::ProjectPath::parse(
-        ".jails/generated/main/java/com/example/notes/domain/Task.java",
-    )
-    .unwrap();
+    let generated_path =
+        jails_contracts::ProjectPath::parse("src/main/java/com/example/notes/domain/Task.java")
+            .unwrap();
     projection.files.get_mut(&generated_path).unwrap().bytes = old_projection.into_bytes();
     let projection_bytes = serde_json::to_vec(&projection).unwrap();
     lock["compiler"] = serde_json::Value::String("0.0.0-previous-emitter".to_string());
@@ -222,11 +221,11 @@ fn canonical_source_units_merge_every_main_and_test_file_and_wire_both_roots() {
     }
 
     let files = [
-        ".jails/generated/main/java/com/example/demo/Clock.java",
-        ".jails/generated/test/java/com/example/demo/ClockTest.java",
-        ".jails/generated/main/java/com/example/demo/Port.java",
-        ".jails/generated/main/java/com/example/demo/service/BillingService.java",
-        ".jails/generated/test/java/com/example/demo/service/BillingServiceTest.java",
+        "src/main/java/com/example/demo/Clock.java",
+        "src/test/java/com/example/demo/ClockTest.java",
+        "src/main/java/com/example/demo/Port.java",
+        "src/main/java/com/example/demo/service/BillingService.java",
+        "src/test/java/com/example/demo/service/BillingServiceTest.java",
     ];
     for (index, relative) in files.iter().enumerate() {
         let path = root.join(relative);
@@ -260,11 +259,10 @@ fn canonical_source_units_merge_every_main_and_test_file_and_wire_both_roots() {
         );
     }
 
+    // One source root per set, and nothing declared for it: the build file
+    // carries no `build-helper-maven-plugin` block.
     let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
-    assert!(pom.contains("<source>.jails/generated/main/java</source>"));
-    assert!(pom.contains("<source>.jails/generated/test/java</source>"));
-    assert!(pom.contains("<goal>add-source</goal>"));
-    assert!(pom.contains("<goal>add-test-source</goal>"));
+    assert!(!pom.contains("build-helper-maven-plugin"), "{pom}");
 
     let jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(
@@ -331,8 +329,8 @@ fn canonical_standalone_tests_merge_reader_edits_and_refuse_edited_build_wiring(
     }
 
     let files = [
-        ".jails/generated/test/java/com/example/demo/ParserTest.java",
-        ".jails/generated/test/java/com/example/demo/CheckoutIT.java",
+        "src/test/java/com/example/demo/ParserTest.java",
+        "src/test/java/com/example/demo/CheckoutIT.java",
     ];
     for (index, relative) in files.iter().enumerate() {
         let path = root.join(relative);
@@ -459,8 +457,8 @@ fn canonical_sealed_types_evolve_through_merge_and_destroy_as_one_semantic_unit(
         String::from_utf8_lossy(&generated.stderr)
     );
     let files = [
-        ".jails/generated/main/java/com/example/demo/domain/Outcome.java",
-        ".jails/generated/test/java/com/example/demo/domain/OutcomeTest.java",
+        "src/main/java/com/example/demo/domain/Outcome.java",
+        "src/test/java/com/example/demo/domain/OutcomeTest.java",
     ];
     for (index, relative) in files.iter().enumerate() {
         let path = root.join(relative);
@@ -641,8 +639,8 @@ fn canonical_factory_tracks_entity_fields_without_owning_the_record() {
         "{jdl}"
     );
     assert!(jdl.contains("use factory"), "{jdl}");
-    let factory = root.join(".jails/generated/test/java/com/example/demo/testkit/NoteFactory.java");
-    let record = root.join(".jails/generated/main/java/com/example/demo/domain/Note.java");
+    let factory = root.join("src/test/java/com/example/demo/testkit/NoteFactory.java");
+    let record = root.join("src/main/java/com/example/demo/domain/Note.java");
     let source = fs::read_to_string(&factory).unwrap();
     fs::write(
         &factory,
@@ -781,7 +779,7 @@ fn canonical_strategy_evolves_all_implementation_boundaries_in_one_plan() {
         ),
     )
     .unwrap();
-    let managed = root.join(".jails/generated");
+    let managed = root.join("src");
     let existing = [
         managed.join("main/java/com/example/demo/domain/PostRule.java"),
         managed.join("main/java/com/example/demo/service/PostRuleEvaluator.java"),
@@ -944,7 +942,7 @@ fn canonical_strategy_evolves_all_implementation_boundaries_in_one_plan() {
     );
     assert!(existing.iter().chain(&premium).all(|path| !path.exists()));
     assert!(
-        root.join(".jails/generated/main/java/com/example/demo/domain/Post.java")
+        root.join("src/main/java/com/example/demo/domain/Post.java")
             .is_file(),
         "strategy destroy removed an input ABI"
     );
@@ -997,8 +995,8 @@ fn canonical_controller_merges_both_files_and_refuses_overlapping_route_edits() 
     )
     .unwrap();
     let files = [
-        root.join(".jails/generated/main/java/com/example/demo/web/VerifyController.java"),
-        root.join(".jails/generated/test/java/com/example/demo/web/VerifyControllerTest.java"),
+        root.join("src/main/java/com/example/demo/web/VerifyController.java"),
+        root.join("src/test/java/com/example/demo/web/VerifyControllerTest.java"),
     ];
     for (index, path) in files.iter().enumerate() {
         let source = fs::read_to_string(path).unwrap();
@@ -1156,7 +1154,7 @@ fn canonical_controller_merges_both_files_and_refuses_overlapping_route_edits() 
     );
     assert!(files.iter().all(|path| !path.exists()));
     assert!(
-        root.join(".jails/generated/main/java/com/example/demo/domain/Request.java")
+        root.join("src/main/java/com/example/demo/domain/Request.java")
             .exists()
     );
 
@@ -1321,9 +1319,8 @@ fn canonical_repository_is_a_managed_abi_facet_of_the_record() {
         "{jdl}"
     );
     assert!(jdl.contains("use repo"), "{jdl}");
-    let repository =
-        root.join(".jails/generated/main/java/com/example/demo/repository/NoteRepository.java");
-    let record = root.join(".jails/generated/main/java/com/example/demo/domain/Note.java");
+    let repository = root.join("src/main/java/com/example/demo/repository/NoteRepository.java");
+    let record = root.join("src/main/java/com/example/demo/domain/Note.java");
     let source = fs::read_to_string(&repository).unwrap();
     let reader_source = source.replace(
         "\n}\n",
@@ -1485,7 +1482,7 @@ fn canonical_dto_evolves_three_merge_managed_abi_files_without_losing_reader_edi
         );
     }
 
-    let generated = root.join(".jails/generated");
+    let generated = root.join("src");
     let request = generated.join("main/java/com/example/demo/web/TaskRequest.java");
     let response = generated.join("main/java/com/example/demo/web/TaskResponse.java");
     let test = generated.join("test/java/com/example/demo/web/TaskDtoTest.java");
@@ -1724,7 +1721,7 @@ entity Widget {
         "{}",
         String::from_utf8_lossy(&sync.stderr)
     );
-    let widget = root.join(".jails/generated/main/java/com/example/demo/domain/Widget.java");
+    let widget = root.join("src/main/java/com/example/demo/domain/Widget.java");
     let rendered = fs::read_to_string(&widget).unwrap();
 
     // A reader deletes a managed file -- a half-finished `git checkout`, or a

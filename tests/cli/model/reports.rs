@@ -87,7 +87,7 @@ entity Memo {
 
     // Editing a managed file is drift against the accepted image, and is
     // reported as such rather than being re-rendered away.
-    let generated = root.join(".jails/generated/main/java/com/example/shop/domain/Order.java");
+    let generated = root.join("src/main/java/com/example/shop/domain/Order.java");
     let edited = format!(
         "{}\n// touched by the reader\n",
         fs::read_to_string(&generated).unwrap()
@@ -200,7 +200,7 @@ entity Visit {
         "the stored entity's lineage should be checked:\n{clean}"
     );
 
-    let record = root.join(".jails/generated/main/java/com/example/clinic/domain/Visit.java");
+    let record = root.join("src/main/java/com/example/clinic/domain/Visit.java");
     fs::write(
         &record,
         format!(
@@ -223,7 +223,7 @@ entity Visit {
         "an artifact that cannot be ejected must not be offered as one:\n{edited}"
     );
 
-    let test = root.join(".jails/generated/test/java/com/example/clinic/domain/VisitTest.java");
+    let test = root.join("src/test/java/com/example/clinic/domain/VisitTest.java");
     fs::remove_file(&test).unwrap();
     let deleted = jails_cmd(&root, None).arg("doctor").output().unwrap();
     let deleted_out = String::from_utf8_lossy(&deleted.stdout).to_string();
@@ -312,7 +312,7 @@ app Depot {
     );
     assert!(
         routes.contains("AddCrateController"),
-        "named by the controller the compiler wrote into `.jails/generated`:\n{routes}"
+        "named by the controller the compiler wrote into `src/main/java`:\n{routes}"
     );
 
     let beans = jails_cmd(&root, None).arg("beans").output().unwrap();
@@ -331,7 +331,7 @@ app Depot {
         .unwrap();
     let located = String::from_utf8_lossy(&located.stdout).to_string();
     assert!(
-        located.contains(".jails/generated/main/java") && located.contains("Crate.java"),
+        located.contains("src/main/java") && located.contains("Crate.java"),
         "`jails src` should find a type the compiler wrote:\n{located}"
     );
 

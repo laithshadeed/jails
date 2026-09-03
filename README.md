@@ -24,8 +24,9 @@ A project has one human-authored desired-state model at `.jails/model.jdl`.
 Every `jails g`, `jails add`, `jails resource`, `jails set` and `jails destroy`
 is an edit to that model, followed by one compilation of the whole model into
 an exact, content-addressed plan that is previewed byte for byte and then
-executed. Generated Java is a merge-managed projection below
-`.jails/generated/`: on the next generation, disjoint hand edits survive and
+executed. Generated Java is a merge-managed projection written beside your
+own sources under `src/`, and `.jails/compiler.lock.json` is what says which
+files are jails': on the next generation, disjoint hand edits survive and
 overlapping edits refuse before anything is written.
 
 `jails new`, `jails new-cli` and `jails new --app` all seed the model. A project
@@ -78,11 +79,11 @@ it.
 **Ejection** is the escape hatch for one implementation boundary, named by a
 readable path (`Note.repo.fake`, `Note.http.api`, `Audit.implementation`)
 that the boundary registry resolves, or by the artifact id generated
-provenance reports (art_ent_note_repository_memory). It moves the
-captured live files, hand edits included, from `.jails/generated/main/java` to
-the matching `src/main/java` or `src/test/java` paths, records an `eject`
-declaration in the same plan, and leaves the ejected source alone forever
-after. Records, ports and operation interfaces stay managed ABI.
+provenance reports (art_ent_note_repository_memory). The files stay exactly
+where they are, hand edits included: the plan records an `eject` declaration
+and takes the boundary out of the accepted projection in the lock, and from
+then on jails neither rewrites nor deletes that source. Records, ports and
+operation interfaces stay managed ABI.
 
 **Capabilities** are declarations in the model. Each is a pack: Java files with
 their own merge identities, the dependencies and properties they need, and one
@@ -1005,6 +1006,10 @@ and which polls the classpath and restarts when a class changes. So:
 :w  ->  jdt.ls writes target/classes/...  ->  devtools restarts
 ```
 
+A `jails g` is a save too: managed sources are written into the same
+`src/main/java` the language server is already watching, so there is no
+second source root to tell an IDE about and no build-file block declaring one.
+
 `jails new` also writes `src/main/resources/META-INF/spring-devtools.properties`
 with a 200 ms poll and a 50 ms quiet period. Boot's defaults are 1 s and 400 ms,
 which is up to **1.4 s of waiting after a save before the restart even begins**.
@@ -1357,6 +1362,14 @@ cases escape that: an enum is filled in with its first constant, and a `?`
 component with `Optional.empty()`.
 
 ## What a new project looks like
+
+One source root per source set. Everything jails generates is written into
+`src/main/java`, `src/test/java`, `src/main/resources`, `src/test/resources`
+and `src/test/http` beside whatever you write there yourself, and the only
+thing that says which files are jails' is the accepted projection in
+`.jails/compiler.lock.json`. Nothing under `.jails/` holds Java, SQL or
+resources. Open the project in any IDE and there is exactly the tree it
+expects.
 
 Both `new` and `new-cli` lay down the standard Maven tree plus an empty
 `src/test/resources/fixtures/` (with a `.gitkeep`, since git won't track an

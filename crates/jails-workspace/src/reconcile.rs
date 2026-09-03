@@ -1,4 +1,4 @@
-//! Three-way reconciliation of compiler artifacts with the live managed tree.
+//! Three-way reconciliation of compiler artifacts with the live managed files.
 
 use jails_contracts::{
     ContentDigest, DocumentIntent, FileKind, FileMode, PlanDraft, ProjectPath, RenderedFile,
@@ -13,12 +13,24 @@ struct Adoption {
     base: Vec<u8>,
 }
 
-pub(crate) fn tree(
+/// The managed tree before and after this plan.
+///
+/// **`before` is the managed set as captured**: every path the accepted
+/// projection names and the capture found, with the bytes it found -- OURS.
+/// **`after` is the reconciled result.** The executor publishes `after` and
+/// deletes what is in `before` and not in `after`; nothing else on disk is
+/// its business, because managed files sit beside the reader's own under
+/// `src/` and only the projection says which is which.
+///
+/// An ejected boundary's files are in neither: they leave the projection and
+/// stay where they are, which is already reader source.
+pub(crate) fn trees(
     snapshot: &WorkspaceSnapshot,
     draft: &PlanDraft,
     blobs: &mut BTreeMap<ContentDigest, Vec<u8>>,
     restore: crate::materialize::Restore,
-) -> Result<TreeManifest, String> {
+) -> Result<(TreeManifest, TreeManifest), String> {
+    let mut before = TreeManifest::default();
     let mut tree = TreeManifest::default();
     let baseline = artifact_index(&draft.baseline)?;
     let desired = artifact_index(&draft.generated)?;
@@ -27,14 +39,11 @@ pub(crate) fn tree(
         .chain(desired.keys())
         .cloned()
         .collect::<BTreeSet<_>>();
-    let mut handled_paths = BTreeSet::new();
-    let ejected_sources = draft
-        .reader_document_intents
-        .iter()
-        .filter_map(|intent| match intent {
-            DocumentIntent::EjectFile { source, .. } => Some(source),
-            _ => None,
-        })
+    let ejected_boundaries = draft
+        .next_model
+        .ejections
+        .values()
+        .map(|ejection| ejection.target.as_str())
         .collect::<BTreeSet<_>>();
     let adopted_sources = adoption_index(&draft.reader_document_intents)?;
     let mut adopted_targets = BTreeSet::new();
@@ -42,11 +51,21 @@ pub(crate) fn tree(
     for artifact_id in artifact_ids {
         let base = baseline.get(&artifact_id).copied();
         let theirs = desired.get(&artifact_id).copied();
-        if let Some((path, _)) = base {
-            handled_paths.insert(path.clone());
-        }
-        if let Some((path, _)) = theirs {
-            handled_paths.insert(path.clone());
+        let ejected = base.is_some_and(|(_, file)| {
+            ejected_boundaries.contains(file.provenance.ejection_target())
+        });
+        if let Some((path, _)) = base
+            && !ejected
+            && let Some(live) = snapshot.files.get(path)
+        {
+            insert_tree_entry(
+                &mut before,
+                blobs,
+                path.clone(),
+                live.bytes.clone(),
+                crate::materialize::file_kind(path),
+                captured_mode(live),
+            )?;
         }
         if let (Some((old_path, _)), Some((new_path, _))) = (base, theirs)
             && old_path != new_path
@@ -61,7 +80,7 @@ pub(crate) fn tree(
             base,
             theirs,
             Ownership {
-                ejected: ejected_sources.contains(live_path(base, theirs)),
+                ejected,
                 adoption: theirs.and_then(|(path, _)| adopted_sources.get(path)),
                 restore,
             },
@@ -85,24 +104,7 @@ pub(crate) fn tree(
         ));
     }
 
-    for (path, live) in snapshot
-        .files
-        .iter()
-        .filter(|(path, _)| path.is_within(&draft.generated.root))
-    {
-        if handled_paths.contains(path) {
-            continue;
-        }
-        insert_tree_entry(
-            &mut tree,
-            blobs,
-            path.clone(),
-            live.bytes.clone(),
-            crate::materialize::file_kind(path),
-            captured_mode(live),
-        )?;
-    }
-    Ok(tree)
+    Ok((before, tree))
 }
 
 fn adoption_index(intents: &[DocumentIntent]) -> Result<BTreeMap<ProjectPath, Adoption>, String> {
@@ -262,12 +264,10 @@ fn reconcile_artifact(
                 ));
             }
             (Some(_), None, None) => None,
-            (None, Some(ours), None) => Some((
-                ours.bytes.clone(),
-                crate::materialize::file_kind(live_path),
-                captured_mode(ours),
-            )),
-            (None, None, None) => None,
+            // An artifact comes from BASE or THEIRS, so a live file with
+            // neither is not an artifact at all: it is the reader's, and
+            // outside this tree.
+            (None, Some(_), None) | (None, None, None) => None,
         }
     };
     if let Some((bytes, kind, mode)) = selected {

@@ -25,7 +25,7 @@ use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile}
 use jails_model::{AppModel, Entity, Package, StableId, boundary};
 use std::collections::{BTreeMap, BTreeSet};
 
-const JAVA_TEST_ROOT: &str = ".jails/generated/test/java";
+const JAVA_TEST_ROOT: &str = jails_contracts::SourceRoot::TestJava.path();
 
 /// The port, the controller, and the controller's test.
 pub(crate) fn lower(
@@ -104,11 +104,9 @@ fn requests(model: &AppModel, entity: &Entity) -> Result<Unit, CompileError> {
         body.join(",\n")
     );
     let artifact_id = boundary::HTTP_REQUESTS.owned_by(entity.id.as_str());
-    let path = ProjectPath::parse(format!(
-        ".jails/generated/requests/{}.http",
-        entity.names.sql_table
-    ))
-    .map_err(CompileError::new)?;
+    let path = jails_contracts::SourceRoot::TestHttp
+        .join(&format!("{}.http", entity.names.sql_table))
+        .map_err(CompileError::new)?;
     Ok(Unit {
         path,
         file: RenderedFile {

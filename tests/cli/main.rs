@@ -123,23 +123,11 @@ fn overlay_plain_toolbox_completions(root: &Path) {
     ));
 
     // These are hand-written completions for stubs the generator leaves
-    // empty, and the file each one completes is under `.jails/generated`.
-    // Copying it to `src/` as well is not an overlay but a second copy of the
-    // class, which javac reports as `duplicate class` for all seven at once.
-    //
-    // Mapped rather than renamed in `FILES`, so the fixture paths keep saying
-    // where the reader would find the file.
-    let generated = root.join(".jails/model.jdl").is_file();
+    // empty, written over the managed file at the same path: managed output
+    // lives beside the reader's sources, so the fixture path is the path.
     for relative in FILES {
         let source = fixtures.join(relative);
-        let destination = match generated {
-            false => root.join(relative),
-            true => root.join(
-                relative
-                    .replace("src/main/java", ".jails/generated/main/java")
-                    .replace("src/test/java", ".jails/generated/test/java"),
-            ),
-        };
+        let destination = root.join(relative);
         fs::create_dir_all(destination.parent().unwrap()).unwrap();
         fs::copy(&source, &destination).unwrap_or_else(|error| {
             panic!(

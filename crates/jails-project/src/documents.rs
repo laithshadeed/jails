@@ -10,14 +10,12 @@
 
 mod build_feature;
 pub mod pom;
-mod source_root;
 mod spring_test;
 
 pub use build_feature::{reconcile_gradle_build_features, reconcile_maven_build_features};
 // The one walk of a Maven POM, so the adapters here and the capture beside
 // them agree about where an element begins and ends.
 pub(crate) use pom::direct_child_close;
-pub use source_root::{ensure_gradle_source_root, ensure_maven_source_roots};
 pub use spring_test::{
     command_dispatcher, ensure_command_registration, ensure_spring_test_import,
     remove_spring_test_import, set_maven_main_class, spring_boot_test_targets,

@@ -493,10 +493,9 @@ pub fn check(debug: bool) -> Result<()> {
 
 /// Run the project's own formatter.
 ///
-/// Reproducible output lives under `.jails/generated`, rendered from the model
-/// and merge-managed. What is left in `src/` is the reader's own code, and
-/// formatting that is what `jails fmt` is for. There is no jails-owned byte in
-/// the formatter's path to protect, so the plain goal is enough.
+/// Managed output is merge-managed, so a formatter running over it is an
+/// ordinary reader edit the next generation keeps. There is no jails-owned
+/// byte in the formatter's path to protect, so the plain goal is enough.
 ///
 /// Gradle is refused by name for the reason the `format` capability is: Spotless
 /// needs its plugin inside `plugins { }`, which is only legal as the script's

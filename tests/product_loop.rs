@@ -111,7 +111,7 @@ fn subjects_with_fixture(label: &str, spring: bool) -> [Subject; 1] {
     [Subject {
         name: "canonical",
         binary: OsString::from(env!("CARGO_BIN_EXE_jails")),
-        record: canonical_root.join(".jails/generated/main/java/com/example/demo/domain/Task.java"),
+        record: canonical_root.join("src/main/java/com/example/demo/domain/Task.java"),
         root: canonical_root,
     }]
 }
@@ -327,11 +327,7 @@ fn strategy_variants_preserve_each_implementation_boundary() {
         subject.succeeds(&[
             "g", "strategy", "PostRule", "Featured", "Standard", "--on", "Post",
         ]);
-        let root = if subject.name == "canonical" {
-            subject.root.join(".jails/generated")
-        } else {
-            subject.root.join("src")
-        };
+        let root = subject.root.join("src");
         let existing = [
             root.join("main/java/com/example/demo/domain/PostRule.java"),
             root.join("main/java/com/example/demo/service/PostRuleEvaluator.java"),
@@ -458,11 +454,7 @@ fn data_capability_packs_preserve_named_package_edits_and_remove_symmetrically()
     let subjects = subjects("data-capability-packs");
     for subject in &subjects {
         subject.succeeds(&["add", "json", "--name", "Dataset"]);
-        let root = if subject.name == "canonical" {
-            subject.root.join(".jails/generated")
-        } else {
-            subject.root.join("src")
-        };
+        let root = subject.root.join("src");
         let files = [
             root.join("main/java/com/example/demo/adapters/DatasetJson.java"),
             root.join("test/java/com/example/demo/adapters/DatasetJsonTest.java"),
@@ -576,11 +568,7 @@ fn testkit_merges_java_and_resource_edits_and_removes_them_together() {
     for subject in &subjects {
         subject.succeeds(&["add", "testkit"]);
         let java = source_unit_path(subject, "test", "testkit", "Clocks.java");
-        let resource_root = if subject.name == "canonical" {
-            subject.root.join(".jails/generated/test/resources")
-        } else {
-            subject.root.join("src/test/resources")
-        };
+        let resource_root = subject.root.join("src/test/resources");
         let fixture = resource_root.join("fixtures/example.json");
         add_reader_comment(&java, "testkit-reader-edit");
         let clean_fixture = fs::read_to_string(&fixture).unwrap();
@@ -1737,15 +1725,9 @@ fn factory_is_an_entity_projection_instead_of_a_legacy_recipe_dead_end() {
     for subject in &subjects {
         subject.succeeds(&["g", "record", "Task", "title:string!"]);
         subject.succeeds(&["g", "factory", "Task"]);
-        let factory = if subject.name == "canonical" {
-            subject
-                .root
-                .join(".jails/generated/test/java/com/example/demo/testkit/TaskFactory.java")
-        } else {
-            subject
-                .root
-                .join("src/test/java/com/example/demo/testkit/TaskFactory.java")
-        };
+        let factory = subject
+            .root
+            .join("src/test/java/com/example/demo/testkit/TaskFactory.java");
         let source = fs::read_to_string(&factory).unwrap();
         let anchor = "public final class TaskFactory {\n";
         assert!(source.contains(anchor), "{}: {source}", subject.name);
@@ -1829,7 +1811,7 @@ fn repository_facet_preserves_the_legacy_iterative_contract() {
         let repository = if subject.name == "canonical" {
             subject
                 .root
-                .join(".jails/generated/main/java/com/example/demo/repository/TaskRepository.java")
+                .join("src/main/java/com/example/demo/repository/TaskRepository.java")
         } else {
             subject
                 .root
@@ -1892,12 +1874,9 @@ fn repository_facet_preserves_the_legacy_iterative_contract() {
 }
 
 fn source_unit_path(subject: &Subject, source_set: &str, package: &str, file: &str) -> PathBuf {
-    let root = if subject.name == "canonical" {
-        format!(".jails/generated/{source_set}/java/com/example/demo")
-    } else {
-        format!("src/{source_set}/java/com/example/demo")
-    };
-    let mut path = subject.root.join(root);
+    let mut path = subject
+        .root
+        .join(format!("src/{source_set}/java/com/example/demo"));
     if !package.is_empty() {
         path.push(package);
     }
@@ -2313,8 +2292,7 @@ fn adopted_subjects(label: &str, flavour: Adopted) -> [Subject; 1] {
     [Subject {
         name: "canonical",
         binary: OsString::from(env!("CARGO_BIN_EXE_jails")),
-        record: canonical_root
-            .join(".jails/generated/main/java/net/acme/legacy/domain/Receipt.java"),
+        record: canonical_root.join("src/main/java/net/acme/legacy/domain/Receipt.java"),
         root: canonical_root,
     }]
 }

@@ -16,7 +16,7 @@
 //! names the class -- a `Class.forName` argument -- is therefore missed, which
 //! is the safe direction and is *reported* rather than hidden.
 //!
-//! **It touches the reader's own sources and nothing else.** `.jails/generated`
+//! **It touches the reader's own sources and nothing else.** A managed file
 //! is a projection of the model, so a textual edit there would be undone by the
 //! next compilation and is not offered; a declared entity is renamed with
 //! `jails rename resource`, which moves the model, the table and the managed
@@ -34,10 +34,21 @@ pub(crate) fn run(old: &str, new: &str, force: bool, invocation: Invocation) -> 
     let root = crate::model_command::root()?;
     refuse_declared(&root, old, new)?;
 
+    // **The reader's files only.** Managed sources sit beside theirs under
+    // `src/`, and the lock says which is which; a managed file naming the
+    // old type is renamed by the model, not by this.
+    let managed = jails_project::capture::managed_paths(&root)
+        .map_err(|error| Failure::Told(format!("could not read the compiler lock: {error}")))?;
     let mut rewrites: BTreeMap<PathBuf, (String, PathBuf)> = BTreeMap::new();
     let mut occurrences = 0_usize;
     let mut in_literals = 0_usize;
     for absolute in jails_project::java::source_files(&root.join("src")) {
+        let relative = absolute.strip_prefix(&root).ok().and_then(|relative| {
+            jails_contracts::ProjectPath::parse(relative.to_string_lossy().replace('\\', "/")).ok()
+        });
+        if relative.is_some_and(|relative| managed.contains(&relative)) {
+            continue;
+        }
         let Ok(text) = std::fs::read_to_string(&absolute) else {
             continue;
         };

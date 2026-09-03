@@ -88,9 +88,8 @@ fn fake_capability_is_a_global_compiler_profile_and_remove_is_recompilation() {
     );
     let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(model.contains("cap fake @id(cap_fake)"), "{model}");
-    let adapter_path = root.join(
-        ".jails/generated/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java",
-    );
+    let adapter_path =
+        root.join("src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java");
     let adapter = fs::read_to_string(&adapter_path).unwrap();
     assert!(adapter.contains("implements NoteRepository"), "{adapter}");
     assert!(adapter.contains("Map<UUID, Note> rows"), "{adapter}");
@@ -189,13 +188,10 @@ fn canonical_data_capability_packs_keep_the_iterative_loop_and_eject_as_one_boun
         String::from_utf8_lossy(&json.stderr)
     );
 
-    let csv_main =
-        root.join(".jails/generated/main/java/com/example/notes/adapters/DatasetReader.java");
-    let csv_test =
-        root.join(".jails/generated/test/java/com/example/notes/adapters/DatasetReaderTest.java");
-    let json_main = root.join(".jails/generated/main/java/com/example/notes/adapters/Json.java");
-    let json_test =
-        root.join(".jails/generated/test/java/com/example/notes/adapters/JsonTest.java");
+    let csv_main = root.join("src/main/java/com/example/notes/adapters/DatasetReader.java");
+    let csv_test = root.join("src/test/java/com/example/notes/adapters/DatasetReaderTest.java");
+    let json_main = root.join("src/main/java/com/example/notes/adapters/Json.java");
+    let json_test = root.join("src/test/java/com/example/notes/adapters/JsonTest.java");
     for path in [&csv_main, &csv_test, &json_main, &json_test] {
         assert!(path.is_file(), "missing {}", path.display());
     }
@@ -295,7 +291,7 @@ fn canonical_data_capability_packs_keep_the_iterative_loop_and_eject_as_one_boun
         "{}",
         String::from_utf8_lossy(&recorded.stderr)
     );
-    let record_main = root.join(".jails/generated/main/java/com/example/notes/domain/Feed.java");
+    let record_main = root.join("src/main/java/com/example/notes/domain/Feed.java");
     let clean_record = fs::read_to_string(&record_main).unwrap();
     let at = clean_record.rfind("\n}").unwrap();
     fs::write(
@@ -318,7 +314,7 @@ fn canonical_data_capability_packs_keep_the_iterative_loop_and_eject_as_one_boun
         "{}",
         String::from_utf8_lossy(&moved.stderr)
     );
-    let moved_record = root.join(".jails/generated/main/java/com/example/notes/imports/Feed.java");
+    let moved_record = root.join("src/main/java/com/example/notes/imports/Feed.java");
     assert!(!record_main.exists());
     let moved_source = fs::read_to_string(&moved_record).unwrap();
     assert!(
@@ -357,11 +353,9 @@ fn canonical_data_capability_packs_keep_the_iterative_loop_and_eject_as_one_boun
         String::from_utf8_lossy(&retried.stderr)
     );
     assert!(
-        fs::read_to_string(
-            root.join(".jails/generated/main/java/com/example/notes/feeds/Feed.java")
-        )
-        .unwrap()
-        .contains("readerRecordMethod")
+        fs::read_to_string(root.join("src/main/java/com/example/notes/feeds/Feed.java"))
+            .unwrap()
+            .contains("readerRecordMethod")
     );
 
     let ejected = jails_cmd(&root, None)
@@ -381,8 +375,6 @@ fn canonical_data_capability_packs_keep_the_iterative_loop_and_eject_as_one_boun
         &root,
         "src/test/java/com/example/notes/adapters/DatasetReaderTest.java",
     );
-    assert!(!csv_main.exists());
-    assert!(!csv_test.exists());
     assert!(reader_main.is_file());
     assert!(reader_test.is_file());
     let reader_main_bytes = fs::read(&reader_main).unwrap();
@@ -458,11 +450,10 @@ fn canonical_http_and_fake_packs_merge_and_eject_as_complete_boundaries() {
         );
     }
 
-    let fake = root.join(".jails/generated/test/java/com/example/notes/testkit/Fake.java");
-    let fake_test = root.join(".jails/generated/test/java/com/example/notes/testkit/FakeTest.java");
-    let http = root.join(".jails/generated/main/java/com/example/notes/api/AdminServer.java");
-    let http_test =
-        root.join(".jails/generated/test/java/com/example/notes/api/AdminServerTest.java");
+    let fake = root.join("src/test/java/com/example/notes/testkit/Fake.java");
+    let fake_test = root.join("src/test/java/com/example/notes/testkit/FakeTest.java");
+    let http = root.join("src/main/java/com/example/notes/api/AdminServer.java");
+    let http_test = root.join("src/test/java/com/example/notes/api/AdminServerTest.java");
     for (index, path) in [&fake, &fake_test, &http, &http_test].iter().enumerate() {
         let source = fs::read_to_string(path).unwrap();
         let at = source.rfind("\n}").unwrap();
@@ -517,8 +508,6 @@ fn canonical_http_and_fake_packs_merge_and_eject_as_complete_boundaries() {
     );
     assert_eq!(fs::read(&reader_http).unwrap(), http_bytes);
     assert_eq!(fs::read(&reader_http_test).unwrap(), http_test_bytes);
-    assert!(!http.exists());
-    assert!(!http_test.exists());
 
     let fake_bytes = fs::read(&fake).unwrap();
     let fake_test_bytes = fs::read(&fake_test).unwrap();
@@ -538,8 +527,6 @@ fn canonical_http_and_fake_packs_merge_and_eject_as_complete_boundaries() {
     );
     assert_eq!(fs::read(reader_fake).unwrap(), fake_bytes);
     assert_eq!(fs::read(reader_fake_test).unwrap(), fake_test_bytes);
-    assert!(!fake.exists());
-    assert!(!fake_test.exists());
 
     let frozen = jails_cmd(&root, None)
         .args(["model", "check", "--frozen"])
@@ -568,7 +555,7 @@ fn canonical_testkit_merges_and_ejects_java_and_resources_as_one_boundary() {
         String::from_utf8_lossy(&added.stderr)
     );
 
-    let generated = root.join(".jails/generated");
+    let generated = root.join("src");
     let java = generated.join("test/java/com/example/notes/testkit/Clocks.java");
     let fixture = generated.join("test/resources/fixtures/example.json");
     let source = fs::read_to_string(&java).unwrap();
@@ -609,12 +596,6 @@ fn canonical_testkit_merges_and_ejects_java_and_resources_as_one_boundary() {
             .unwrap()
             .contains("reader-bolt")
     );
-    let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
-    assert!(pom.contains("<goal>add-test-resource</goal>"), "{pom}");
-    assert!(
-        pom.contains("<directory>.jails/generated/test/resources</directory>"),
-        "{pom}"
-    );
 
     let expected = [
         "test/java/com/example/notes/testkit/Clocks.java",
@@ -638,7 +619,6 @@ fn canonical_testkit_merges_and_ejects_java_and_resources_as_one_boundary() {
         String::from_utf8_lossy(&ejected.stderr)
     );
     for (index, path) in expected.iter().enumerate() {
-        assert!(!generated.join(path).exists(), "managed {path} survived");
         assert_eq!(
             fs::read(root.join("src").join(path)).unwrap(),
             bytes[index],
@@ -676,7 +656,7 @@ fn canonical_sqlite_pack_moves_merges_ejects_and_builds_as_one_boundary() {
         String::from_utf8_lossy(&added.stderr)
     );
 
-    let generated = root.join(".jails/generated");
+    let generated = root.join("src");
     let database = generated.join("main/java/com/example/notes/adapters/StoreDatabase.java");
     let migrations = generated.join("main/java/com/example/notes/adapters/StoreMigrations.java");
     let test = generated.join("test/java/com/example/notes/adapters/StoreDatabaseTest.java");
@@ -753,8 +733,7 @@ fn canonical_sqlite_pack_moves_merges_ejects_and_builds_as_one_boundary() {
         "{}",
         String::from_utf8_lossy(&ejected.stderr)
     );
-    for (index, (path, managed)) in expected.iter().enumerate() {
-        assert!(!managed.exists(), "managed {path} survived");
+    for (index, (path, _)) in expected.iter().enumerate() {
         assert_eq!(
             fs::read(root.join("src").join(path)).unwrap(),
             bytes[index],
@@ -794,8 +773,7 @@ fn canonical_h2_pack_merges_ejects_and_builds() {
         String::from_utf8_lossy(&added.stderr)
     );
 
-    let managed =
-        root.join(".jails/generated/test/java/com/example/demo/adapters/H2DatabaseTest.java");
+    let managed = root.join("src/test/java/com/example/demo/adapters/H2DatabaseTest.java");
     let source = fs::read_to_string(&managed).unwrap();
     let at = source.rfind("\n}").unwrap();
     let edited = format!(
@@ -856,7 +834,6 @@ fn canonical_h2_pack_merges_ejects_and_builds() {
         String::from_utf8_lossy(&ejected.stderr)
     );
     let reader = root.join("src/test/java/com/example/demo/adapters/H2DatabaseTest.java");
-    assert!(!managed.exists());
     assert_eq!(fs::read(&reader).unwrap(), live_bytes);
 
     let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
@@ -903,8 +880,7 @@ fn canonical_actuator_pack_merges_ejects_only_java_and_builds() {
         String::from_utf8_lossy(&added.stderr)
     );
 
-    let managed =
-        root.join(".jails/generated/test/java/com/example/demo/ActuatorEndpointsTest.java");
+    let managed = root.join("src/test/java/com/example/demo/ActuatorEndpointsTest.java");
     let source = fs::read_to_string(&managed).unwrap();
     let at = source.rfind("\n}").unwrap();
     let edited = format!(
@@ -951,7 +927,6 @@ fn canonical_actuator_pack_merges_ejects_only_java_and_builds() {
         String::from_utf8_lossy(&ejected.stderr)
     );
     let reader = root.join("src/test/java/com/example/demo/ActuatorEndpointsTest.java");
-    assert!(!managed.exists());
     assert_eq!(fs::read(&reader).unwrap(), live_bytes);
 
     let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
@@ -995,8 +970,8 @@ fn canonical_cache_pack_merges_ejects_the_java_boundary_and_builds() {
     );
 
     let managed = [
-        root.join(".jails/generated/main/java/com/example/demo/CacheConfig.java"),
-        root.join(".jails/generated/test/java/com/example/demo/CacheConfigTest.java"),
+        root.join("src/main/java/com/example/demo/CacheConfig.java"),
+        root.join("src/test/java/com/example/demo/CacheConfigTest.java"),
     ];
     for (index, path) in managed.iter().enumerate() {
         let source = fs::read_to_string(path).unwrap();
@@ -1054,8 +1029,7 @@ fn canonical_cache_pack_merges_ejects_the_java_boundary_and_builds() {
         common::generated(&root, "src/main/java/com/example/demo/CacheConfig.java"),
         common::generated(&root, "src/test/java/com/example/demo/CacheConfigTest.java"),
     ];
-    for ((managed, reader), expected) in managed.iter().zip(&reader).zip(live_bytes) {
-        assert!(!managed.exists());
+    for (reader, expected) in reader.iter().zip(live_bytes) {
         assert_eq!(fs::read(reader).unwrap(), expected);
     }
 
@@ -1101,8 +1075,8 @@ fn canonical_cors_pack_merges_ejects_the_java_boundary_and_builds() {
     );
 
     let managed = [
-        root.join(".jails/generated/main/java/com/example/demo/CorsConfig.java"),
-        root.join(".jails/generated/test/java/com/example/demo/CorsConfigTest.java"),
+        root.join("src/main/java/com/example/demo/CorsConfig.java"),
+        root.join("src/test/java/com/example/demo/CorsConfigTest.java"),
     ];
     let modern_test = fs::read_to_string(&managed[1]).unwrap();
     assert!(
@@ -1160,8 +1134,7 @@ fn canonical_cors_pack_merges_ejects_the_java_boundary_and_builds() {
         common::generated(&root, "src/main/java/com/example/demo/CorsConfig.java"),
         common::generated(&root, "src/test/java/com/example/demo/CorsConfigTest.java"),
     ];
-    for ((managed, reader), expected) in managed.iter().zip(&reader).zip(live_bytes) {
-        assert!(!managed.exists());
+    for (reader, expected) in reader.iter().zip(live_bytes) {
         assert_eq!(fs::read(reader).unwrap(), expected);
     }
     let properties = fs::read_to_string(&properties).unwrap();
@@ -1191,10 +1164,10 @@ fn canonical_observability_pack_merges_ejects_and_serves_prometheus() {
     );
 
     let managed = [
-        root.join(".jails/generated/main/java/com/example/demo/MetricsConfig.java"),
-        root.join(".jails/generated/main/java/com/example/demo/AppMetrics.java"),
-        root.join(".jails/generated/test/java/com/example/demo/AppMetricsTest.java"),
-        root.join(".jails/generated/test/java/com/example/demo/PrometheusScrapeTest.java"),
+        root.join("src/main/java/com/example/demo/MetricsConfig.java"),
+        root.join("src/main/java/com/example/demo/AppMetrics.java"),
+        root.join("src/test/java/com/example/demo/AppMetricsTest.java"),
+        root.join("src/test/java/com/example/demo/PrometheusScrapeTest.java"),
     ];
     assert!(
         fs::read_to_string(&managed[0])
@@ -1259,8 +1232,7 @@ fn canonical_observability_pack_merges_ejects_and_serves_prometheus() {
             "src/test/java/com/example/demo/PrometheusScrapeTest.java",
         ),
     ];
-    for ((managed, reader), expected) in managed.iter().zip(&reader).zip(live_bytes) {
-        assert!(!managed.exists());
+    for (reader, expected) in reader.iter().zip(live_bytes) {
         assert_eq!(fs::read(reader).unwrap(), expected);
     }
     let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
@@ -1309,11 +1281,11 @@ fn canonical_security_pack_merges_ejects_and_keeps_cors_buildable() {
     }
 
     let managed = [
-        root.join(".jails/generated/main/java/com/example/demo/SecurityConfig.java"),
-        root.join(".jails/generated/main/java/com/example/demo/ProductionSecurityConfig.java"),
-        root.join(".jails/generated/main/java/com/example/demo/ScopeAuthorizer.java"),
-        root.join(".jails/generated/test/java/com/example/demo/SecurityConfigTest.java"),
-        root.join(".jails/generated/test/java/com/example/demo/ScopeAuthorizerTest.java"),
+        root.join("src/main/java/com/example/demo/SecurityConfig.java"),
+        root.join("src/main/java/com/example/demo/ProductionSecurityConfig.java"),
+        root.join("src/main/java/com/example/demo/ScopeAuthorizer.java"),
+        root.join("src/test/java/com/example/demo/SecurityConfigTest.java"),
+        root.join("src/test/java/com/example/demo/ScopeAuthorizerTest.java"),
     ];
     assert!(
         fs::read_to_string(&managed[3])
@@ -1374,13 +1346,12 @@ fn canonical_security_pack_merges_ejects_and_keeps_cors_buildable() {
             "src/test/java/com/example/demo/ScopeAuthorizerTest.java",
         ),
     ];
-    for ((managed, reader), expected) in managed.iter().zip(&reader).zip(live_bytes) {
-        assert!(!managed.exists());
+    for (reader, expected) in reader.iter().zip(live_bytes) {
         assert_eq!(fs::read(reader).unwrap(), expected);
     }
     for cors in [
-        root.join(".jails/generated/main/java/com/example/demo/CorsConfig.java"),
-        root.join(".jails/generated/test/java/com/example/demo/CorsConfigTest.java"),
+        root.join("src/main/java/com/example/demo/CorsConfig.java"),
+        root.join("src/test/java/com/example/demo/CorsConfigTest.java"),
     ] {
         assert!(
             cors.is_file(),
@@ -1421,10 +1392,10 @@ fn canonical_sse_pack_merges_ejects_across_packages_and_runs_its_proof() {
     );
 
     let managed = [
-        root.join(".jails/generated/main/java/com/example/demo/EventHub.java"),
-        root.join(".jails/generated/main/java/com/example/demo/SchedulingConfig.java"),
-        root.join(".jails/generated/main/java/com/example/demo/web/EventStreamController.java"),
-        root.join(".jails/generated/test/java/com/example/demo/EventHubTest.java"),
+        root.join("src/main/java/com/example/demo/EventHub.java"),
+        root.join("src/main/java/com/example/demo/SchedulingConfig.java"),
+        root.join("src/main/java/com/example/demo/web/EventStreamController.java"),
+        root.join("src/test/java/com/example/demo/EventHubTest.java"),
     ];
     let controller = fs::read_to_string(&managed[2]).unwrap();
     assert!(controller.contains("import com.example.demo.EventHub;"));
@@ -1493,8 +1464,7 @@ fn canonical_sse_pack_merges_ejects_across_packages_and_runs_its_proof() {
         ),
         common::generated(&root, "src/test/java/com/example/demo/EventHubTest.java"),
     ];
-    for ((managed, reader), expected) in managed.iter().zip(&reader).zip(live_bytes) {
-        assert!(!managed.exists());
+    for (reader, expected) in reader.iter().zip(live_bytes) {
         assert_eq!(fs::read(reader).unwrap(), expected);
     }
     let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
@@ -1531,8 +1501,8 @@ fn canonical_redis_pack_keeps_source_and_compose_in_the_iterative_loop() {
     );
 
     let managed = [
-        root.join(".jails/generated/main/java/com/example/demo/adapters/KeyValueStore.java"),
-        root.join(".jails/generated/test/java/com/example/demo/adapters/KeyValueStoreIT.java"),
+        root.join("src/main/java/com/example/demo/adapters/KeyValueStore.java"),
+        root.join("src/test/java/com/example/demo/adapters/KeyValueStoreIT.java"),
     ];
     for (index, path) in managed.iter().enumerate() {
         let source = fs::read_to_string(path).unwrap();
@@ -1636,12 +1606,10 @@ fn canonical_kafka_pack_keeps_source_and_compose_in_the_iterative_loop() {
     );
 
     let managed = [
-        root.join(".jails/generated/main/java/com/example/demo/messaging/KafkaConfig.java"),
-        root.join(
-            ".jails/generated/main/java/com/example/demo/messaging/NonRetryableException.java",
-        ),
-        root.join(".jails/generated/test/java/com/example/demo/messaging/KafkaConfigTest.java"),
-        root.join(".jails/generated/test/java/com/example/demo/KafkaTestcontainersConfig.java"),
+        root.join("src/main/java/com/example/demo/messaging/KafkaConfig.java"),
+        root.join("src/main/java/com/example/demo/messaging/NonRetryableException.java"),
+        root.join("src/test/java/com/example/demo/messaging/KafkaConfigTest.java"),
+        root.join("src/test/java/com/example/demo/KafkaTestcontainersConfig.java"),
     ];
     for (index, path) in managed.iter().enumerate() {
         let source = fs::read_to_string(path).unwrap();
@@ -1747,8 +1715,8 @@ fn canonical_mail_pack_keeps_source_and_compose_in_the_iterative_loop() {
     );
 
     let managed = [
-        root.join(".jails/generated/main/java/com/example/demo/Mailer.java"),
-        root.join(".jails/generated/test/java/com/example/demo/MailerIT.java"),
+        root.join("src/main/java/com/example/demo/Mailer.java"),
+        root.join("src/test/java/com/example/demo/MailerIT.java"),
     ];
     for (index, path) in managed.iter().enumerate() {
         let source = fs::read_to_string(path).unwrap();
@@ -1864,8 +1832,8 @@ fn canonical_toxiproxy_pack_keeps_testkit_edits_and_runs_with_real_maven() {
     );
 
     let managed = [
-        root.join(".jails/generated/test/java/com/example/demo/testkit/Faults.java"),
-        root.join(".jails/generated/test/java/com/example/demo/testkit/FaultsTest.java"),
+        root.join("src/test/java/com/example/demo/testkit/Faults.java"),
+        root.join("src/test/java/com/example/demo/testkit/FaultsTest.java"),
     ];
     let originals = managed
         .each_ref()
@@ -1947,7 +1915,7 @@ fn canonical_toxiproxy_pack_keeps_testkit_edits_and_runs_with_real_maven() {
     );
     assert!(managed.iter().all(|path| !path.exists()));
     assert!(
-        root.join(".jails/generated/test/java/com/example/demo/testkit/Fake.java")
+        root.join("src/test/java/com/example/demo/testkit/Fake.java")
             .is_file(),
         "Toxiproxy ejection removed the independent fake boundary"
     );
@@ -2070,7 +2038,7 @@ fn canonical_coverage_is_lossless_refuses_owned_edits_and_passes_real_verify() {
     assert!(!pom.contains("jacoco-maven-plugin"), "{pom}");
     assert!(pom.contains("reader-owned-coverage-note"), "{pom}");
     assert!(
-        root.join(".jails/generated/test/java/com/example/demo/testkit/Fake.java")
+        root.join("src/test/java/com/example/demo/testkit/Fake.java")
             .is_file(),
         "coverage removal touched the independent fake boundary"
     );
@@ -2108,10 +2076,9 @@ fn canonical_storage_postgres_writes_the_container_compose_and_datasource() {
     // `@Testcontainers`/`@Container` static field: Spring caches the context
     // past the container's JUnit-managed lifetime, and later tests then fail
     // against a stopped container.
-    let container = fs::read_to_string(
-        root.join(".jails/generated/test/java/com/example/demo/TestcontainersConfig.java"),
-    )
-    .unwrap();
+    let container =
+        fs::read_to_string(root.join("src/test/java/com/example/demo/TestcontainersConfig.java"))
+            .unwrap();
     assert!(container.contains("@ServiceConnection"), "{container}");
     assert!(container.contains("@TestConfiguration"), "{container}");
     assert!(!container.contains("{{"), "{container}");

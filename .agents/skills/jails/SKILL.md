@@ -38,7 +38,8 @@ after-images and converges on retry.
 commands are typed edits to it, followed by whole-model compilation; a
 mutation the compiler cannot express refuses by name rather than guessing.
 
-Generated Java is merge-managed below `.jails/generated/`. Capabilities are
+Generated Java is merge-managed beside the reader's own sources under `src/`,
+and `.jails/compiler.lock.json` says which files are jails'. Capabilities are
 declarative packs: their Java files each have a merge identity, their
 dependencies and properties are compiler-owned, and one capability ID ejects
 the complete implementation boundary. Compose services, build features and

@@ -893,7 +893,7 @@ fn dependency_classpath(root: &Path, path: &str) -> Option<String> {
 /// Every `.java` file the project's main compilation would see.
 fn main_sources(root: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
-    for tree in ["src/main/java", ".jails/generated/main/java"] {
+    for tree in ["src/main/java"] {
         let mut stack = vec![root.join(tree)];
         while let Some(directory) = stack.pop() {
             let Ok(entries) = fs::read_dir(&directory) else {
@@ -1982,23 +1982,20 @@ pub fn generated_relative(root: &Path, relative: &str) -> String {
         .replace('\\', "/")
 }
 
-/// A generated source path, in whichever tree this project keeps it.
+/// A generated source path, in whichever package the compiler put it.
 ///
 /// **One helper rather than a sweep through three hundred assertions.** The
-/// compiler renders into `.jails/generated/{main,test}/java`, the reader's own
-/// sources stay under `src/`, and a test that asserts on a file jails wrote
-/// should not have to know which of the two it is looking at -- that is the
-/// projection's business, not the assertion's.
+/// compiler renders beside the reader's own sources under `src/`, and which
+/// package a kind lands in is the projection's business rather than the
+/// assertion's: a test names the file by its older spelling and this answers
+/// with where the compiler wrote it.
 ///
-/// Falls back to the `src/` spelling when neither exists, so an absence check
-/// reads as an absence rather than as a path that was never going to be there.
+/// Falls back to the spelling as given when nothing moved, so an absence
+/// check reads as an absence rather than as a path that was never going to be
+/// there.
 pub fn generated(root: &Path, relative: &str) -> PathBuf {
-    let managed = match relative.strip_prefix("src/") {
-        Some(rest) => root.join(".jails/generated").join(rest),
-        None => root.join(".jails/generated").join(relative),
-    };
-    if managed.exists() {
-        return managed;
+    if root.join(relative).exists() {
+        return root.join(relative);
     }
     // **The package may have moved, and only these moves count.** The
     // canonical layout differs from the older spelling in a closed set of
@@ -2012,9 +2009,9 @@ pub fn generated(root: &Path, relative: &str) -> PathBuf {
     // operation *is* -- so each row lists its candidates and the basename
     // still has to match exactly.
     let tree = if relative.starts_with("src/test/") {
-        ".jails/generated/test/java"
+        "src/test/java"
     } else {
-        ".jails/generated/main/java"
+        "src/main/java"
     };
     for (from, candidates) in MOVED_PACKAGES {
         let Some(rest) = relative.strip_prefix(from) else {
@@ -2137,27 +2134,37 @@ pub fn read_generated(root: &Path, relative: &str) -> String {
     }
 }
 
-/// Every path under `.jails/generated`, one per line.
+/// Every path the accepted projection names, one per line.
+///
+/// **The lock is the list of managed files**, now that they live beside the
+/// reader's own under `src/`: a directory walk would list the reader's files
+/// with them and could not say which is which. A path the lock names and the
+/// tree lacks is marked, because that is the case a failing assertion is
+/// usually about.
 pub fn managed_listing(root: &Path) -> String {
-    fn walk(dir: &Path, base: &Path, into: &mut Vec<String>) {
-        let Ok(entries) = fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                walk(&path, base, into);
-            } else if let Ok(rest) = path.strip_prefix(base) {
-                into.push(format!("  {}", rest.display()));
-            }
-        }
-    }
-    let base = root.join(".jails/generated");
-    let mut found = Vec::new();
-    walk(&base, &base, &mut found);
+    let Ok(lock) = fs::read_to_string(root.join(".jails/compiler.lock.json")) else {
+        return "  (nothing -- this project has no compiler lock)".to_string();
+    };
+    let Ok(lock) = serde_json::from_str::<serde_json::Value>(&lock) else {
+        return "  (the compiler lock does not decode)".to_string();
+    };
+    let mut found = lock
+        .get("projection")
+        .and_then(|projection| projection.get("files"))
+        .and_then(serde_json::Value::as_object)
+        .map(|files| {
+            files
+                .keys()
+                .map(|path| match root.join(path).is_file() {
+                    true => format!("  {path}"),
+                    false => format!("  {path} (missing on disk)"),
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     found.sort();
     if found.is_empty() {
-        return "  (nothing -- this project has no managed tree)".to_string();
+        return "  (nothing -- the accepted projection names no file)".to_string();
     }
     found.join("\n")
 }

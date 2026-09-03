@@ -132,39 +132,6 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
             </plugin>
-            <!-- jails:generated-source-roots -->
-            <plugin>
-                <groupId>org.codehaus.mojo</groupId>
-                <artifactId>build-helper-maven-plugin</artifactId>
-                <version>3.6.1</version>
-                <executions>
-                    <execution>
-                        <id>jails-generated-main-source-root</id>
-                        <phase>generate-sources</phase>
-                        <goals><goal>add-source</goal></goals>
-                        <configuration>
-                            <sources><source>.jails/generated/main/java</source></sources>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <id>jails-generated-test-source-root</id>
-                        <phase>generate-test-sources</phase>
-                        <goals><goal>add-test-source</goal></goals>
-                        <configuration>
-                            <sources><source>.jails/generated/test/java</source></sources>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <id>jails-generated-test-resources-source-root</id>
-                        <phase>generate-test-resources</phase>
-                        <goals><goal>add-test-resource</goal></goals>
-                        <configuration>
-                            <resources><resource><directory>.jails/generated/test/resources</directory></resource></resources>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-            <!-- /jails:generated-source-roots -->
             <!-- jails:integration-tests -->
             <plugin>
             <groupId>org.apache.maven.plugins</groupId>

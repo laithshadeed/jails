@@ -1,6 +1,6 @@
 //! The `doctor` checks over a canonical project's managed tree.
 //!
-//! An edited or deleted file under `.jails/generated` must not be invisible
+//! An edited or deleted managed file must not be invisible
 //! to a report that ends `all clear`: silence about a question nobody can see
 //! you failed to ask is the worst answer available.
 //!

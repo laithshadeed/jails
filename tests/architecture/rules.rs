@@ -47,8 +47,8 @@ fn owns_terminal_output(path: &Path) -> bool {
         || relative == "src/model_generate/effects.rs"
         // Gives a project jails never created its first model, and saying so
         // is part of the command: a reader who has just made their repository
-        // canonical needs to know that generation has moved to
-        // `.jails/generated` and their own sources have not.
+        // canonical needs to know that generation now goes through the
+        // compiler and their own sources stay theirs.
         || relative == "src/model_init.rs"
         // A read-only report whose entire contract is terminal output:
         // JDL v1 §18.4 asks that a derived name be *inspectable*, and a

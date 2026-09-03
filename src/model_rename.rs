@@ -160,9 +160,20 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
 /// changes no name a database knows.
 fn refuse_reader_java(root: &Path, request: &Request) -> Result<()> {
     let old_java = request.from.rsplit('.').next().unwrap_or_default();
+    // **The reader's files only.** Managed sources sit beside theirs under
+    // `src/`, name the old type by construction, and are the rename's to
+    // move; the lock says which they are.
+    let managed = jails_project::capture::managed_paths(root)
+        .map_err(|error| Failure::Told(format!("could not read the compiler lock: {error}")))?;
     let mut java = Vec::new();
     collect(&root.join("src"), "java", &mut java);
     for path in java {
+        let relative = path.strip_prefix(root).ok().and_then(|relative| {
+            jails_contracts::ProjectPath::parse(relative.to_string_lossy().replace('\\', "/")).ok()
+        });
+        if relative.is_some_and(|relative| managed.contains(&relative)) {
+            continue;
+        }
         let Ok(source) = std::fs::read_to_string(&path) else {
             continue;
         };

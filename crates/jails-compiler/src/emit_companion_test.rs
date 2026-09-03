@@ -22,7 +22,7 @@ use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile}
 use jails_model::{AppModel, BuiltinType, Entity, Field, Package, StableId, TypeRef, boundary};
 use std::collections::BTreeSet;
 
-pub(crate) const JAVA_TEST_ROOT: &str = ".jails/generated/test/java";
+pub(crate) const JAVA_TEST_ROOT: &str = jails_contracts::SourceRoot::TestJava.path();
 
 /// The companion test for one entity, or `None` when the facet has none.
 pub(crate) fn lower(

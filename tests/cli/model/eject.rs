@@ -1,20 +1,32 @@
-//! `model eject`: one ejectable implementation transferred into reader source
-//! with a `Missing` before-image, and the refusals that keep the transfer from
-//! overwriting anything.
+//! `model eject`: one ejectable implementation leaves the accepted projection
+//! and stays exactly where it is, which is already reader source.
 //!
+//! **Ejection is a lock edit, not a move.** Managed files live beside the
+//! reader's own under `src/`, so there is no destination, no transfer and no
+//! collision to refuse: what changes is that `.jails/compiler.lock.json` stops
+//! naming the file, and from then on the compiler neither rewrites nor deletes
+//! it.
 use super::*;
 
+/// Whether the accepted projection in the lock names this project path.
+fn lock_names(root: &Path, relative: &str) -> bool {
+    let lock = fs::read_to_string(root.join(".jails/compiler.lock.json")).unwrap();
+    let lock: serde_json::Value = serde_json::from_str(&lock).unwrap();
+    lock["projection"]["files"]
+        .as_object()
+        .is_some_and(|files| files.contains_key(relative))
+}
+
 #[test]
-fn model_eject_transfers_generated_java_once_and_reader_edits_survive() {
+fn model_eject_leaves_the_file_in_place_and_the_lock_stops_naming_it() {
     let root = eject_model_project("model-eject");
     apply_canonical_model(&root, "initial-plan");
-    let generated = root.join(
-        ".jails/generated/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java",
-    );
-    let reader =
-        root.join("src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java");
-    let generated_bytes = fs::read(&generated).unwrap();
+    const FAKE: &str =
+        "src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java";
+    let file = root.join(FAKE);
+    let bytes = fs::read(&file).unwrap();
     let model_before = fs::read(root.join(".jails/model.jdl")).unwrap();
+    assert!(lock_names(&root, FAKE));
 
     let preview = jails_cmd(&root, None)
         .args([
@@ -35,8 +47,8 @@ fn model_eject_transfers_generated_java_once_and_reader_edits_survive() {
         fs::read(root.join(".jails/model.jdl")).unwrap(),
         model_before
     );
-    assert_eq!(fs::read(&generated).unwrap(), generated_bytes);
-    assert!(!reader.exists());
+    assert_eq!(fs::read(&file).unwrap(), bytes);
+    assert!(lock_names(&root, FAKE));
 
     let applied = jails_cmd(&root, None)
         .args(["model", "eject", "art_ent_note_repository_memory"])
@@ -47,25 +59,30 @@ fn model_eject_transfers_generated_java_once_and_reader_edits_survive() {
         "{}",
         String::from_utf8_lossy(&applied.stderr)
     );
-    assert!(!generated.exists());
-    assert_eq!(fs::read(&reader).unwrap(), generated_bytes);
+    // The file did not move and was not rewritten; the lock let go of it.
+    assert_eq!(fs::read(&file).unwrap(), bytes);
+    assert!(
+        !lock_names(&root, FAKE),
+        "the lock still names the ejected file"
+    );
     let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(
         model.contains("eject art_ent_note_repository_memory @id(eject_"),
         "{model}"
     );
-    assert!(
-        root.join(".jails/generated/main/java/com/example/notes/domain/Note.java")
-            .exists()
-    );
-    assert!(
-        root.join(".jails/generated/main/java/com/example/notes/repository/NoteRepository.java")
-            .exists()
-    );
+    // The managed ABI beside it is still managed.
+    for relative in [
+        "src/main/java/com/example/notes/domain/Note.java",
+        "src/main/java/com/example/notes/repository/NoteRepository.java",
+    ] {
+        assert!(root.join(relative).exists(), "{relative} is gone");
+        assert!(lock_names(&root, relative), "{relative} left the lock");
+    }
 
-    let mut edited = fs::read_to_string(&reader).unwrap();
+    // A reader edit to the ejected file is nobody's drift.
+    let mut edited = fs::read_to_string(&file).unwrap();
     edited.push_str("// reader-owned customization\n");
-    fs::write(&reader, &edited).unwrap();
+    fs::write(&file, &edited).unwrap();
     let frozen = jails_cmd(&root, None)
         .args(["model", "check", "--frozen"])
         .output()
@@ -75,7 +92,7 @@ fn model_eject_transfers_generated_java_once_and_reader_edits_survive() {
         "{}",
         String::from_utf8_lossy(&frozen.stderr)
     );
-    assert_eq!(fs::read_to_string(&reader).unwrap(), edited);
+    assert_eq!(fs::read_to_string(&file).unwrap(), edited);
 
     let before_retry = snapshot_tree(&root);
     let retried = jails_cmd(&root, None)
@@ -90,17 +107,14 @@ fn model_eject_transfers_generated_java_once_and_reader_edits_survive() {
 
 /// JDL v1 §16.4: the preferred reference is a readable boundary path. The
 /// path is what the source keeps and what the linker resolves on every read;
-/// the artifact it moves is the one the id would have.
+/// the artifact it releases is the one the id would have.
 #[test]
 fn model_eject_resolves_a_readable_boundary_path_to_the_same_artifact() {
     let root = eject_model_project("model-eject-path");
     apply_canonical_model(&root, "initial-plan");
-    let generated = root.join(
-        ".jails/generated/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java",
-    );
-    let reader =
-        root.join("src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java");
-    let generated_bytes = fs::read(&generated).unwrap();
+    const FAKE: &str =
+        "src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java";
+    let bytes = fs::read(root.join(FAKE)).unwrap();
 
     let applied = jails_cmd(&root, None)
         .args(["model", "eject", "Note.repo.fake"])
@@ -111,12 +125,12 @@ fn model_eject_resolves_a_readable_boundary_path_to_the_same_artifact() {
         "{}",
         String::from_utf8_lossy(&applied.stderr)
     );
-    assert!(!generated.exists());
-    assert_eq!(fs::read(&reader).unwrap(), generated_bytes);
+    assert_eq!(fs::read(root.join(FAKE)).unwrap(), bytes);
+    assert!(!lock_names(&root, FAKE));
     let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(model.contains("eject Note.repo.fake @id(eject_"), "{model}");
 
-    // The id and the path name one boundary, so the second transfer refuses
+    // The id and the path name one boundary, so the second ejection refuses
     // as the first one's.
     let retried = jails_cmd(&root, None)
         .args(["model", "eject", "art_ent_note_repository_memory"])
@@ -137,81 +151,25 @@ fn model_eject_resolves_a_readable_boundary_path_to_the_same_artifact() {
     assert!(stderr.contains("`Note.repo.postgres`"), "{stderr}");
 }
 
+/// A boundary that emits nothing ejectable refuses by name, before any write.
 #[test]
-fn model_eject_refuses_a_reader_destination_collision_without_writing() {
-    let root = eject_model_project("model-eject-collision");
+fn model_eject_refuses_managed_abi_without_writing() {
+    let root = eject_model_project("model-eject-abi");
     apply_canonical_model(&root, "initial-plan");
-    let reader =
-        root.join("src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java");
-    fs::create_dir_all(reader.parent().unwrap()).unwrap();
-    fs::write(&reader, "package com.example.notes.domain;\n// mine\n").unwrap();
     let before = snapshot_tree(&root);
 
     let output = jails_cmd(&root, None)
-        .args(["model", "eject", "art_ent_note_repository_memory"])
+        .args(["model", "eject", "art_ent_note_record"])
         .output()
         .unwrap();
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("already exists"), "{stderr}");
-    assert!(stderr.contains("move or remove"), "{stderr}");
+    assert!(stderr.contains("managed ABI"), "{stderr}");
     assert_eq!(snapshot_tree(&root), before);
 }
 
 #[test]
-fn model_eject_plan_refuses_a_destination_created_after_review() {
-    let root = eject_model_project("model-eject-stale");
-    apply_canonical_model(&root, "initial-plan");
-    let plan = root.join("eject-plan.json");
-    let planned = jails_cmd(&root, None)
-        .args([
-            "model",
-            "eject",
-            "art_ent_note_repository_memory",
-            "--plan-out",
-        ])
-        .arg(&plan)
-        .output()
-        .unwrap();
-    assert!(
-        planned.status.success(),
-        "{}",
-        String::from_utf8_lossy(&planned.stderr)
-    );
-    let model_before = fs::read(root.join(".jails/model.jdl")).unwrap();
-    let generated = root.join(
-        ".jails/generated/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java",
-    );
-    let reader =
-        root.join("src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java");
-    fs::create_dir_all(reader.parent().unwrap()).unwrap();
-    fs::write(
-        &reader,
-        "package com.example.notes.domain;\n// appeared later\n",
-    )
-    .unwrap();
-
-    let applied = jails_cmd(&root, None)
-        .args(["model", "apply", "--bundle"])
-        .arg(&plan)
-        .output()
-        .unwrap();
-    assert!(!applied.status.success());
-    let stderr = String::from_utf8(applied.stderr).unwrap();
-    assert!(stderr.contains("stale exact plan"), "{stderr}");
-    assert_eq!(
-        fs::read(root.join(".jails/model.jdl")).unwrap(),
-        model_before
-    );
-    assert!(generated.exists());
-    assert_eq!(
-        fs::read_to_string(&reader).unwrap(),
-        "package com.example.notes.domain;\n// appeared later\n"
-    );
-}
-
-#[test]
-fn canonical_controller_ejection_transfers_the_whole_http_adapter_boundary() {
+fn canonical_controller_ejection_releases_the_whole_http_adapter_boundary() {
     let root = temp_dir("canonical-controller-ejection");
     write_spring_fixture(&root);
     fs::create_dir_all(root.join(".jails")).unwrap();
@@ -225,12 +183,13 @@ fn canonical_controller_ejection_transfers_the_whole_http_adapter_boundary() {
         "{}",
         String::from_utf8_lossy(&generated.stderr)
     );
-    let managed = [
-        root.join(".jails/generated/main/java/com/example/demo/web/HealthController.java"),
-        root.join(".jails/generated/test/java/com/example/demo/web/HealthControllerTest.java"),
+    const BOUNDARY: [&str; 2] = [
+        "src/main/java/com/example/demo/web/HealthController.java",
+        "src/test/java/com/example/demo/web/HealthControllerTest.java",
     ];
-    for (index, path) in managed.iter().enumerate() {
-        let source = fs::read_to_string(path).unwrap();
+    for (index, relative) in BOUNDARY.iter().enumerate() {
+        let path = root.join(relative);
+        let source = fs::read_to_string(&path).unwrap();
         let split = source.rfind("\n}").unwrap();
         fs::write(
             path,
@@ -252,27 +211,17 @@ fn canonical_controller_ejection_transfers_the_whole_http_adapter_boundary() {
         "{}",
         String::from_utf8_lossy(&ejected.stderr)
     );
-    let reader = [
-        common::generated(
-            &root,
-            "src/main/java/com/example/demo/web/HealthController.java",
-        ),
-        common::generated(
-            &root,
-            "src/test/java/com/example/demo/web/HealthControllerTest.java",
-        ),
-    ];
-    assert!(managed.iter().all(|path| !path.exists()));
-    for (index, path) in reader.iter().enumerate() {
+    for (index, relative) in BOUNDARY.iter().enumerate() {
+        assert!(!lock_names(&root, relative), "{relative} is still managed");
         assert!(
-            fs::read_to_string(path)
+            fs::read_to_string(root.join(relative))
                 .unwrap()
                 .contains(&format!("ejected-controller-edit-{index}"))
         );
     }
-    let exact = reader
+    let exact = BOUNDARY
         .iter()
-        .map(|path| fs::read(path).unwrap())
+        .map(|relative| fs::read(root.join(relative)).unwrap())
         .collect::<Vec<_>>();
 
     let evolved = jails_cmd(&root, None)
@@ -284,8 +233,8 @@ fn canonical_controller_ejection_transfers_the_whole_http_adapter_boundary() {
         "{}",
         String::from_utf8_lossy(&evolved.stderr)
     );
-    for (index, path) in reader.iter().enumerate() {
-        assert_eq!(fs::read(path).unwrap(), exact[index]);
+    for (index, relative) in BOUNDARY.iter().enumerate() {
+        assert_eq!(fs::read(root.join(relative)).unwrap(), exact[index]);
     }
     let jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(jdl.contains(r#"route GET "/healthz""#), "{jdl}");
@@ -294,7 +243,7 @@ fn canonical_controller_ejection_transfers_the_whole_http_adapter_boundary() {
 }
 
 #[test]
-fn factory_ejection_transfers_only_the_testkit_implementation_boundary() {
+fn factory_ejection_releases_only_the_testkit_implementation_boundary() {
     let root = jdl_project("model-jdl-factory-eject", NOTES_JDL);
     for command in [
         ["g", "record", "Note", "title:string!"].as_slice(),
@@ -307,10 +256,10 @@ fn factory_ejection_transfers_only_the_testkit_implementation_boundary() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    let generated =
-        root.join(".jails/generated/test/java/com/example/notes/testkit/NoteFactory.java");
-    let reader = root.join("src/test/java/com/example/notes/testkit/NoteFactory.java");
-    let record = root.join(".jails/generated/main/java/com/example/notes/domain/Note.java");
+    const FACTORY: &str = "src/test/java/com/example/notes/testkit/NoteFactory.java";
+    const RECORD: &str = "src/main/java/com/example/notes/domain/Note.java";
+    let factory = root.join(FACTORY);
+    let record = root.join(RECORD);
     let ejected = jails_cmd(&root, None)
         .args(["model", "eject", "art_ent_note_factory"])
         .output()
@@ -320,11 +269,13 @@ fn factory_ejection_transfers_only_the_testkit_implementation_boundary() {
         "{}",
         String::from_utf8_lossy(&ejected.stderr)
     );
-    assert!(!generated.exists());
+    assert!(factory.exists(), "factory ejection removed the factory");
+    assert!(!lock_names(&root, FACTORY));
     assert!(record.exists(), "factory ejection removed the record ABI");
-    let mut owned = fs::read_to_string(&reader).unwrap();
+    assert!(lock_names(&root, RECORD));
+    let mut owned = fs::read_to_string(&factory).unwrap();
     owned.push_str("// reader owns only this factory\n");
-    fs::write(&reader, &owned).unwrap();
+    fs::write(&factory, &owned).unwrap();
 
     let evolved = jails_cmd(&root, None)
         .args(["g", "field", "Note", "priority:int"])
@@ -341,8 +292,7 @@ fn factory_ejection_transfers_only_the_testkit_implementation_boundary() {
             .contains("int priority"),
         "managed ABI did not evolve"
     );
-    assert_eq!(fs::read_to_string(&reader).unwrap(), owned);
-    assert!(!generated.exists());
+    assert_eq!(fs::read_to_string(&factory).unwrap(), owned);
 
     let before = snapshot_tree(&root);
     let refused = jails_cmd(&root, None)
@@ -358,15 +308,12 @@ fn factory_ejection_transfers_only_the_testkit_implementation_boundary() {
     assert_eq!(snapshot_tree(&root), before, "ejected destroy wrote bytes");
 }
 
-/// `model eject` resolves the boundary against the project it is in.
-///
-/// It re-emits the tree to find which files an ejection owns, and that
-/// emission has to see the captured Boot version: a `BootCondition::Spring`
-/// capability pack emits nothing under `spring_boot: None`, and an ejection
-/// resolved that way refuses "emits no ejectable Java implementation" with
-/// the files plainly on disk.
+/// `model eject` resolves the boundary against the project it is in: a
+/// `BootCondition::Spring` capability pack emits nothing under
+/// `spring_boot: None`, and an ejection resolved that way would refuse
+/// "no ejectable Java implementation" with the files plainly on disk.
 #[test]
-fn canonical_eject_transfers_a_spring_only_capability_pack() {
+fn canonical_eject_releases_a_spring_only_capability_pack() {
     let root = temp_dir("canonical-eject-spring-pack");
     write_spring_fixture(&root);
     fs::create_dir_all(root.join(".jails")).unwrap();
@@ -386,12 +333,11 @@ fn canonical_eject_transfers_a_spring_only_capability_pack() {
         "{}",
         String::from_utf8_lossy(&added.stderr)
     );
-    let managed =
-        root.join(".jails/generated/main/java/com/example/demo/messaging/KafkaConfig.java");
-    assert!(
-        managed.exists(),
-        "the pack emitted no managed configuration"
-    );
+    const CONFIG: &str = "src/main/java/com/example/demo/messaging/KafkaConfig.java";
+    let config = root.join(CONFIG);
+    assert!(config.exists(), "the pack emitted no managed configuration");
+    assert!(lock_names(&root, CONFIG));
+    let bytes = fs::read(&config).unwrap();
 
     let ejected = jails_cmd(&root, None)
         .args(["model", "eject", "cap_kafka"])
@@ -402,16 +348,13 @@ fn canonical_eject_transfers_a_spring_only_capability_pack() {
         "{}",
         String::from_utf8_lossy(&ejected.stderr)
     );
-    assert!(
-        common::generated(
-            &root,
-            "src/main/java/com/example/demo/messaging/KafkaConfig.java"
-        )
-        .exists(),
-        "the implementation was not transferred to reader source"
+    assert_eq!(
+        fs::read(&config).unwrap(),
+        bytes,
+        "the implementation was moved or rewritten"
     );
     assert!(
-        !managed.exists(),
-        "an ejected artifact is still in the managed tree"
+        !lock_names(&root, CONFIG),
+        "an ejected artifact is still in the accepted projection"
     );
 }

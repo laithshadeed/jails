@@ -93,13 +93,8 @@ pub(crate) fn search(root: &Path, type_name: &str) -> Vec<Found> {
 use crate::inspect::roots::SourceSet;
 
 fn roots(root: &Path) -> Vec<PathBuf> {
-    // Including the tree the compiler writes: without it `jails src Order`
-    // would answer "no source for `Order`" about a record jails itself
-    // generated -- and this is the one command that deliberately works outside
-    // a build file, so it is the last place a reader would expect to be told
-    // their own type does not exist. Shared with `routes`/`beans`/`stats`
-    // rather than restated: two copies of a path drift, and neither drift is
-    // visible where anyone looks.
+    // The same roots `routes`/`beans`/`stats` scan, rather than restated: two
+    // copies of a path drift, and neither drift is visible where anyone looks.
     let mut dirs = [SourceSet::Main, SourceSet::Test]
         .into_iter()
         .flat_map(|set| crate::inspect::roots::source_roots(root, set))

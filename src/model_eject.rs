@@ -1,4 +1,5 @@
-//! Explicit ownership transfer from canonical managed output to reader source.
+//! Explicit ownership transfer of one managed boundary to the reader: the
+//! files stay where they are and leave the accepted projection.
 
 use crate::Invocation;
 use crate::model_generate::{PreparedMutation, finish_generation};
@@ -7,13 +8,8 @@ use jails_support::{Failure, Result};
 use jails_support::{hex, sha256};
 
 pub(crate) fn run(reference: String, invocation: Invocation) -> Result<()> {
-    // Observed rather than assumed, and observed exactly the way `capture`
-    // does it -- the emitters branch on the Boot version, so resolving the
-    // ejection boundary against `spring_boot: None` finds none of a Spring
-    // project's files. See `implementation_paths`.
-    let root = crate::model_command::root()?;
     // Relative, because it becomes a `ProjectPath` in the plan; the read is
-    // anchored to `root`. See `model_command::project_root`.
+    // anchored to the project root. See `model_command::project_root`.
     let current = crate::model_command::Current::load(&invocation)?;
     // A readable boundary path (`Note.repo.fake`) resolves through the one
     // registry the linker reads, to the artifact id the compiler emits; an
@@ -35,24 +31,15 @@ pub(crate) fn run(reference: String, invocation: Invocation) -> Result<()> {
         .any(|ejection| ejection.target == semantic_id)
     {
         return Err(Failure::Told(format!(
-            "semantic target `{semantic_id}` is already reader-owned.\n       fix: edit its source under `src/main/java`; Jails will not reclaim it"
+            "semantic target `{semantic_id}` is already reader-owned.\n       fix: edit its source under `src/`; Jails will not reclaim it"
         )));
     }
-    let build_system = jails_project::capture::observe_build_system(&root);
-    let spring_boot = jails_project::capture::observe_spring_boot(&root, build_system);
-    let reader_paths = jails_compiler::implementation_paths(
-        &current.model,
-        &semantic_id,
-        spring_boot.as_deref(),
-        root.join("mvnw").is_file(),
-    )
-    .map_err(|error| Failure::Told(format!("could not resolve ejection boundary: {error}")))?;
-    if reader_paths.is_empty() {
-        return Err(Failure::Told(format!(
-            "artifact `{semantic_id}` emits no ejectable Java implementation.\n       fix: eject an `art_...` adapter implementation id; records and ports remain managed ABI"
-        )));
-    }
-
+    // **Ejection is a lock edit, not a move.** The boundary's files stay
+    // where they are, already beside the reader's sources under `src/`; what
+    // changes is that the accepted projection stops naming them, so the next
+    // render neither rewrites nor deletes them. Whether the boundary emits an
+    // ejectable implementation at all is the compiler's refusal, made on the
+    // same render every other plan is made on.
     let id = ejection_id(&semantic_id)?;
     let mut next_source = current.source.clone();
     if !next_source.ends_with('\n') {
@@ -66,7 +53,7 @@ pub(crate) fn run(reference: String, invocation: Invocation) -> Result<()> {
         next_source,
         evolution: Evolution::none(),
         authored_migration: None,
-        reader_paths,
+        reader_paths: Vec::new(),
     })
 }
 

@@ -218,23 +218,6 @@ const JDBC_CONTAINERS: &[&str] = &[
     "JdbcDatabaseContainer",
 ];
 
-/// Every tree whose Java reaches the test classpath.
-///
-/// **Most generated tests live in the managed tree**, and the build file
-/// declares `.jails/generated/test/java` as a source root, so reading only
-/// `src/test/java` would answer "there is no container config" about a
-/// project that has one -- a `FAIL` telling the reader to run the command
-/// they have just run. Both trees, or the check is about the wrong project.
-fn test_source_roots(root: &Path) -> Vec<std::path::PathBuf> {
-    [
-        root.join("src/test/java"),
-        root.join(".jails/generated/test/java"),
-    ]
-    .into_iter()
-    .filter(|tree| tree.is_dir())
-    .collect()
-}
-
 /// The test-side container wiring: which class declares the container, and
 /// which `@SpringBootTest` classes cannot see it.
 ///
@@ -242,7 +225,11 @@ fn test_source_roots(root: &Path) -> Vec<std::path::PathBuf> {
 /// a project that does not compile, which is the case that matters when
 /// something is already broken.
 pub(crate) fn test_container_wiring(root: &Path) -> (Option<String>, Vec<String>) {
-    let tests = test_source_roots(root);
+    // One tree: managed tests are written beside the reader's own.
+    let tests = [root.join("src/test/java")]
+        .into_iter()
+        .filter(|tree| tree.is_dir())
+        .collect::<Vec<_>>();
     // The config this check is about, and only that one. `add kafka` writes a
     // `@TestConfiguration` with `@ServiceConnection` too, and taking whichever
     // the walk saw last would make `doctor` report every `@SpringBootTest` in

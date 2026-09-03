@@ -202,8 +202,8 @@ so a JVM the product starts is memoised the same way as one the harness
 starts. What it keys:
 
 - the project tree, minus `target/`, `build/`, the VCS and IDE directories,
-  and everything under `.jails/` except `.jails/generated`, because Maven
-  reads none of that and the model spells the scratch directory's name;
+  and everything under `.jails/`, because Maven reads none of that and the
+  model spells the scratch directory's name;
 - the argv, with the project directory and any loopback port blanked --
   `-Dmdep.outputFile=<project>/target/…` and
   `jdbc:postgresql://127.0.0.1:<port>/…` are the same run in another

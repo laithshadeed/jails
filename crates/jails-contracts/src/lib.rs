@@ -11,9 +11,8 @@ mod templates;
 
 pub use draft::{
     BuildDependency, BuildFeature, CompilerDiagnostic, DiagnosticSeverity, DocumentIntent,
-    EffectIntent, FileKind, FileMode, JavaSourceSet, MavenSourceRoot, PlanDraft, PropertyEntry,
-    Provenance, ReaderFacetKind, RenderedFile, RenderedMigration, RenderedReaderFacet,
-    RenderedTree, SemanticPlan,
+    EffectIntent, FileKind, FileMode, PlanDraft, PropertyEntry, Provenance, ReaderFacetKind,
+    RenderedFile, RenderedMigration, RenderedReaderFacet, RenderedTree, SemanticPlan, SourceRoot,
 };
 /// The build language, from the crate that owns every closed vocabulary.
 pub use jails_model::BuildSystem;

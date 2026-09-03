@@ -1919,6 +1919,7 @@ fn sync_applies_what_the_manifest_declares() {
     fs::write(&model, declared).unwrap();
 
     // --pretend first: it answers "what is this project missing?".
+    let before_dry_run = snapshot_tree(&root);
     let preview = jails_cmd(&root, None)
         .args(["sync", "--dry-run"])
         .output()
@@ -1927,8 +1928,9 @@ fn sync_applies_what_the_manifest_declares() {
     let shown = String::from_utf8_lossy(&preview.stdout);
     assert!(shown.contains("plan "), "{shown}");
     assert!(shown.contains("create "), "{shown}");
-    assert!(
-        !root.join(".jails/generated").exists(),
+    assert_eq!(
+        snapshot_tree(&root),
+        before_dry_run,
         "--dry-run wrote files"
     );
 

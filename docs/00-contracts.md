@@ -192,23 +192,27 @@ binary is the root package.
 
 ## 1.6 Managed output, ejection, and what stays irreproducible
 
-Reproducible output lives below `.jails/generated` and is merge-managed. The
-accepted model renders BASE, capture supplies OURS, and the next model renders
-THEIRS. Clean merges are frozen into the plan; conflicts refuse without writes.
-The lock advances to THEIRS so hand edits remain deltas.
+Reproducible output lives beside the reader's own sources under `src/`, in the
+source roots JDL v1 §9.7 places each layer in, and is merge-managed. A file is
+managed because the accepted projection in `.jails/compiler.lock.json` names
+its path, never because of a prefix: capture reads the lock's paths first,
+the accepted model renders BASE, the captured file is OURS, and the next
+model renders THEIRS. Clean merges are frozen into the plan; conflicts refuse
+without writes. The lock advances to THEIRS so hand edits remain deltas. A
+reader file already at a path the next render wants is a collision, refused
+with the file named.
 
 Migrations, model revisions and explicit reader-file patches are
 **irreproducible** operations and stay visible in the plan rather than being
 smuggled into rendering.
 
 `model eject <boundary>` -- a readable path the boundary registry resolves, or
-an artifact id -- transfers one ejectable adapter implementation into
-reader source, records the transfer, and excludes that artifact from later
-managed trees. Records and ports remain managed ABI. Capture includes every
-prospective reader destination, collision refuses, and ejection never infers
-ownership from edited bytes or silently reclaims it. Its before-image is
-`Missing`: transfer is creation of a new reader-owned source, never
-reconciliation with an existing one.
+an artifact id -- is a lock edit, not a move: it records the `eject`
+declaration and takes the boundary's artifacts out of the accepted
+projection, and the files stay where they are, hand edits included. From then
+on the compiler neither rewrites nor deletes them. Records and ports remain
+managed ABI, and ejection never infers ownership from edited bytes or silently
+reclaims it.
 
 ## 1.7 The deletion map
 

@@ -40,8 +40,8 @@ use spring::{
 
 use storage::{DB_PACK, H2_PACK};
 
-const MAIN_RESOURCE_ROOT: &str = ".jails/generated/main/resources";
-const TEST_RESOURCE_ROOT: &str = ".jails/generated/test/resources";
+const MAIN_RESOURCE_ROOT: &str = jails_contracts::SourceRoot::MainResources.path();
+const TEST_RESOURCE_ROOT: &str = jails_contracts::SourceRoot::TestResources.path();
 
 /// `@AutoConfigureMockMvc`, which Boot 4 moved out of the servlet test slice.
 pub(crate) const AUTOCONFIGURE_MOCKMVC: MovedImport = MovedImport {

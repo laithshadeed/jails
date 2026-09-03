@@ -31,8 +31,8 @@ use jails_contracts::{
 use jails_model::{AppModel, DependencyScope, Package, SettingTarget};
 use std::collections::BTreeSet;
 
-pub(crate) const MAIN_ROOT: &str = ".jails/generated/main/java";
-pub(crate) const TEST_ROOT: &str = ".jails/generated/test/java";
+pub(crate) const MAIN_ROOT: &str = jails_contracts::SourceRoot::MainJava.path();
+pub(crate) const TEST_ROOT: &str = jails_contracts::SourceRoot::TestJava.path();
 
 /// A model node a recipe renders from.
 ///

@@ -38,7 +38,6 @@ mod observe;
 use observe::template_overrides;
 pub use observe::{facts, observe_build_system, observe_spring_boot};
 
-const MANAGED_ROOT: &str = ".jails/generated";
 pub const MIGRATION_ROOT: &str = "src/main/resources/db/migration";
 const READER_MAIN_ROOT: &str = "src/main/java";
 const READER_TEST_ROOT: &str = "src/test/java";
@@ -252,20 +251,31 @@ fn capture_model_state(
         directories: BTreeMap::new(),
     };
 
-    let managed = root.join(MANAGED_ROOT);
-    if managed.exists() {
-        capture_tree(root, &managed, &mut files, &mut preconditions)?;
-    }
+    // **The lock is read first, and the paths it names are the managed
+    // set.** Managed output lives beside the reader's own files under `src/`,
+    // and nothing about a path says whose it is: a file is jails' because the
+    // accepted projection names it. So every path the projection names is
+    // observed -- present with its bytes, which are OURS for the merge, or
+    // missing, which is a deletion the materializer answers -- and no
+    // directory is walked for it.
+    //
     // **The accepted model is read before the reader trees are chosen**,
     // because retiring a capability edits the same tree that installing it
     // did. `remove db` produces an intended model with no `db` in it, and a
     // plan built from that alone reads no test tree -- so the
     // `@Import(TestcontainersConfig.class)` it spliced has no before-image,
     // cannot be named in the plan, and stays behind importing a class the same
-    // transition deletes. The lock is already in `files` from the managed walk
-    // above, so this costs a decode, not a second traversal.
+    // transition deletes.
     capture_optional_file(root, COMPILER_LOCK, &mut files, &mut preconditions)?;
     let accepted = accepted_compiler_state(&files)?;
+    let managed = accepted
+        .as_ref()
+        .and_then(|state| state.projection.as_ref())
+        .map(|projection| projection.files.keys().cloned().collect::<BTreeSet<_>>())
+        .unwrap_or_default();
+    for path in &managed {
+        capture_optional_file(root, path.as_str(), &mut files, &mut preconditions)?;
+    }
     let trees = match accepted.as_ref() {
         Some(state) => trees.union(ReaderTrees::of(&state.model)),
         None => trees,
@@ -343,9 +353,56 @@ fn capture_model_state(
     snapshot.project = project;
     snapshot.migration_history = capture_migration_history(root, &mut files, &mut preconditions)?;
     snapshot.preconditions = preconditions;
-    snapshot.external_types = index_reader_types(&files);
+    snapshot.external_types = index_reader_types(&files, &managed);
     snapshot.files = files;
     Ok(snapshot)
+}
+
+/// Observe the paths a rendered tree wants that the capture has not seen.
+///
+/// **The one observation the lock cannot make.** The managed set is the
+/// accepted projection's paths, and the next render can want a path the lock
+/// does not own -- a new entity's record, say. Whether the reader already has
+/// a file there is a fact about the tree, so it is observed here, once, after
+/// the compiler has said which paths it wants: a present file becomes OURS
+/// and the materializer refuses the collision by name, and an absent one
+/// becomes the `Missing` precondition that makes a later appearance stale
+/// rather than overwritten. Paths the capture already answered for are left
+/// as they were, so this widens the snapshot and never changes it.
+pub fn observe_rendered_paths<'a>(
+    root: &Path,
+    snapshot: &mut WorkspaceSnapshot,
+    paths: impl IntoIterator<Item = &'a ProjectPath>,
+) -> Result<(), String> {
+    for path in paths {
+        if snapshot.preconditions.files.contains_key(path) {
+            continue;
+        }
+        capture_optional_file(
+            root,
+            path.as_str(),
+            &mut snapshot.files,
+            &mut snapshot.preconditions,
+        )?;
+    }
+    Ok(())
+}
+
+/// Every path the accepted projection names: the managed set, for a command
+/// that walks the reader's sources without capturing them.
+///
+/// Managed files sit beside the reader's own under `src/`, so a textual
+/// rename or a stranded-reference report walking the tree has to be told
+/// which files are jails' -- and the lock is the only thing that knows. No
+/// lock is no managed file; an unreadable one is an error, as in [`capture`].
+pub fn managed_paths(root: &Path) -> Result<BTreeSet<ProjectPath>, String> {
+    let mut files = BTreeMap::new();
+    let mut preconditions = SnapshotPreconditions::default();
+    capture_optional_file(root, COMPILER_LOCK, &mut files, &mut preconditions)?;
+    Ok(accepted_compiler_state(&files)?
+        .and_then(|state| state.projection)
+        .map(|projection| projection.files.into_keys().collect())
+        .unwrap_or_default())
 }
 
 /// Every Java type the reader's own sources declare, by simple name.
@@ -362,18 +419,20 @@ fn capture_model_state(
 /// so a type named inside one is not mistaken for one that exists.
 fn index_reader_types(
     files: &BTreeMap<ProjectPath, CapturedFile>,
+    managed: &BTreeSet<ProjectPath>,
 ) -> jails_contracts::ExternalTypeIndex {
     let mut index = jails_contracts::ExternalTypeIndex::default();
     for (path, file) in files {
         if !path.as_str().ends_with(".java") {
             continue;
         }
-        // **The reader's sources only.** The managed tree is what the plan is
-        // about to change, so a type that is in it now may not be in it after
-        // -- counting one would let `destroy enum Status` succeed while an
-        // entity still declares a `Status` field, leaving a record that no
-        // longer compiles. What the model declares is asked of the model.
-        if path.as_str().starts_with(".jails/") {
+        // **The reader's sources only.** The managed files are what the plan
+        // is about to change, so a type that is in one now may not be in it
+        // after -- counting one would let `destroy enum Status` succeed while
+        // an entity still declares a `Status` field, leaving a record that no
+        // longer compiles. What the model declares is asked of the model, and
+        // which files are managed is asked of the lock.
+        if managed.contains(path) {
             continue;
         }
         let Ok(source) = std::str::from_utf8(&file.bytes) else {
@@ -763,10 +822,24 @@ mod tests {
     fn v2_lock_refuses_a_projection_that_does_not_match_its_digest() {
         let model = jails_model::parse_jdl(MODEL).unwrap();
         let model_digest = digest(&model.canonical_json().unwrap()).unwrap();
-        let projection = RenderedTree::new(ProjectPath::parse(MANAGED_ROOT).unwrap());
+        let projection = RenderedTree::new();
         let projection_digest = digest(&serde_json::to_vec(&projection).unwrap()).unwrap();
         let mut damaged = projection;
-        damaged.root = ProjectPath::parse(".jails/not-generated").unwrap();
+        damaged.files.insert(
+            ProjectPath::parse("src/main/java/Damaged.java").unwrap(),
+            jails_contracts::RenderedFile {
+                kind: jails_contracts::FileKind::JavaMain,
+                mode: jails_contracts::FileMode::Regular,
+                bytes: Vec::new(),
+                provenance: jails_contracts::Provenance {
+                    artifact_id: "art_damaged".to_string(),
+                    semantic_ids: BTreeSet::new(),
+                    ejection_id: None,
+                    ejectable: false,
+                    compiler_pass: String::new(),
+                },
+            },
+        );
         let bytes = serde_json::to_vec(&json!({
             "schema": COMPILER_LOCK_SCHEMA_V2,
             "compiler": "0.1.0",

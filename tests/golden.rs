@@ -56,13 +56,6 @@ fn snapshot(dir: &Path) -> BTreeMap<String, String> {
 const SNAPSHOTTED_PROJECT_FILES: [&str; 4] =
     ["model.jdl", "ledger.toml", "app.toml", "architecture.toml"];
 
-/// The compiler's managed tree, snapshotted whole.
-///
-/// A third category beside the registry and the executor's bookkeeping: the
-/// canonical counterpart of `src/main/java`, so it is jails' output rather
-/// than its state, and the output is what the goldens pin.
-const MANAGED_TREE: &str = "generated/";
-
 /// The executor's own state, which is never snapshotted.
 ///
 /// Named after content and transaction hashes: an object is
@@ -292,25 +285,18 @@ fn the_goldens_still_hold_the_properties_that_matter() {
     assert!(!bookkeeping.is_empty(), "no scenario recorded a .jails/");
     for (scenario, entries) in &bookkeeping {
         for entry in entries {
-            // **The managed tree is a third category, and the only one that is
-            // bulk.** `.jails/generated/` is not a registry and not the
-            // executor's bookkeeping: it is the compiler's *output*, the
-            // canonical counterpart of `src/main/java`. It is matched as a
-            // prefix rather than listed file by file for the same reason
-            // `src/` is -- the files are the product, and a list of them would
-            // have to be regenerated with them.
-            let managed = entry.starts_with(MANAGED_TREE);
+            // **Nothing under `.jails/` is output.** Managed Java, SQL and
+            // resources live beside the reader's own under `src/`, and the
+            // lock says which are jails'; a generated file appearing here
+            // again is the managed tree growing back.
             assert!(
-                managed || SNAPSHOTTED_PROJECT_FILES.contains(&entry.as_str()),
-                "{scenario}: `.jails/{entry}` is neither project-owned source, \
-                 the compiler's managed tree, nor the executor's bookkeeping. \
-                 A second registry must not grow back; \
+                SNAPSHOTTED_PROJECT_FILES.contains(&entry.as_str()),
+                "{scenario}: `.jails/{entry}` is neither project-owned source \
+                 nor the executor's bookkeeping. A second registry must not \
+                 grow back, and no output belongs under `.jails/`; \
                  a new executor path belongs in EXECUTOR_STATE with the reason \
                  it is not snapshotted."
             );
-            if managed {
-                continue;
-            }
         }
     }
 

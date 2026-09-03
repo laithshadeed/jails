@@ -223,19 +223,13 @@ fields = [\"id:uuid\", \"label:string!\"]
     // ...and its rows are already applied, against the project that was just
     // created rather than whatever encloses the process CWD.
     assert!(
-        root.join(".jails/generated/main/java/com/example/demo/domain/Entry.java")
+        root.join("src/main/java/com/example/demo/domain/Entry.java")
             .is_file(),
-        "the manifest's row should have been applied into the managed tree"
+        "the manifest's row should have been applied into the project"
     );
     assert!(
-        root.join(".jails/generated/test/java/com/example/demo/domain/EntryTest.java")
+        root.join("src/test/java/com/example/demo/domain/EntryTest.java")
             .is_file()
-    );
-    assert!(
-        !root
-            .join("src/main/java/com/example/demo/domain/Entry.java")
-            .exists(),
-        "and not into the reader's own sources"
     );
 }
 

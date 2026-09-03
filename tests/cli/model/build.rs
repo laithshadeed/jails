@@ -144,10 +144,7 @@ fn dependency_reconciliation_crosses_the_kotlin_gradle_binary_boundary() {
     // one dependency and no Java, and a source root for a directory that may
     // stay empty is an edit to the reader's build with nothing behind it --
     // and one that then outlives every reason for it.
-    assert!(
-        !build.contains("java.srcDir(\".jails/generated/main/java\")"),
-        "{build}"
-    );
+    assert!(!build.contains("java.srcDir(\"src/main/java\")"), "{build}");
 
     let removed = jails_cmd(&root, None)
         .args(["remove", "dependency", "org.jsoup:jsoup"])
@@ -172,8 +169,11 @@ fn dependency_reconciliation_crosses_the_kotlin_gradle_binary_boundary() {
     );
 }
 
+/// Managed output lands beside the reader's sources, so the build file needs
+/// no source-root declaration and none is written: one root per source set,
+/// which is what an IDE opens.
 #[test]
-fn maven_source_root_is_an_exact_reader_patch_and_converges() {
+fn maven_output_lands_in_src_without_a_source_root_block() {
     let root = model_project("model-maven-source-root", MODEL);
     fs::write(
         root.join("pom.xml"),
@@ -191,14 +191,6 @@ fn maven_source_root_is_an_exact_reader_patch_and_converges() {
         "{}",
         String::from_utf8_lossy(&planned.stderr)
     );
-    let bundle: jails_contracts::PlanBundle =
-        serde_json::from_slice(&fs::read(&plan).unwrap()).unwrap();
-    assert!(bundle.plan.operations.iter().any(|operation| matches!(
-        operation,
-        jails_contracts::PlannedOperation::PatchReaderFile { path, .. }
-            if path.as_str() == "pom.xml"
-    )));
-
     let applied = jails_cmd(&root, None)
         .args(["model", "apply", "--bundle"])
         .arg(&plan)
@@ -210,16 +202,13 @@ fn maven_source_root_is_an_exact_reader_patch_and_converges() {
         String::from_utf8_lossy(&applied.stderr)
     );
     let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
-    assert!(pom.contains("jails:generated-source-root"), "{pom}");
-    assert!(pom.contains("build-helper-maven-plugin"), "{pom}");
+    assert!(!pom.contains("jails:generated-source-root"), "{pom}");
+    assert!(!pom.contains("build-helper-maven-plugin"), "{pom}");
     assert!(
-        pom.contains("<source>.jails/generated/main/java</source>"),
-        "{pom}"
-    );
-    assert!(
-        root.join(".jails/generated/main/java/com/example/notes/domain/Note.java")
+        root.join("src/main/java/com/example/notes/domain/Note.java")
             .is_file()
     );
+    assert!(!root.join(".jails/generated").exists());
 
     let converged = root.join("converged.json");
     let replanned = jails_cmd(&root, None)
@@ -251,7 +240,7 @@ fn maven_source_root_is_an_exact_reader_patch_and_converges() {
 }
 
 #[test]
-fn gradle_source_root_is_an_exact_reader_patch_and_converges() {
+fn gradle_output_lands_in_src_without_a_source_set_block() {
     let root = gradle_model_project(
         "model-gradle-source-root",
         MODEL,
@@ -288,10 +277,11 @@ fn gradle_source_root_is_an_exact_reader_patch_and_converges() {
         String::from_utf8_lossy(&applied.stderr)
     );
     let build = fs::read_to_string(root.join("build.gradle")).unwrap();
-    assert!(build.contains("jails:generated-source-root"), "{build}");
+    assert!(!build.contains("jails:generated-source-root"), "{build}");
+    assert!(!build.contains("srcDir"), "{build}");
     assert!(
-        build.contains("java.srcDir('.jails/generated/main/java')"),
-        "{build}"
+        root.join("src/main/java/com/example/notes/domain/Note.java")
+            .is_file()
     );
 
     let converged = root.join("converged.json");
@@ -340,7 +330,7 @@ fn reader_build_file_precondition_blocks_all_writes_from_a_stale_plan() {
     let stderr = String::from_utf8(applied.stderr).unwrap();
     assert!(stderr.contains("stale exact plan"), "{stderr}");
     assert!(stderr.contains("pom.xml"), "{stderr}");
-    assert!(!root.join(".jails/generated").exists());
+    assert!(!root.join(".jails/compiler.lock.json").exists());
     assert_eq!(
         fs::read_to_string(root.join("pom.xml")).unwrap(),
         "<project>\n    <!-- reader edit -->\n</project>\n"
@@ -514,9 +504,9 @@ app Demo {
     }
 
     let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
-    let roots = pom.find("jails:generated-source-roots").unwrap();
+    let dependencies = pom.find("jails:dependencies").unwrap();
     let tests = pom.find("jails:integration-tests").unwrap();
-    assert!(roots < tests, "{pom}");
+    assert!(dependencies < tests, "{pom}");
 
     // Frozen on the *first* ask, not after a repairing sync: a plan that has
     // to be applied before the tree matches the model is a plan that never

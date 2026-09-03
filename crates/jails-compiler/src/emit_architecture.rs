@@ -21,8 +21,8 @@ use jails_contracts::{
 use jails_model::{AppModel, DependencyScope, Facet, Package};
 use std::collections::BTreeSet;
 
-const TEST_ROOT: &str = ".jails/generated/test/java";
-const TEST_RESOURCE_ROOT: &str = ".jails/generated/test/resources";
+const TEST_ROOT: &str = jails_contracts::SourceRoot::TestJava.path();
+const TEST_RESOURCE_ROOT: &str = jails_contracts::SourceRoot::TestResources.path();
 const ARTIFACT: &str = "art_project_architecture";
 
 /// **`allowStoreCreation=false` is the load-bearing line.** It keeps recording

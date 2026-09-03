@@ -159,8 +159,8 @@ pub(crate) enum ResourceCommand {
     },
     /// Restore sealed history and reconcile owned projections
     ///
-    /// On a canonical project this takes no arguments: managed output under
-    /// `.jails/generated` is rendered from the model, so repair is ordinary
+    /// On a canonical project this takes no arguments: managed output is
+    /// rendered from the model, so repair is ordinary
     /// compilation with the deleted-managed-file guard waived, and there is
     /// nothing to select or to choose a strategy between.
     Repair {

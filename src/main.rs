@@ -302,7 +302,7 @@ fn main() -> std::process::ExitCode {
             ResourceCommand::Repair { selector } => {
                 if selector.is_some() {
                     Err(jails_support::Failure::Told(
-                        "canonical `resource repair` repairs the whole managed tree and takes no selector: it renders `.jails/generated` from the model.\n       fix: run `jails resource repair` with no selector".to_string(),
+                        "canonical `resource repair` repairs every managed file and takes no selector: it renders them from the model.\n       fix: run `jails resource repair` with no selector".to_string(),
                     ))
                 } else {
                     model_command::ensure_owned(invocation.clone())

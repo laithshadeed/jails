@@ -762,8 +762,8 @@ fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
         .is_file()
     );
     // `.jails/` holds the reader's manifest, the one editable model, the lock
-    // sealing the projection it was compiled from, the generated tree, and
-    // the executor's own lock -- and nothing else. Closed rather than counted,
+    // sealing the projection it was compiled from, and the executor's own
+    // lock -- and nothing else: no output lives here. Closed rather than counted,
     // so any other bookkeeping appearing here fails.
     let bookkeeping = fs::read_dir(root.join(".jails"))
         .unwrap()
@@ -771,15 +771,9 @@ fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(
         bookkeeping,
-        [
-            "app.toml",
-            "apply.lock",
-            "compiler.lock.json",
-            "generated",
-            "model.jdl",
-        ]
-        .map(str::to_string)
-        .into(),
+        ["app.toml", "apply.lock", "compiler.lock.json", "model.jdl",]
+            .map(str::to_string)
+            .into(),
         "{bookkeeping:?}"
     );
     assert!(root.join("Dockerfile").is_file());
@@ -1207,13 +1201,11 @@ fn ledger_cli_manifest_builds_without_spring() {
     let root = verified_plain_toolbox(&path);
 
     // The manifest names the dispatcher its command belongs to, so the
-    // registration is part of what this gate proves rather than a note. Under
-    // `.jails/generated`: the dispatcher is compiler output, and this
-    // assertion is about what the compiler put in it.
-    let dispatcher = fs::read_to_string(
-        root.join(".jails/generated/main/java/com/example/demo/cli/LedgerCli.java"),
-    )
-    .unwrap();
+    // registration is part of what this gate proves rather than a note. The
+    // dispatcher is compiler output, and this assertion is about what the
+    // compiler put in it.
+    let dispatcher =
+        fs::read_to_string(root.join("src/main/java/com/example/demo/cli/LedgerCli.java")).unwrap();
     assert!(
         dispatcher.contains("ReconcileCommand::run"),
         "the manifest named its dispatcher, so the command must be registered in it: {dispatcher}"

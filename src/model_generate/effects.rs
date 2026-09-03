@@ -44,16 +44,11 @@ fn drop_compiled_shadows(root: &std::path::Path, bundle: &jails_contracts::PlanB
         let Some(name) = text.strip_suffix(".java") else {
             continue;
         };
-        // The package path, however the file was addressed: jails' own managed
-        // tree, or a reader source it adopted.
-        let Some(relative) = [
-            ".jails/generated/main/java/",
-            ".jails/generated/test/java/",
-            "src/main/java/",
-            "src/test/java/",
-        ]
-        .iter()
-        .find_map(|prefix| name.strip_prefix(prefix)) else {
+        // The package path, whichever source set the file was in.
+        let Some(relative) = ["src/main/java/", "src/test/java/"]
+            .iter()
+            .find_map(|prefix| name.strip_prefix(prefix))
+        else {
             continue;
         };
         let set = if text.contains("/test/") {

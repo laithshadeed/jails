@@ -18,7 +18,7 @@ use jails_contracts::{FileKind, FileMode, Provenance, RenderedFile, RenderedTree
 use jails_model::{AppModel, Package, Relation, StableId as _, TypeRef};
 use std::collections::BTreeSet;
 
-const JAVA_TEST_ROOT: &str = ".jails/generated/test/java";
+const JAVA_TEST_ROOT: &str = jails_contracts::SourceRoot::TestJava.path();
 
 pub(crate) fn emit(
     model: &AppModel,

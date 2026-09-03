@@ -46,7 +46,7 @@ entity Task {
     write_spring_fixture(&root);
     apply_canonical_model(&root, "scoped-context");
 
-    let generated = root.join(".jails/generated/main/java/com/example/work");
+    let generated = root.join("src/main/java/com/example/work");
     let context = generated.join("application/ExecutionContext.java");
     let query = generated.join("adapters/jdbc/JdbcAllQuery.java");
     let transition = generated.join("adapters/jdbc/JdbcRenameTransition.java");
@@ -261,7 +261,7 @@ entity Job {
     write_spring_fixture(&root);
     apply_canonical_model(&root, "command-default-ownership");
 
-    let generated = root.join(".jails/generated/main/java/com/example/jobs");
+    let generated = root.join("src/main/java/com/example/jobs");
     let command =
         fs::read_to_string(generated.join("application/commands/CreateJobCommand.java")).unwrap();
     assert!(command.contains("public record Input("), "{command}");
@@ -379,7 +379,7 @@ fn every_operation_kind_lowers_to_a_typed_managed_abi() {
         String::from_utf8_lossy(&applied.stderr)
     );
 
-    let generated = root.join(".jails/generated/main/java/com/example/notes");
+    let generated = root.join("src/main/java/com/example/notes");
     let query =
         fs::read_to_string(generated.join("application/queries/OpenNotesQuery.java")).unwrap();
     assert!(query.contains("String ROUTE = \"GET /notes\""), "{query}");
@@ -478,7 +478,7 @@ fn familiar_operation_commands_edit_nested_jdl_and_compile_typed_abis() {
     ] {
         assert!(jdl.contains(declaration), "missing `{declaration}`:\n{jdl}");
     }
-    let generated = root.join(".jails/generated/main/java/com/example/notes");
+    let generated = root.join("src/main/java/com/example/notes");
     for relative in [
         "domain/events/NoteCreatedEvent.java",
         "application/commands/CreateNoteCommand.java",
@@ -558,7 +558,7 @@ fn canonical_api_adapters_merge_then_eject_at_the_operation_boundary() {
         "{}",
         String::from_utf8_lossy(&added.stderr)
     );
-    let generated = root.join(".jails/generated/main/java/com/example/notes");
+    let generated = root.join("src/main/java/com/example/notes");
     let command = generated.join("adapters/http/CreateNoteController.java");
     let query =
         fs::read_to_string(generated.join("adapters/http/OpenNotesController.java")).unwrap();
@@ -619,7 +619,6 @@ fn canonical_api_adapters_merge_then_eject_at_the_operation_boundary() {
     );
     let reader =
         root.join("src/main/java/com/example/notes/adapters/http/CreateNoteController.java");
-    assert!(!command.exists());
     assert!(fs::read_to_string(&reader).unwrap().contains("handWritten"));
     assert!(
         generated
@@ -638,7 +637,6 @@ fn canonical_api_adapters_merge_then_eject_at_the_operation_boundary() {
         String::from_utf8_lossy(&evolved_again.stderr)
     );
     assert_eq!(fs::read(&reader).unwrap(), reader_bytes);
-    assert!(!command.exists());
 
     let frozen = jails_cmd(&root, None)
         .args(["model", "check", "--frozen"])
@@ -704,9 +702,9 @@ entity Task {
         String::from_utf8_lossy(&synced.stderr)
     );
 
-    let adapter = fs::read_to_string(root.join(
-        ".jails/generated/main/java/com/example/roles/adapters/jdbc/JdbcCloseTransition.java",
-    ))
+    let adapter = fs::read_to_string(
+        root.join("src/main/java/com/example/roles/adapters/jdbc/JdbcCloseTransition.java"),
+    )
     .unwrap();
     assert!(
         adapter.contains(r#""id = :id""#),
@@ -773,11 +771,10 @@ entity Task {
         String::from_utf8_lossy(&synced.stderr)
     );
 
-    let adapter =
-        fs::read_to_string(root.join(
-            ".jails/generated/main/java/com/example/cmd/adapters/jdbc/JdbcCreateCommand.java",
-        ))
-        .unwrap();
+    let adapter = fs::read_to_string(
+        root.join("src/main/java/com/example/cmd/adapters/jdbc/JdbcCreateCommand.java"),
+    )
+    .unwrap();
     assert!(
         adapter.contains("new TaskCreatedEvent(result.id(), result.status())")
             && adapter.contains("new TaskAuditedEvent(result.id(), result.status())"),
@@ -829,7 +826,7 @@ entity Task {
     );
 
     let adapter = fs::read_to_string(
-        root.join(".jails/generated/main/java/com/example/ord/adapters/jdbc/JdbcRecentQuery.java"),
+        root.join("src/main/java/com/example/ord/adapters/jdbc/JdbcRecentQuery.java"),
     )
     .unwrap();
     assert!(
@@ -1150,9 +1147,9 @@ fn canonical_usecase_yields_writes_an_outbox_delivery_policy() {
     assert!(model.contains("emit task_created"), "{model}");
     assert!(model.contains("deliver outbox"), "{model}");
     // And the policy is honoured rather than recorded: the adapter stages.
-    let command = fs::read_to_string(root.join(
-        ".jails/generated/main/java/com/example/demo/adapters/jdbc/JdbcCreateTaskCommand.java",
-    ))
+    let command = fs::read_to_string(
+        root.join("src/main/java/com/example/demo/adapters/jdbc/JdbcCreateTaskCommand.java"),
+    )
     .unwrap();
     assert!(command.contains("outbox.stage("), "{command}");
     assert!(command.contains("@Transactional"), "{command}");
@@ -1188,7 +1185,7 @@ fn canonical_outbox_delivery_reaches_disk_and_its_table_is_written_once() {
         String::from_utf8_lossy(&synced.stderr)
     );
 
-    let generated = root.join(".jails/generated/main/java/com/example/demo");
+    let generated = root.join("src/main/java/com/example/demo");
     let read = |relative: &str| {
         fs::read_to_string(generated.join(relative))
             .unwrap_or_else(|error| panic!("{relative}: {error}"))

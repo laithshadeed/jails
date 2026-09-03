@@ -29,12 +29,12 @@ fn canonical_source_unit_destroy_removes_only_the_selected_artifacts() {
     );
     assert!(
         !root
-            .join(".jails/generated/main/java/com/example/demo/service/BillingService.java")
+            .join("src/main/java/com/example/demo/service/BillingService.java")
             .exists()
     );
     assert!(
         !root
-            .join(".jails/generated/test/java/com/example/demo/service/BillingServiceTest.java")
+            .join("src/test/java/com/example/demo/service/BillingServiceTest.java")
             .exists()
     );
 
@@ -63,7 +63,7 @@ fn canonical_source_unit_destroy_removes_only_the_selected_artifacts() {
     );
     assert!(
         !root
-            .join(".jails/generated/test/java/com/example/demo/CheckoutIT.java")
+            .join("src/test/java/com/example/demo/CheckoutIT.java")
             .exists()
     );
     assert!(
@@ -198,7 +198,7 @@ fn canonical_destroy_is_model_subtraction_and_whole_tree_recompilation() {
     assert!(!model.contains("entity Note"), "{model}");
     assert!(
         !root
-            .join(".jails/generated/main/java/com/example/notes/domain/Note.java")
+            .join("src/main/java/com/example/notes/domain/Note.java")
             .exists()
     );
     let frozen = jails_cmd(&root, None)
@@ -244,7 +244,7 @@ fn canonical_destroy_refuses_while_operations_reference_the_entity() {
     );
     assert!(
         !root
-            .join(".jails/generated/main/java/com/example/notes/application/queries/OpenNotesQuery.java")
+            .join("src/main/java/com/example/notes/application/queries/OpenNotesQuery.java")
             .exists()
     );
     let removed_entity = jails_cmd(&root, None)

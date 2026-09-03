@@ -157,7 +157,7 @@ fn a_failed_post_commit_effect_reports_against_a_project_that_exists() {
     // into it through the same frontends `jails g` uses.
     assert!(
         project
-            .join(".jails/generated/main/java/com/example/effectapp/domain/Deal.java")
+            .join("src/main/java/com/example/effectapp/domain/Deal.java")
             .is_file(),
         "the manifest's own output is missing:\n{rendered}"
     );

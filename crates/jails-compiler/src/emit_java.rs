@@ -30,7 +30,7 @@ pub(crate) use input::{
     parameter_member, record_shape_bound, wire_name,
 };
 
-pub(crate) const JAVA_ROOT: &str = ".jails/generated/main/java";
+pub(crate) const JAVA_ROOT: &str = jails_contracts::SourceRoot::MainJava.path();
 
 pub(crate) fn emit(
     model: &AppModel,

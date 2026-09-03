@@ -18,6 +18,7 @@
 //! after review makes the plan stale rather than being silently overwritten.
 
 use jails_contracts::{ProjectPath, WorkspaceSnapshot};
+use std::collections::BTreeSet;
 
 const TEST_SOURCE_ROOT: &str = "src/test/java/";
 const READER_MAIN_ROOT: &str = "src/main/java/";
@@ -28,9 +29,16 @@ const READER_MAIN_ROOT: &str = "src/main/java/";
 /// still carrying an import the model has retired. Either way the set is empty
 /// once the project already agrees, so a converged plan writes nothing.
 ///
+/// **The reader's tests only.** Managed tests sit in the same tree, and what
+/// they import is the compiler's decision made in the render; a splice into
+/// one would be a reader delta on a file the reader never touched, reported
+/// as drift forever. `managed` is every path the accepted or the next
+/// projection names.
+///
 /// Ordered by path, so a plan built twice from one snapshot is one plan.
 pub fn spring_boot_test_targets(
     snapshot: &WorkspaceSnapshot,
+    managed: &BTreeSet<ProjectPath>,
     class: &str,
     wanted: bool,
 ) -> Vec<ProjectPath> {
@@ -38,7 +46,9 @@ pub fn spring_boot_test_targets(
         .files
         .iter()
         .filter(|(path, _)| {
-            path.as_str().starts_with(TEST_SOURCE_ROOT) && path.as_str().ends_with(".java")
+            path.as_str().starts_with(TEST_SOURCE_ROOT)
+                && path.as_str().ends_with(".java")
+                && !managed.contains(*path)
         })
         .filter_map(|(path, file)| {
             let text = std::str::from_utf8(&file.bytes).ok()?;
@@ -91,12 +101,20 @@ pub fn remove_spring_test_import(text: &str, class: &str, package: &str) -> Stri
 /// `None` for "several" is deliberate. A project with two dispatchers has two
 /// answers, and picking one silently is how a jar and `jails run` start
 /// different classes.
-pub fn command_dispatcher(snapshot: &WorkspaceSnapshot) -> Option<ProjectPath> {
+///
+/// The reader's sources only, for [`spring_boot_test_targets`]'s reason: a
+/// dispatcher the compiler wrote is the compiler's to fill in.
+pub fn command_dispatcher(
+    snapshot: &WorkspaceSnapshot,
+    managed: &BTreeSet<ProjectPath>,
+) -> Option<ProjectPath> {
     let mut found = snapshot
         .files
         .iter()
         .filter(|(path, _)| {
-            path.as_str().starts_with(READER_MAIN_ROOT) && path.as_str().ends_with(".java")
+            path.as_str().starts_with(READER_MAIN_ROOT)
+                && path.as_str().ends_with(".java")
+                && !managed.contains(*path)
         })
         .filter(|(_, file)| {
             std::str::from_utf8(&file.bytes).is_ok_and(jails_codemod::dispatch::is_dispatcher)

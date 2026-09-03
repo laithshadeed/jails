@@ -6,8 +6,8 @@ use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile,
 use jails_model::{AppModel, SourceUnit, StableId, UnitKind};
 use std::collections::BTreeSet;
 
-const JAVA_MAIN_ROOT: &str = ".jails/generated/main/java";
-const JAVA_TEST_ROOT: &str = ".jails/generated/test/java";
+const JAVA_MAIN_ROOT: &str = jails_contracts::SourceRoot::MainJava.path();
+const JAVA_TEST_ROOT: &str = jails_contracts::SourceRoot::TestJava.path();
 
 pub(crate) fn emit(
     model: &AppModel,

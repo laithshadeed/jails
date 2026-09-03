@@ -39,7 +39,7 @@ fn canonical_database_query_keeps_the_iterative_loop_and_ejects_only_its_adapter
         );
     }
 
-    let managed = root.join(".jails/generated/main/java/com/example/notes");
+    let managed = root.join("src/main/java/com/example/notes");
     let adapter = managed.join("adapters/jdbc/JdbcOpenNotesQuery.java");
     let abi = managed.join("application/queries/OpenNotesQuery.java");
     let original = fs::read_to_string(&adapter).unwrap();
@@ -147,7 +147,6 @@ fn canonical_database_query_keeps_the_iterative_loop_and_ejects_only_its_adapter
         String::from_utf8_lossy(&ejected.stderr)
     );
     let reader = root.join("src/main/java/com/example/notes/adapters/jdbc/JdbcOpenNotesQuery.java");
-    assert!(!adapter.exists(), "ejected query adapter stayed managed");
     assert_eq!(fs::read(&reader).unwrap(), before_ejection);
     assert!(abi.is_file(), "ejecting an adapter removed its managed ABI");
 
@@ -221,7 +220,7 @@ fn canonical_database_commands_and_transitions_are_independent_iterative_boundar
         );
     }
 
-    let managed = root.join(".jails/generated/main/java/com/example/notes");
+    let managed = root.join("src/main/java/com/example/notes");
     let command = managed.join("adapters/jdbc/JdbcCreateNoteCommand.java");
     let transition = managed.join("adapters/jdbc/JdbcRenameNoteTransition.java");
     let command_abi = managed.join("application/commands/CreateNoteCommand.java");
@@ -355,7 +354,6 @@ fn canonical_database_commands_and_transitions_are_independent_iterative_boundar
         &root,
         "src/main/java/com/example/notes/adapters/jdbc/JdbcCreateNoteCommand.java",
     );
-    assert!(!command.exists());
     assert!(
         transition.exists(),
         "command ejection moved the transition too"
@@ -396,7 +394,6 @@ fn canonical_database_commands_and_transitions_are_independent_iterative_boundar
         &root,
         "src/main/java/com/example/notes/adapters/jdbc/JdbcRenameNoteTransition.java",
     );
-    assert!(!transition.exists());
     assert_eq!(
         fs::read(&reader_transition).unwrap(),
         transition_before_ejection
@@ -561,8 +558,7 @@ fn canonical_migration_plan_refuses_a_concurrent_history_append_without_writes()
     )));
     let model_before = fs::read(root.join(".jails/model.jdl")).unwrap();
     let generated_before =
-        fs::read(root.join(".jails/generated/main/java/com/example/notes/domain/Note.java"))
-            .unwrap();
+        fs::read(root.join("src/main/java/com/example/notes/domain/Note.java")).unwrap();
     fs::write(
         root.join("src/main/resources/db/migration/V002__reader_change.sql"),
         "select 1;\n",
@@ -582,8 +578,7 @@ fn canonical_migration_plan_refuses_a_concurrent_history_append_without_writes()
         model_before
     );
     assert_eq!(
-        fs::read(root.join(".jails/generated/main/java/com/example/notes/domain/Note.java"))
-            .unwrap(),
+        fs::read(root.join("src/main/java/com/example/notes/domain/Note.java")).unwrap(),
         generated_before
     );
     assert!(
@@ -630,7 +625,7 @@ fn canonical_reader_sql_is_exact_plan_input_and_stale_changes_refuse_all_writes(
         "reader SQL policy was not represented in canonical input"
     );
     let model_before = fs::read(root.join(".jails/model.jdl")).unwrap();
-    let record = root.join(".jails/generated/main/java/com/example/notes/domain/Note.java");
+    let record = root.join("src/main/java/com/example/notes/domain/Note.java");
     let record_before = fs::read(&record).unwrap();
     fs::write(
         &backfill,
@@ -755,13 +750,13 @@ app Demo {
         );
     }
 
-    let jdbc = root.join(".jails/generated/main/java/com/example/demo/adapters/jdbc");
+    let jdbc = root.join("src/main/java/com/example/demo/adapters/jdbc");
     // An enum reaches a `text` column as its constant name. Bound raw, pgjdbc
     // refuses it at run time.
     let command = fs::read_to_string(jdbc.join("JdbcPublishNoteCommand.java")).unwrap();
     assert!(command.contains("input.shelf().name()"), "{command}");
 
-    let tests = root.join(".jails/generated/test/java/com/example/demo/adapters/jdbc");
+    let tests = root.join("src/test/java/com/example/demo/adapters/jdbc");
     for name in [
         "JdbcPublishNoteCommandIT.java",
         "JdbcArchiveNoteTransitionIT.java",

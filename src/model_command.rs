@@ -167,10 +167,9 @@ pub(crate) fn owns(root: &Path) -> bool {
 ///
 /// It adopts no line of the reader's Java: what it writes is the app block,
 /// every field of it read off the project rather than asked for. What changes
-/// is that the *next* generator renders into `.jails/generated` through the
-/// compiler, and that is said out loud rather than done quietly -- a reader
-/// whose files stop appearing under `src/main/java` with no explanation has
-/// been surprised by their tool.
+/// is that the *next* generator renders through the compiler, and that is
+/// said out loud rather than done quietly -- a reader whose files start being
+/// merge-managed with no explanation has been surprised by their tool.
 ///
 /// **A project holding `.jails/ledger.toml` is refused by name**: nothing in
 /// this binary can read it, and auto-initialising over it would strand the
@@ -504,7 +503,7 @@ pub(crate) fn deleted_paths(
 /// patched or removed, a migration is appended and can never be rewritten.
 ///
 /// The managed tree expands to its files. It is one operation carrying a
-/// whole after-image, so reporting it as `publish .jails/generated` hides
+/// whole after-image, so reporting it as `publish src` hides
 /// exactly the thing that changed, and the tree manifest is already in the
 /// bundle -- no filesystem read, and nothing here can disagree with what
 /// apply will write.
@@ -667,7 +666,7 @@ fn compile(
     notice: Notice,
 ) -> Result<jails_contracts::PlanBundle> {
     let reader_paths = jails_compiler::external_project_paths(&model);
-    let snapshot = jails_project::capture::capture(
+    let mut snapshot = jails_project::capture::capture(
         root,
         manifest,
         source,
@@ -683,6 +682,15 @@ fn compile(
         &jails_model::Evolution::none(),
     )
     .map_err(|error| Failure::Told(format!("could not compile application model: {error}")))?;
+    // After the compile and before materialization, in every pipeline: which
+    // paths the render wants is known only now, and whether the reader has a
+    // file at one of them is the one observation the capture could not make.
+    jails_project::capture::observe_rendered_paths(
+        root,
+        &mut snapshot,
+        draft.generated.files.keys(),
+    )
+    .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
     if notice == Notice::Print {
         for diagnostic in &draft.diagnostics {
             eprintln!("jails: {}", diagnostic.message);
@@ -708,7 +716,7 @@ fn compile(
 /// `jails resource repair` on a canonical project.
 ///
 /// **Ordinary compilation with one guard waived**, which is the whole of it:
-/// managed output below `.jails/generated` is reproducible from the model, so
+/// managed output is reproducible from the model, so
 /// a file the reader deleted has an exact answer and repair is writing it.
 ///
 /// `sync` refuses on a deleted managed file, so this is the one command that
@@ -769,7 +777,7 @@ fn frozen_failure(
         "plan_digest": bundle.plan.digest,
         "diagnostics": [{
             "code": "model-generated-drift",
-            "path": ".jails/generated",
+            "path": jails_contracts::SourceRoot::PARENT,
             "message": message,
             "fix": fix,
         }],

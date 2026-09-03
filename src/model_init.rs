@@ -6,8 +6,9 @@
 //!
 //! What it writes is the app block and nothing else. The reader's existing
 //! Java stays exactly where it is and stays theirs -- this does not adopt a
-//! line of it. What changes is that the *next* `jails g` renders into
-//! `.jails/generated` through the compiler.
+//! line of it. What changes is that the *next* `jails g` renders through the
+//! compiler, beside their sources under `src/`, and the lock says which
+//! files are jails'.
 //!
 //! Every field is read off the project rather than asked for, because each is
 //! a fact the project already states and a prompt for a fact is a prompt for a
@@ -93,7 +94,8 @@ fn run_as(invocation: Invocation) -> Result<()> {
         println!("  create  {}", crate::model_command::JDL_PATH);
         println!(
             "This project is canonical now: `jails g` renders through the compiler into \
-             `.jails/generated`, and your own sources under `src/` stay yours.",
+             `src/`, and `.jails/compiler.lock.json` says which files are jails'; your \
+             own sources stay yours.",
         );
     }
     Ok(())

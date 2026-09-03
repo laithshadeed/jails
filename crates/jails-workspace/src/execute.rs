@@ -37,7 +37,7 @@ use jails_support::{hex, sha256};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct Execution {
@@ -75,15 +75,23 @@ pub fn execute(root: &Path, bundle: &PlanBundle) -> Result<Execution, String> {
         match operation {
             PlannedOperation::PublishMergedTree {
                 root: managed_root,
+                before,
                 after,
-                ..
             } => {
                 let tree = bundle
                     .trees
                     .get(after)
                     .ok_or_else(|| format!("plan references missing tree `{}`", after.as_str()))?;
+                let previous = before
+                    .as_ref()
+                    .map(|before| {
+                        bundle.trees.get(before).ok_or_else(|| {
+                            format!("plan references missing tree `{}`", before.as_str())
+                        })
+                    })
+                    .transpose()?;
                 crate::fault::trip(crate::fault::point::BEFORE_TREE)?;
-                let counts = publish_merged_tree(root, managed_root, tree, bundle)?;
+                let counts = publish_merged_tree(root, managed_root, previous, tree, bundle)?;
                 crate::fault::trip(crate::fault::point::AFTER_TREE)?;
                 written += counts.0;
                 deleted += counts.1;
@@ -156,29 +164,14 @@ fn preflight_writable(root: &Path, bundle: &PlanBundle) -> Result<(), String> {
             .map(std::path::Path::to_path_buf)
     }
     let mut parents = BTreeSet::new();
-    for operation in &bundle.plan.operations {
-        match operation {
-            PlannedOperation::PublishMergedTree {
-                root: managed_root,
-                after,
-                ..
-            } => {
-                let Some(tree) = bundle.trees.get(after) else {
-                    continue;
-                };
-                for path in tree.entries.keys() {
-                    parents.extend(parent_of(&managed_root.join(path.as_str())?));
-                }
-                parents.insert(std::path::PathBuf::from(managed_root.as_str()));
-            }
-            PlannedOperation::ReplaceModelFile { path, .. }
-            | PlannedOperation::ReplaceStateFile { path, .. }
-            | PlannedOperation::PatchReaderFile { path, .. }
-            | PlannedOperation::AppendMigration { path, .. }
-            | PlannedOperation::RemoveReaderFile { path, .. } => {
-                parents.extend(parent_of(path));
-            }
-        }
+    for path in desired_files(bundle)?.keys() {
+        parents.extend(parent_of(path));
+    }
+    // A deletion needs its parent writable too, but a parent that is already
+    // gone -- the converged retry after a deletion emptied it -- is not
+    // recreated for the probe.
+    for path in removed_files(bundle)? {
+        parents.extend(parent_of(&path).filter(|parent| root.join(parent).is_dir()));
     }
     for parent in parents {
         let absolute = root.join(&parent);
@@ -208,47 +201,23 @@ const STAGED_PREFIX: &str = ".jails-staged-";
 /// Delete the debris a run that died between staging and rename left behind.
 ///
 /// An injected `Err` unwinds, so the staged `NamedTempFile`'s guard removes
-/// it; an `abort()` or a lost machine does not, and the file stays. Without
-/// this sweep `verify_preconditions` reads
-/// it as an unmanaged file that appeared inside the managed tree and refuses
-/// -- permanently, because nothing removes it and every later plan refuses
-/// the same way. A project wedged by its own temporary file is the exact
-/// opposite of "the next identical generation repairs it deterministically",
-/// which is what this executor trades rollback away for.
+/// it; an `abort()` or a lost machine does not, and the file stays. A staged
+/// file is written beside its destination, so the sweep reads the parent of
+/// every path the plan publishes -- the only directories a dead run of this
+/// plan could have staged into -- and nothing else: managed files sit beside
+/// the reader's own, and a walk of `src/` would be a walk of theirs. Left in
+/// place, a stray temporary in a source root is a file the build reads as
+/// theirs and the next capture cannot tell from one.
 ///
 /// It runs under the lock, so no other run has a staged file in flight here:
 /// anything matching is a dead run's, never a live one's.
 fn sweep_staged(root: &Path, bundle: &PlanBundle) -> Result<(), String> {
-    let managed = managed_roots(bundle);
-    for managed_root in &managed {
-        let absolute = root.join(managed_root.as_str());
-        if absolute.exists() {
-            sweep_staged_under(&absolute)?;
-        }
-    }
+    let mut parents = BTreeSet::new();
     for path in desired_files(bundle)?.keys() {
-        if managed.iter().any(|managed| path.is_within(managed)) {
-            continue;
-        }
-        if let Some(parent) = root.join(path.as_str()).parent() {
-            sweep_staged_in(parent)?;
-        }
+        parents.extend(root.join(path.as_str()).parent().map(Path::to_path_buf));
     }
-    Ok(())
-}
-
-fn sweep_staged_under(directory: &Path) -> Result<(), String> {
-    for entry in std::fs::read_dir(directory)
-        .map_err(|error| format!("could not read {}: {error}", directory.display()))?
-    {
-        let path = entry
-            .map_err(|error| format!("could not read {}: {error}", directory.display()))?
-            .path();
-        if path.is_dir() {
-            sweep_staged_under(&path)?;
-        } else if is_staged(&path) {
-            remove_staged(&path)?;
-        }
+    for parent in parents {
+        sweep_staged_in(&parent)?;
     }
     Ok(())
 }
@@ -289,8 +258,7 @@ fn remove_staged(path: &Path) -> Result<(), String> {
 
 fn verify_preconditions(root: &Path, bundle: &PlanBundle) -> Result<(), String> {
     let desired = desired_files(bundle)?;
-    let removed = removed_files(bundle);
-    let managed_roots = managed_roots(bundle);
+    let removed = removed_files(bundle)?;
     for (path, expected) in &bundle.plan.base.files {
         let actual = actual_file(root, path)?;
         if actual_matches_precondition(actual.as_ref(), expected) {
@@ -327,15 +295,6 @@ fn verify_preconditions(root: &Path, bundle: &PlanBundle) -> Result<(), String> 
         return Err(format!(
             "stale exact plan: new managed path `{path}` appeared after planning"
         ));
-    }
-    for managed_root in &managed_roots {
-        for actual in existing_files(root, managed_root)? {
-            if !bundle.plan.base.files.contains_key(&actual) && !desired.contains_key(&actual) {
-                return Err(format!(
-                    "stale exact plan: unmanaged file `{actual}` appeared inside the managed tree"
-                ));
-            }
-        }
     }
     for (path, expected) in &bundle.plan.base.directories {
         let actual = crate::capture::observe_directory(root, path)?;
@@ -401,9 +360,19 @@ fn directory_is_plan_prefix(
     Ok(true)
 }
 
+/// Publish the managed set: every entry of `desired`, then the removal of
+/// every path `previous` held that `desired` does not.
+///
+/// **The set is the plan's, never a directory's.** Managed files sit beside
+/// the reader's own under `src/`, so what to delete is answered by the two
+/// trees in the bundle -- what the accepted projection owned and what the
+/// reconciled one does -- and a reader file beside a managed one is never
+/// read, let alone removed. A directory a deletion leaves empty goes with it,
+/// down to the source-set root, which stays.
 fn publish_merged_tree(
     root: &Path,
     managed_root: &ProjectPath,
+    previous: Option<&TreeManifest>,
     desired: &TreeManifest,
     bundle: &PlanBundle,
 ) -> Result<(usize, usize), String> {
@@ -429,21 +398,33 @@ fn publish_merged_tree(
         written += 1;
     }
 
-    let desired_paths = desired.entries.keys().cloned().collect::<BTreeSet<_>>();
     let mut deleted = 0_usize;
-    for path in existing_files(root, managed_root)? {
-        if desired_paths.contains(&path) {
-            continue;
-        }
+    for path in retired_paths(previous, desired) {
         let absolute = root.join(path.as_str());
         crate::fault::trip(crate::fault::point::BEFORE_REMOVE)?;
-        std::fs::remove_file(&absolute)
-            .map_err(|error| format!("could not delete {}: {error}", absolute.display()))?;
-        crate::fault::trip(crate::fault::point::AFTER_REMOVE)?;
-        deleted += 1;
+        match std::fs::remove_file(&absolute) {
+            Ok(()) => {
+                crate::fault::trip(crate::fault::point::AFTER_REMOVE)?;
+                deleted += 1;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!("could not delete {}: {error}", absolute.display()));
+            }
+        }
+        remove_empty_ancestors(root, &path)?;
     }
-    remove_empty_directories(&root.join(managed_root.as_str()))?;
     Ok((written, deleted))
+}
+
+/// The paths a previous tree held and the desired one does not.
+fn retired_paths(previous: Option<&TreeManifest>, desired: &TreeManifest) -> Vec<ProjectPath> {
+    previous
+        .into_iter()
+        .flat_map(|tree| tree.entries.keys())
+        .filter(|path| !desired.entries.contains_key(*path))
+        .cloned()
+        .collect()
 }
 
 fn verify_after(root: &Path, bundle: &PlanBundle) -> Result<(), String> {
@@ -456,22 +437,9 @@ fn verify_after(root: &Path, bundle: &PlanBundle) -> Result<(), String> {
             ));
         }
     }
-    for managed_root in managed_roots(bundle) {
-        let actual = existing_files(root, &managed_root)?;
-        let expected = desired
-            .keys()
-            .filter(|path| path.is_within(&managed_root))
-            .cloned()
-            .collect::<BTreeSet<_>>();
-        if actual != expected {
-            return Err(format!(
-                "executor did not converge managed tree `{managed_root}`"
-            ));
-        }
-    }
-    for path in removed_files(bundle) {
+    for path in removed_files(bundle)? {
         if actual_file(root, &path)?.is_some() {
-            return Err(format!("executor did not remove reader source `{path}`"));
+            return Err(format!("executor did not remove `{path}`"));
         }
     }
     Ok(())
@@ -520,28 +488,34 @@ fn desired_files(bundle: &PlanBundle) -> Result<BTreeMap<ProjectPath, DesiredFil
     Ok(files)
 }
 
-fn removed_files(bundle: &PlanBundle) -> BTreeSet<ProjectPath> {
-    bundle
-        .plan
-        .operations
-        .iter()
-        .filter_map(|operation| match operation {
-            PlannedOperation::RemoveReaderFile { path, .. } => Some(path.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
-fn managed_roots(bundle: &PlanBundle) -> Vec<ProjectPath> {
-    bundle
-        .plan
-        .operations
-        .iter()
-        .filter_map(|operation| match operation {
-            PlannedOperation::PublishMergedTree { root, .. } => Some(root.clone()),
-            _ => None,
-        })
-        .collect()
+/// Every path this plan removes: reader files it retires and managed files
+/// the accepted projection held that the reconciled one does not.
+fn removed_files(bundle: &PlanBundle) -> Result<BTreeSet<ProjectPath>, String> {
+    let mut removed = BTreeSet::new();
+    for operation in &bundle.plan.operations {
+        match operation {
+            PlannedOperation::RemoveReaderFile { path, .. } => {
+                removed.insert(path.clone());
+            }
+            PlannedOperation::PublishMergedTree { before, after, .. } => {
+                let desired = bundle
+                    .trees
+                    .get(after)
+                    .ok_or_else(|| format!("plan references missing tree `{}`", after.as_str()))?;
+                let previous = before
+                    .as_ref()
+                    .map(|before| {
+                        bundle.trees.get(before).ok_or_else(|| {
+                            format!("plan references missing tree `{}`", before.as_str())
+                        })
+                    })
+                    .transpose()?;
+                removed.extend(retired_paths(previous, desired));
+            }
+            _ => {}
+        }
+    }
+    Ok(removed)
 }
 
 struct ActualFile {
@@ -624,9 +598,49 @@ fn write_atomic(
     Ok(())
 }
 
-fn existing_files(root: &Path, managed: &ProjectPath) -> Result<BTreeSet<ProjectPath>, String> {
+/// Remove the directories a deleted file leaves empty, up to the root that
+/// stays.
+///
+/// A package directory whose last managed file went is jails' to clean; the
+/// source-set root above it (`src/main/java`, `src/test/resources`) and
+/// `.jails` itself are the project's shape and stay, empty or not. Anything
+/// non-empty ends the ascent, so a reader file beside the deleted one keeps
+/// its directory.
+fn remove_empty_ancestors(root: &Path, path: &ProjectPath) -> Result<(), String> {
+    let mut relative = Path::new(path.as_str()).parent();
+    while let Some(directory) = relative {
+        let text = directory.to_string_lossy();
+        if text.is_empty() || keeps_empty_directory(&text) {
+            break;
+        }
+        let absolute = root.join(directory);
+        match std::fs::remove_dir(&absolute) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) if error.kind() == std::io::ErrorKind::DirectoryNotEmpty => break,
+            Err(error) => {
+                return Err(format!(
+                    "could not remove empty directory {}: {error}",
+                    absolute.display()
+                ));
+            }
+        }
+        relative = directory.parent();
+    }
+    Ok(())
+}
+
+/// The directories a deletion never removes: `.jails` and the source-set
+/// roots -- `src`, `src/<set>` and `src/<set>/<kind>`.
+fn keeps_empty_directory(relative: &str) -> bool {
+    relative == ".jails"
+        || (relative.split('/').count() <= 3 && (relative == "src" || relative.starts_with("src/")))
+}
+
+/// Every regular file under one directory, for a directory precondition.
+fn existing_files(root: &Path, directory: &ProjectPath) -> Result<BTreeSet<ProjectPath>, String> {
     let mut files = BTreeSet::new();
-    let absolute = root.join(managed.as_str());
+    let absolute = root.join(directory.as_str());
     if absolute.exists() {
         walk_files(root, &absolute, &mut files)?;
     }
@@ -654,48 +668,7 @@ fn walk_files(
                 .map_err(|_| format!("{} escaped project root", path.display()))?;
             files.insert(ProjectPath::parse(path_text(relative))?);
         } else {
-            return Err(format!(
-                "managed output `{}` is not a regular file",
-                path.display()
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn remove_empty_directories(root: &Path) -> Result<(), String> {
-    if !root.is_dir() {
-        return Ok(());
-    }
-    let mut directories = Vec::new();
-    collect_directories(root, &mut directories)?;
-    directories.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
-    for directory in directories {
-        match std::fs::remove_dir(&directory) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::DirectoryNotEmpty => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(format!(
-                    "could not remove empty directory {}: {error}",
-                    directory.display()
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn collect_directories(directory: &Path, directories: &mut Vec<PathBuf>) -> Result<(), String> {
-    directories.push(directory.to_path_buf());
-    for entry in std::fs::read_dir(directory)
-        .map_err(|error| format!("could not read {}: {error}", directory.display()))?
-    {
-        let path = entry
-            .map_err(|error| format!("could not read {}: {error}", directory.display()))?
-            .path();
-        if path.is_dir() {
-            collect_directories(&path, directories)?;
+            return Err(format!("`{}` is not a regular file", path.display()));
         }
     }
     Ok(())

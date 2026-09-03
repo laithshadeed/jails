@@ -44,23 +44,44 @@ pub enum FileMode {
     Executable,
 }
 
-/// Declaration order is the order generated roots are rendered into a build
-/// file, so it is `Ord` and the variants are written in the order a reader
-/// expects to meet them.
+/// Where managed output lands: JDL v1 §9.7's source-root table, with one
+/// owner.
+///
+/// **The emitted path is the reader path.** Managed and reader-owned files
+/// share these roots, and which file is jails' is answered by the accepted
+/// projection in the lock naming its path, never by a prefix. Every emitter
+/// spells a root through here, so a root that moves moves once.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum JavaSourceSet {
-    Main,
-    Test,
+pub enum SourceRoot {
+    MainJava,
+    TestJava,
     MainResources,
     TestResources,
+    /// HTTP Client request collections, beside the tests they exercise.
+    TestHttp,
 }
 
-/// One generated root and the source set it joins.
-#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
-pub struct MavenSourceRoot {
-    pub source_set: JavaSourceSet,
-    pub path: ProjectPath,
+impl SourceRoot {
+    /// The directory every root sits under, which is what the plan's managed
+    /// tree operation names: an entry outside it is a compiler bug the
+    /// executor refuses rather than a file it writes.
+    pub const PARENT: &'static str = "src";
+
+    pub const fn path(self) -> &'static str {
+        match self {
+            Self::MainJava => "src/main/java",
+            Self::TestJava => "src/test/java",
+            Self::MainResources => "src/main/resources",
+            Self::TestResources => "src/test/resources",
+            Self::TestHttp => "src/test/http",
+        }
+    }
+
+    /// The path of a file under this root.
+    pub fn join(self, relative: &str) -> Result<ProjectPath, String> {
+        ProjectPath::parse(format!("{}/{relative}", self.path()))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -128,30 +149,27 @@ pub enum ReaderFacetKind {
     },
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+/// The managed projection: every file the compiler owns, keyed by the path
+/// it lands on.
+///
+/// **A set of project paths, with no root.** Managed files live beside the
+/// reader's own under the [`SourceRoot`]s, and the accepted copy of this tree
+/// in `.jails/compiler.lock.json` is what says which file is jails': a file is
+/// managed if the accepted projection names its path. Nothing in the merge
+/// depends on where a file is.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct RenderedTree {
-    pub root: ProjectPath,
     pub files: BTreeMap<ProjectPath, RenderedFile>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub reader_facets: BTreeMap<String, RenderedReaderFacet>,
 }
 
 impl RenderedTree {
-    pub fn new(root: ProjectPath) -> Self {
-        Self {
-            root,
-            files: BTreeMap::new(),
-            reader_facets: BTreeMap::new(),
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn insert(&mut self, path: ProjectPath, file: RenderedFile) -> Result<(), String> {
-        if !path.is_within(&self.root) {
-            return Err(format!(
-                "managed artifact `{path}` is outside managed root `{}`",
-                self.root
-            ));
-        }
         if self.files.insert(path.clone(), file).is_some() {
             return Err(format!("two compiler units emit `{path}`"));
         }
@@ -206,23 +224,6 @@ pub struct PropertyEntry {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum DocumentIntent {
-    /// Every generated root Maven must compile, as one intent.
-    ///
-    /// One intent rather than one per source set, because they land in one
-    /// `<plugin>`. A block per source set is a full
-    /// `org.codehaus.mojo:build-helper-maven-plugin` declaration per set, and
-    /// a project with a main and a test root then declares that plugin twice
-    /// in one `<plugins>`: Maven merges the executions, so both roots compile,
-    /// but it warns `must be unique but found duplicate declaration` on every
-    /// build. A warning that alarming on every build is how readers learn to
-    /// stop reading warnings.
-    EnsureMavenSourceRoots {
-        roots: Vec<MavenSourceRoot>,
-    },
-    EnsureGradleSourceRoot {
-        path: ProjectPath,
-        source_set: JavaSourceSet,
-    },
     /// Put `@Import(<class>.class)` on every `@SpringBootTest` the project
     /// already has.
     ///
@@ -290,12 +291,6 @@ pub enum DocumentIntent {
         path: ProjectPath,
         previous: Vec<PropertyEntry>,
         desired: Vec<PropertyEntry>,
-    },
-    EjectFile {
-        source: ProjectPath,
-        path: ProjectPath,
-        bytes: Vec<u8>,
-        semantic_ids: BTreeSet<String>,
     },
     /// Transfer an existing reader-owned Java unit into the canonical managed
     /// tree while retaining its exact live bytes as the reader's merge delta.
