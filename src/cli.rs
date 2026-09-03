@@ -131,15 +131,15 @@ pub(crate) struct Cli {
     #[arg(long, global = true)]
     pub(crate) diff: bool,
 
-    /// Show the typed semantic edits and reconciliation operations in the plan
+    /// Show the model edits and file operations the plan carries
     #[arg(long, global = true)]
     pub(crate) ast: bool,
 
-    /// Write the exact authenticated prepared transaction to this file
+    /// Write the reviewed plan file here instead of applying it
     #[arg(long, global = true, conflicts_with = "plan_in")]
     pub(crate) plan_out: Option<std::path::PathBuf>,
 
-    /// Apply only this authenticated prepared transaction, without replanning
+    /// Apply only this plan file, without planning again
     #[arg(long, global = true, conflicts_with_all = ["plan_out", "pretend"])]
     pub(crate) plan_in: Option<std::path::PathBuf>,
 }
@@ -152,7 +152,8 @@ pub(crate) enum AdoptCommand {
     /// off `src/main/java`, maps each Java type onto a jails field type --
     /// refusing, by component, on one it cannot -- and writes the `entity`
     /// declaration beside an `eject <Name>.record @adopted` line. Your file
-    /// is never written; it is captured as an exact input of the plan.
+    /// is never written; it is captured as an input of the plan.
+    #[command(name = "entity", visible_alias = "resource")]
     Resource {
         /// The simple type name, e.g. `Message`
         #[arg(value_name = "NAME")]
@@ -407,7 +408,7 @@ pub(crate) enum Command {
         #[command(subcommand)]
         command: app::AppCommand,
     },
-    /// Check, plan, apply, or transfer ownership in the canonical application model
+    /// Check, plan, apply, or transfer ownership in the application model
     #[command(hide = true)]
     Model {
         #[command(subcommand)]
@@ -491,7 +492,7 @@ pub(crate) enum Command {
     ///   jails add csv --name Dataset  # name the generated class
     ///   jails add security --pretend # see the plan, write nothing
     ///
-    /// `jails remove <capability>` is the exact inverse.
+    /// `jails remove <capability>` is the inverse.
     ///
     /// `jails add dependency <group:artifact>` is the escape hatch for a
     /// library jails has never heard of.
@@ -648,7 +649,7 @@ pub(crate) enum Command {
     /// `[project] capabilities` -- `jails sync` acts on that list.
     ///
     /// `jails adopt resource <Name>` is the other half: it registers a type
-    /// you wrote in the model, so `resource field`, `rename resource` and
+    /// you wrote in the model, so `entity field`, `rename resource` and
     /// `destroy` work on it, and marks its record as yours.
     #[command(hide = true)]
     Adopt {
@@ -774,7 +775,7 @@ pub(crate) enum Command {
         #[command(flatten)]
         console: ConsoleArgs,
     },
-    /// Rename a managed resource, or use the legacy two-name type spelling
+    /// Rename a managed entity, or use the legacy two-name type spelling
     Rename {
         #[command(subcommand)]
         command: Option<RenameCommand>,
@@ -809,7 +810,7 @@ pub(crate) enum Command {
         /// Required when a scaffold has published table migration history.
         #[arg(long, value_enum)]
         storage: Option<StoragePolicy>,
-        /// Exact generated table name; required with `--storage drop`.
+        /// The generated table name; required with `--storage drop`.
         #[arg(long, requires = "storage")]
         confirm_table: Option<String>,
         /// Apply the committed migration history as a post-commit effect.
@@ -819,7 +820,15 @@ pub(crate) enum Command {
         #[arg(long, requires = "migrate", value_name = "NAME")]
         datasource: Option<String>,
     },
-    /// Inspect or change a generated resource by its durable identity
+    /// Inspect or change a generated entity by its durable identity
+    ///
+    /// **`entity`, because that is what the model calls it.** JDL declares
+    /// `entity Note { … }` and every diagnostic names an entity; the command
+    /// family was the one place the same thing was called a resource, which
+    /// is three names for one noun counting `scaffold`. `resource` stays as a
+    /// visible alias, so a script or a habit keeps working and the help says
+    /// so.
+    #[command(name = "entity", visible_alias = "resource")]
     Resource {
         #[command(subcommand)]
         command: ResourceCommand,
@@ -891,7 +900,7 @@ pub(crate) enum Command {
         /// Database isolation for eligible integration tests
         #[arg(long, value_enum, default_value_t = TestDatabaseArg::Off)]
         db: TestDatabaseArg,
-        /// Print the canonical partitions and reasons before execution
+        /// Print the test partitions and reasons before execution
         #[arg(long)]
         explain_selection: bool,
         #[command(subcommand)]
@@ -1047,7 +1056,7 @@ pub(crate) enum Declare {
     },
 }
 
-/// The exact inverse, under `remove`.
+/// The inverse, under `remove`.
 #[derive(Subcommand)]
 pub(crate) enum Undeclare {
     /// Take one declared artifact back out of the build file

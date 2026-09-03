@@ -256,7 +256,7 @@ pub(crate) fn report_plan(
 
 pub(crate) fn write_bundle(path: &Path, bundle: &jails_contracts::PlanBundle) -> Result<()> {
     let encoded = serde_json::to_vec_pretty(bundle)
-        .map_err(|error| Failure::Told(format!("could not encode exact plan: {error}")))?;
+        .map_err(|error| Failure::Told(format!("could not encode the plan: {error}")))?;
     jails_support::apply::put_outside_project_private_atomic(path, encoded)
 }
 

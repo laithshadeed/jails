@@ -30,7 +30,7 @@ stop	jails-project	service-lifecycle	compose::stop_cmd
 src	jails-report	read-only	source::src
 bench	jails-drive	external-process	bench::bench
 adopt	jails	one-shot-write	adopt::layout
-adopt resource	jails	project-mutation	adopt::resource
+adopt entity	jails	project-mutation	adopt::resource
 doctor	jails-report	read-only	doctor::doctor
 why	jails-report	read-only+external-process	why::command
 stats	jails-project	read-only	inspect::stats
@@ -51,21 +51,21 @@ kafka reset	jails-drive	broker-mutation+service-lifecycle	kafka::kafka
 db	jails-drive	external-process+service-lifecycle	console::db
 console	jails	external-process	tool_command::console
 rename	jails	one-shot-write	rename_source::run
-rename resource	jails	project-mutation	model_rename::run
+rename entity	jails	project-mutation	model_rename::run
 destroy	jails	project-mutation	model_destroy::run
-resource	jails	dispatch-only	main command dispatch
-resource status	jails	read-only	model_status::run
-resource revive	jails	project-mutation	model_destroy::revive
-resource repair	jails	project-mutation	model_command::repair
-resource field	jails	dispatch-only	model_resource::run
-resource field add	jails	project-mutation	model_resource::run
-resource field rename	jails	project-mutation	model_field_evolution::rename
-resource field type	jails	project-mutation	model_field_evolution::change_type
-resource field nullability	jails	project-mutation	model_field_evolution::set_nullability
-resource field drop	jails	project-mutation	model_field_evolution::drop_field
-resource index	jails	dispatch-only	model_index::run
-resource index add	jails	project-mutation	model_index::add
-resource index remove	jails	project-mutation	model_index::remove
+entity	jails	dispatch-only	main command dispatch
+entity status	jails	read-only	model_status::run
+entity revive	jails	project-mutation	model_destroy::revive
+entity repair	jails	project-mutation	model_command::repair
+entity field	jails	dispatch-only	model_resource::run
+entity field add	jails	project-mutation	model_resource::run
+entity field rename	jails	project-mutation	model_field_evolution::rename
+entity field type	jails	project-mutation	model_field_evolution::change_type
+entity field nullability	jails	project-mutation	model_field_evolution::set_nullability
+entity field drop	jails	project-mutation	model_field_evolution::drop_field
+entity index	jails	dispatch-only	model_index::run
+entity index add	jails	project-mutation	model_index::add
+entity index remove	jails	project-mutation	model_index::remove
 test	jails-drive	external-process+conditional-project-mutation	run::test
 test daemon	jails-drive	dispatch-only	main command dispatch
 test daemon restart	jails-drive	machine-daemon+external-process	testd::testd

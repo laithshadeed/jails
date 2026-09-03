@@ -169,7 +169,7 @@ fn refuse_declared(root: &Path, old: &str, new: &str) -> Result<()> {
         false => String::new(),
     };
     Err(Failure::Told(format!(
-        "`{old}` is declared in this project's application model{backing}, and this rename carries only the Java.\n       fix: move the declaration, the table and the managed tree together with `jails rename resource {old} {new} --strategy preserve-table`"
+        "`{old}` is declared in this project's application model{backing}, and this rename carries only the Java.\n       fix: move the declaration, the table and the managed tree together with `jails rename entity {old} {new} --strategy preserve-table`"
     )))
 }
 

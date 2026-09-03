@@ -109,7 +109,7 @@ pub(crate) fn trees(
             "workspace-adoption-target-unmodelled",
             missing.to_string(),
             format!("adoption target `{missing}` is not a compiler artifact"),
-            "import only source units represented by the canonical model",
+            "import only source units represented by the model",
         ));
     }
 
@@ -204,9 +204,9 @@ fn reconcile_artifact(
                 "workspace-adoption-target-occupied",
                 output_path.to_string(),
                 format!(
-                    "adoption target `{output_path}` already has canonical history or live bytes"
+                    "adoption target `{output_path}` already has accepted history or live bytes"
                 ),
-                "import only into a project with no canonical managed artifact",
+                "import only into a project with no managed artifact",
             ));
         }
         let theirs = desired_file.expect("an adoption target was matched to desired artifact");
@@ -236,7 +236,7 @@ fn reconcile_artifact(
                             adoption.source,
                             if hunks == 1 { "" } else { "s" }
                         ),
-                        "reconcile that component by hand; nothing was written",
+                        "settle that component by hand; nothing was written",
                     ));
                 }
             }
@@ -290,7 +290,7 @@ fn reconcile_artifact(
                                 "`{output_path}` has {hunks} overlapping edit{} between your file and the generator",
                                 if hunks == 1 { "" } else { "s" }
                             ),
-                            "reconcile that component by hand; nothing was written",
+                            "settle that component by hand; nothing was written",
                         ));
                     }
                 }
@@ -310,7 +310,7 @@ fn reconcile_artifact(
                     "move the custom code to reader source, keep the model component, or repeat with `--yes` to discard the edits; nothing was written",
                 ));
             }
-            // `resource repair` is the one plan that writes it back. A
+            // `entity repair` is the one plan that writes it back. A
             // managed file is reproducible by definition -- the model renders
             // it -- so there is nothing of the reader's left to lose once the
             // bytes are gone, and refusing forever would leave a project with
@@ -325,7 +325,7 @@ fn reconcile_artifact(
                     format!(
                         "managed file `{live_path}` was deleted by you while the generator still needs it"
                     ),
-                    "`jails resource repair` writes it back from the model, or eject its implementation boundary; nothing was written",
+                    "`jails entity repair` writes it back from the model, or eject its implementation boundary; nothing was written",
                 ));
             }
             (Some(_), None, None) => None,
@@ -368,7 +368,7 @@ fn insert_tree_entry(
         return Err(Diagnostic::new(
             "workspace-tree-path-collision",
             path.to_string(),
-            format!("two reconciled artifacts target `{path}`"),
+            format!("two generated artifacts target `{path}`"),
             "resolve the compiler path collision",
         ));
     }

@@ -401,7 +401,7 @@ impl TypeRef {
         // final segment happens to collide, and its package says so.
         if let Some(builtin) = BuiltinType::from_alias(value) {
             return Err(format!(
-                "`{value}` is the Java spelling of jails' builtin `{}`, and `jdl 1` states the canonical one",
+                "`{value}` is the Java spelling of jails' builtin `{}`, and `jdl 1` states jails' own spelling",
                 builtin.semantics().token
             ));
         }

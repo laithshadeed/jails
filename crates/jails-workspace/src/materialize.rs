@@ -92,7 +92,7 @@ pub(crate) const BUNDLE_SCHEMA: &str = "jails.plan-bundle.v1";
 /// is advice they cannot take.
 ///
 /// A sealed migration whose *bytes changed* is a different question and stays
-/// `jails resource repair`'s. A database has already run the old text, so an
+/// `jails entity repair`'s. A database has already run the old text, so an
 /// edit is a fault to report rather than a difference to reconcile, and a
 /// command a reader runs after merging a branch must not quietly rewrite it.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -103,7 +103,7 @@ pub enum Restore {
     /// facet, a sealed migration that is missing. `jails sync`.
     Missing,
     /// [`Restore::Missing`], and rewrite a sealed migration whose bytes were
-    /// edited. `jails resource repair` only.
+    /// edited. `jails entity repair` only.
     MissingOrEdited,
     /// Delete a managed file the reader edited, because they said to.
     ///
@@ -195,7 +195,7 @@ pub fn materialize(
         &mut sealed_migrations,
         &mut sealed_bytes,
     )?;
-    // **Restoring a sealed migration is `resource repair`'s job and no other
+    // **Restoring a sealed migration is `entity repair`'s job and no other
     // plan's.** An ordinary command that found one edited would be rewriting a
     // file the reader touched as a side effect of something else; repair is
     // the command that exists to say "put back what was published".
@@ -306,7 +306,7 @@ fn materialize_migrations(
                         "migration `{}` has non-integer version `{}`",
                         record.path, record.version
                     ),
-                    "import the history before asking the canonical compiler to allocate a migration",
+                    "import the history before asking the compiler to allocate a migration",
                 )
             })
         })
@@ -444,7 +444,7 @@ fn materialize_document_intents(
                         return Err(Diagnostic::new(
                             "workspace-dependencies-need-a-build",
                             "$.build",
-                            "cannot reconcile dependencies without one captured Maven or Gradle build",
+                            "cannot update dependencies without one captured Maven or Gradle build",
                             "restore exactly one supported build file, then re-plan",
                         ));
                     }
@@ -477,7 +477,7 @@ fn materialize_document_intents(
                         return Err(Diagnostic::new(
                             "workspace-build-features-need-a-build",
                             "$.build",
-                            "cannot reconcile build features without one captured Maven or Gradle build",
+                            "cannot update build features without one captured Maven or Gradle build",
                             "restore exactly one supported build file, then re-plan",
                         ));
                     }
@@ -608,7 +608,7 @@ fn gradle_build_file(snapshot: &WorkspaceSnapshot) -> Result<(ProjectPath, bool)
             "workspace-gradle-build-ambiguous",
             "$.build",
             "both build.gradle and build.gradle.kts exist",
-            "keep one canonical Gradle build script, then re-plan",
+            "keep one Gradle build script, then re-plan",
         )),
         (false, false) => Err(Diagnostic::new(
             "workspace-gradle-build-missing",
@@ -739,7 +739,7 @@ pub use crate::capture::digest;
 
 /// Put back a published migration the reader edited.
 ///
-/// **Only `resource repair` asks for this**, and it is the one restore the
+/// **Only `entity repair` asks for this**, and it is the one restore the
 /// compiler cannot derive: a migration comes from a model *diff*, and the diff
 /// that produced a published one is history. Flyway refuses on the checksum
 /// until the file matches what ran, so a project whose migration was edited

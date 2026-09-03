@@ -158,7 +158,7 @@ fn a_run_of_commands_writes_the_file_a_reader_would_have_written() {
     // its neighbours, and the formatter in the one mutation pipeline decides
     // the column for the whole run at once.
     let added = jails_cmd(&root, None)
-        .args(["resource", "field", "add", "Note", "descriptionText:string"])
+        .args(["entity", "field", "add", "Note", "descriptionText:string"])
         .output()
         .unwrap();
     assert!(
@@ -1316,7 +1316,7 @@ entity Crate {
     );
 
     let added = jails_cmd(&root, None)
-        .args(["resource", "index", "add", "Crate", "label, slot desc"])
+        .args(["entity", "index", "add", "Crate", "label, slot desc"])
         .output()
         .unwrap();
     assert!(

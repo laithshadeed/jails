@@ -98,7 +98,7 @@ pub const SCENARIOS: &[Scenario] = &[
         seed: &[("src/main/resources/db/migration/.gitkeep", "")],
         steps: &[
             &["g", "record", "Note", "id:uuid", "title:string!"],
-            &["resource", "field", "add", "Note", "createdAt:instant"],
+            &["entity", "field", "add", "Note", "createdAt:instant"],
         ],
     },
     Scenario {
@@ -109,7 +109,7 @@ pub const SCENARIOS: &[Scenario] = &[
             &["add", "db", "--no-start"],
             &["g", "scaffold", "Note", "id:uuid@pk", "title:string!"],
             &[
-                "resource",
+                "entity",
                 "field",
                 "add",
                 "Note",

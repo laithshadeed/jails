@@ -57,7 +57,7 @@ impl Node for Operation {
 
     fn describe(&self) -> String {
         match &self.kind {
-            OperationKind::Command(_) => format!("canonical command `{}`", self.label),
+            OperationKind::Command(_) => format!("command `{}`", self.label),
             OperationKind::Event(_) => format!("event `{}`", self.label),
             _ => format!("operation `{}`", self.label),
         }

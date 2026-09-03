@@ -1097,6 +1097,23 @@ return type only", because a record component is both at once.
 knows its Java type, SQL type and sample value; when a sample is impossible
 the companion test is emitted whole and `@Disabled`, naming the component.
 
+## The words a reader sees are budgeted, and the budget is gated
+
+`entity` is the command family (`jails entity status|repair|field|index|…`)
+with `resource` as a visible alias, because JDL declares `entity Note { … }`
+and one thing with three names -- entity, resource, scaffold -- was the
+repository's own census finding. Six words are retired from every help page
+and every message: *authenticated prepared transaction*, *canonical*,
+*semantic*, *exact*, *projection* and *reconcile*.
+`the_six_retired_words_appear_in_no_help_page_and_no_message` in
+`tests/cli/developer_tools.rs` reads every help page the binary can print and
+every production literal of twenty characters or more containing a space, and
+fails on any of them. **`projection` is exempt in four named files** --
+JDL v1 §11 calls a `use` declaration a projection, so the parser and the
+model node it builds keep the language's own word; renaming it in the
+diagnostic and not in the language is exactly the drift the gate exists to
+stop.
+
 ## Gotchas
 
 - **Which directory a command is about is one walk.** `model_command::project_root`

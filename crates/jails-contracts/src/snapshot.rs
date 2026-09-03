@@ -273,7 +273,7 @@ pub struct WorkspaceSnapshot {
     /// file a reader cannot fix by regenerating: the compiler derives a
     /// migration from a model *diff*, and the diff that produced this one is
     /// history. Flyway refuses on the checksum until the file matches what
-    /// ran, so `resource repair` needs the original and nothing else has it.
+    /// ran, so `entity repair` needs the original and nothing else has it.
     ///
     /// `#[serde(default)]` so a lock without the field decodes; repair then
     /// reports that migration as unrecoverable rather than claiming to have

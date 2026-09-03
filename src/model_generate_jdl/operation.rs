@@ -123,7 +123,7 @@ pub(super) fn operation_declaration(
                     };
                     if field.is_empty() {
                         return Err(Failure::Told(
-                            "canonical query ordering needs a field name.\n       fix: give `--order-by` a comma-separated field list"
+                            "query ordering needs a field name.\n       fix: give `--order-by` a comma-separated field list"
                                 .to_string(),
                         ));
                     }
@@ -177,7 +177,7 @@ pub(super) fn operation_declaration(
             .find(|entity| entity.label == parent_label)
             .ok_or_else(|| {
                 Failure::Told(format!(
-                    "`{parent}` does not name a canonical entity.\n       fix: choose an entity declared in `{MODEL_PATH}`"
+                    "`{parent}` does not name a entity.\n       fix: choose an entity declared in `{MODEL_PATH}`"
                 ))
             })?;
         let key = parent_entity
@@ -241,7 +241,7 @@ pub(super) fn operation_declaration(
             .find(|entity| entity.names.java_type == parent_type)
             .ok_or_else(|| {
                 Failure::Told(format!(
-                    "`{parent_type}` does not name a canonical entity.\n       fix: choose an entity declared in `{MODEL_PATH}`"
+                    "`{parent_type}` does not name a entity.\n       fix: choose an entity declared in `{MODEL_PATH}`"
                 ))
             })?;
         let parent_key = parent

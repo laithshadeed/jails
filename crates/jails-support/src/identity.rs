@@ -360,10 +360,9 @@ impl ProjectPath {
             return Err(format!("path `{text}` is absolute; paths are project-relative").into());
         }
         if text.contains('\\') {
-            return Err(format!(
-                "path `{text}` uses `\\`; the canonical separator is `/` on every platform"
-            )
-            .into());
+            return Err(
+                format!("path `{text}` uses `\\`; the separator is `/` on every platform").into(),
+            );
         }
         // `C:` and friends. A drive-relative path is not project-relative.
         if text.len() >= 2 && text.as_bytes()[1] == b':' {
@@ -608,7 +607,7 @@ mod tests {
         for (bad, expect) in [
             ("", "is empty"),
             ("/etc/passwd", "absolute"),
-            ("src\\main\\java", "canonical separator"),
+            ("src\\main\\java", "the separator is `/`"),
             ("C:/windows", "platform prefix"),
             ("../outside", "may not be relative"),
             ("src/../../outside", "may not be relative"),

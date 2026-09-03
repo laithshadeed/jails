@@ -13,7 +13,7 @@
 //! so re-rendering and diffing would report every preserved edit as drift on
 //! every run forever. `edited` here means the reader's delta is live and the
 //! next generation merges over it; `missing` means the next generation
-//! refuses, and `jails resource repair` writes it back.
+//! refuses, and `jails entity repair` writes it back.
 
 use crate::{Invocation, Output};
 use jails_support::{Failure, Result};
@@ -92,11 +92,11 @@ pub(crate) fn run(invocation: Invocation) -> Result<()> {
         }));
     }
     if snapshot.accepted_projection.is_none() {
-        println!("no accepted projection yet: nothing is managed until the first plan is applied");
+        println!("nothing is generated yet: nothing is managed until the first plan is applied");
         return Ok(());
     }
     if rows.is_empty() {
-        println!("the accepted projection names no file");
+        println!("the accepted generated tree names no file");
         return Ok(());
     }
     for (path, artifact, state) in &rows {

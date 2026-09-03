@@ -476,10 +476,11 @@ every message literal of twenty or more characters (303,656 characters):
 | lock | 3 | 101 |
 | reader | 6 | 84 |
 
-The 192 is the seven global flags echoed on 96 rows. One thing has three
-names: in messages `entity` 213 times, `resource` 129, `scaffold` 18. No
-report uses colour or `NO_COLOR`; a 23-line file list and a two-line
-refusal look alike.
+The 192 was `--plan-out`'s help line echoed on 96 rows. One thing had three
+names: in messages `entity` 213 times, `resource` 129, `scaffold` 18 --
+`jails entity` is the command family now, with `resource` as a visible
+alias. No report uses colour or `NO_COLOR`; a 23-line file list and a
+two-line refusal look alike.
 
 ### After
 
@@ -551,17 +552,14 @@ a gate scans `fix:` lines the way
 scans commands. *Done when* `grep -rn 'declared under \`\[' src crates`
 is empty and the gate is green.
 
-**I71.9 — one noun.** *Change* `entity` for the thing and `scaffold` for
-the facet, in help and messages; `jails resource …` keeps working with
-`entity` as the visible name and `resource` the alias; *canonical* leaves
-every message, there being one model now. *Done when* `canonical` and
-`resource` read 0 in the message census.
-
-**I71.10 — a vocabulary budget, gated.** *Change* a closed list of words
-that may not appear in help or messages (*authenticated prepared
-transaction* → *plan file*, *canonical*, *semantic*, *exact* → nothing,
-*projection* → *generated tree*, *reconcile* → *update*), measured by the
-census above as a test. *Done when* the six read 0 in both columns.
+**I71.10 — a vocabulary budget, gated.** *Landed, with one exemption.* The
+gate is `the_six_retired_words_appear_in_no_help_page_and_no_message`: it
+reads every help page the binary can print and every production string
+literal of twenty characters or more that contains a space, and fails on
+any of the six. `projection` keeps the JDL sense in four named files,
+because JDL v1 §11 calls a `use` declaration a projection and renaming it
+in the diagnostic but not in the language would be the drift the gate
+exists to stop.
 
 ---
 

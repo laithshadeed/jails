@@ -7,7 +7,7 @@
 //! what a declaration *means* is decided once, below the syntax.
 //!
 //! **Lossless is the requirement, not a nicety.** Every CLI mutation is a
-//! syntax edit on this file: `g record`, `add`, `set`, `resource field rename`
+//! syntax edit on this file: `g record`, `add`, `set`, `entity field rename`
 //! all land as an append or a splice into the reader's own document, which has
 //! their comments and their ordering in it. A parse that discarded trivia
 //! could only rewrite the file whole, and rewriting a file somebody edits is

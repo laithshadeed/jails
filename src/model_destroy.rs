@@ -22,7 +22,7 @@ pub(crate) struct Request {
 pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
     if request.package || request.migration_effect {
         return Err(Failure::Told(
-            "canonical removal does not accept legacy path or migration-effect flags.\n       fix: remove those flags; managed output and storage retirement are one exact model plan"
+            "removal does not accept legacy path or migration-effect flags.\n       fix: remove those flags; managed output and storage retirement are one plan"
                 .to_string(),
         ));
     }
@@ -48,7 +48,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             .find(|relation| relation.label == label || relation.sql_name == request.name)
             .ok_or_else(|| {
                 Failure::Told(format!(
-                    "canonical association `{}` does not exist.\n       fix: name a relation declared on the child entity",
+                    "association `{}` does not exist.\n       fix: name a relation declared on the child entity",
                     request.name
                 ))
             })?
@@ -92,7 +92,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             .find(|entity| entity.label == label || entity.names.java_type == request.name)
             .ok_or_else(|| {
                 Failure::Told(format!(
-                    "canonical entity `{}` does not exist.\n       fix: name an entity declared under `[entities]`",
+                    "entity `{}` does not exist.\n       fix: name an entity declared under `[entities]`",
                     request.name
                 ))
             })?;
@@ -142,7 +142,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                 ),
                 (Some(StoragePolicy::Drop), None) => {
                     return Err(Failure::Told(format!(
-                        "dropping `{}` needs its exact table confirmation.\n       fix: pass `--storage drop --confirm-table {}`",
+                        "dropping `{}` needs its table name confirmed.\n       fix: pass `--storage drop --confirm-table {}`",
                         entity.names.java_type, entity.names.sql_table
                     )));
                 }
@@ -191,7 +191,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
     ) {
         if request.storage.is_some() || request.confirm_table.is_some() {
             return Err(Failure::Told(
-                "this projection facet has no independent storage to retire.\n       fix: remove the storage flags"
+                "this facet has no independent storage to retire.\n       fix: remove the storage flags"
                     .to_string(),
             ));
         }
@@ -219,7 +219,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
                     _ => unreachable!(),
                 };
                 Failure::Told(format!(
-                    "canonical {name} `{}` does not exist.\n       fix: name a record carrying the {name} facet",
+                    "{name} `{}` does not exist.\n       fix: name a record carrying the {name} facet",
                     request.name,
                 ))
             })?;
@@ -281,7 +281,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             })
             .ok_or_else(|| {
                 Failure::Told(format!(
-                    "canonical component {} `{}` does not exist.\n       fix: name a matching component declaration",
+                    "component {} `{}` does not exist.\n       fix: name a matching component declaration",
                     kind.label(), request.name
                 ))
             })?;
@@ -345,7 +345,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             })
             .ok_or_else(|| {
                 Failure::Told(format!(
-                    "canonical {} `{}` does not exist.\n       fix: name a matching declaration in the application model",
+                    "{} `{}` does not exist.\n       fix: name a matching declaration in the application model",
                     kind.0, request.name
                 ))
             })?;
@@ -378,7 +378,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
             })
             .ok_or_else(|| {
                 Failure::Told(format!(
-                    "canonical {} operation `{}` does not exist.\n       fix: name a matching operation declared under `[operations]`",
+                    "{} operation `{}` does not exist.\n       fix: name a matching operation declared under `[operations]`",
                     operation_kind(request.kind).expect("operation kind was checked"),
                     request.name
                 ))
@@ -394,7 +394,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
         (Evolution::none(), next)
     } else {
         return Err(Failure::Told(format!(
-            "canonical destroy does not map `{}` to a semantic declaration.\n       fix: destroy `record`, `value`, `enum`, `sealed`, `strategy`, `controller`, `scaffold`, `factory`, `dto`, `repo`, `search`, `seed`, `association`, `class`, `interface`, `service`, `test`, `integration-test`, `usecase`, `query`, `transition`, or `event`, or edit the application model",
+            "destroy does not map `{}` to a declaration.\n       fix: destroy `record`, `value`, `enum`, `sealed`, `strategy`, `controller`, `scaffold`, `factory`, `dto`, `repo`, `search`, `seed`, `association`, `class`, `interface`, `service`, `test`, `integration-test`, `usecase`, `query`, `transition`, or `event`, or edit the application model",
             kind_name(request.kind)
         )));
     };
@@ -446,7 +446,7 @@ pub(crate) fn revive(selector: String, table: String, invocation: Invocation) ->
                 ));
             }
             Failure::Told(format!(
-                "canonical preserved entity `{selector}` does not exist.\n       fix: name an entity retired with `--storage preserve`"
+                "preserved entity `{selector}` does not exist.\n       fix: name an entity retired with `--storage preserve`"
             ))
         })?;
     let id = entity.id.clone();

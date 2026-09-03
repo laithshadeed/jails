@@ -97,7 +97,7 @@ pub fn reconcile_properties(
                 "workspace-properties-key-reader-owned",
                 key.to_string(),
                 format!("reader-owned properties already declare `{key}`"),
-                "remove the reader-owned key or do not declare it in the canonical model",
+                "remove the reader-owned key or do not declare it in the model",
             ));
         }
         if has_continuation(line) {
@@ -158,7 +158,7 @@ pub fn reconcile_compose_service(
                 "compose service `{service}` already exists outside `{}{marker}`",
                 jails_codemod::Marked::OPEN_PREFIX
             ),
-            "rename the reader-owned service or remove the canonical capability",
+            "rename the reader-owned service or remove the capability",
         ));
     }
     let selected = reconcile_facet_bytes(path, previous, current, desired)?;
@@ -214,7 +214,7 @@ fn reconcile_facet_bytes(
                         "`{path}` has {hunks} overlapping compose edit{} between your service and the generator",
                         if hunks == 1 { "" } else { "s" }
                     ),
-                    "reconcile that marked service by hand; nothing was written",
+                    "settle that marked service by hand; nothing was written",
                 )),
             }
         }
@@ -230,7 +230,7 @@ fn reconcile_facet_bytes(
                         "`{path}` has {hunks} overlapping compose deletion and generator edit{}",
                         if hunks == 1 { "" } else { "s" }
                     ),
-                    "restore or reconcile that marked service by hand; nothing was written",
+                    "restore or settle that marked service by hand; nothing was written",
                 )),
             }
         }
@@ -487,7 +487,7 @@ pub fn reconcile_gradle_dependencies(
                 "workspace-gradle-dependency-reader-owned",
                 BUILD_SUBJECT,
                 format!("Gradle already declares `{coordinate}` outside `{open}`"),
-                "remove the reader-owned duplicate or declare it only in the canonical model",
+                "remove the reader-owned duplicate or declare it only in the model",
             ));
         }
     }
@@ -622,7 +622,7 @@ fn refuse_unowned_maven_duplicates(
                 format!(
                     "Maven already declares `{coordinate}` outside `<!-- {DEPENDENCY_MARKER} -->`"
                 ),
-                "remove the reader-owned duplicate or declare it only in the canonical model",
+                "remove the reader-owned duplicate or declare it only in the model",
             ));
         }
     }

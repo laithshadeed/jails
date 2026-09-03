@@ -21,7 +21,7 @@ pub fn verify_bundle(bundle: &PlanBundle) -> Result<(), Diagnostic> {
         return Err(Diagnostic::without_a_fix(
             "workspace-bundle-schema",
             "$.plan",
-            "unsupported exact-plan schema",
+            "unsupported plan schema",
         ));
     }
     for (id, bytes) in &bundle.blobs {
@@ -100,7 +100,7 @@ pub fn verify_bundle(bundle: &PlanBundle) -> Result<(), Diagnostic> {
         return Err(Diagnostic::without_a_fix(
             "workspace-plan-digest-mismatch",
             "$.plan",
-            "plan digest does not match the exact plan",
+            "plan digest does not match the plan",
         ));
     }
     Ok(())

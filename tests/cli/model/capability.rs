@@ -151,7 +151,7 @@ fn unsupported_capabilities_refuse_before_the_legacy_engine_can_write() {
         .unwrap();
     assert!(!refused.status.success());
     let stderr = String::from_utf8(refused.stderr).unwrap();
-    assert!(stderr.contains("canonical"), "{stderr}");
+    assert!(stderr.contains("Gradle adapter"), "{stderr}");
     assert!(stderr.contains("fix:"), "{stderr}");
     assert_eq!(
         snapshot_tree(&root),

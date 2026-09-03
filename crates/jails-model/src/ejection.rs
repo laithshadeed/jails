@@ -41,7 +41,7 @@ pub(crate) fn link(
                         "model-ejection-target",
                         format!("{path}.target"),
                         format!(
-                            "ejection target `{}` is neither a boundary path, a generated artifact nor a semantic implementation boundary: {message}",
+                            "ejection target `{}` is neither a boundary path, a generated artifact nor a declared implementation boundary: {message}",
                             declaration.target
                         ),
                         fix,
@@ -54,8 +54,8 @@ pub(crate) fn link(
             linker.problem(
                 "model-ejection-collision",
                 format!("{path}.target"),
-                format!("semantic target `{target}` is already ejected at {first}"),
-                "keep one ejection declaration per semantic target",
+                format!("`{target}` is already ejected at {first}"),
+                "keep one ejection declaration per target",
             );
         }
         if let Some(id) = id {

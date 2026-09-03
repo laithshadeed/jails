@@ -31,7 +31,7 @@ pub(crate) fn run(reference: String, invocation: Invocation) -> Result<()> {
         .any(|ejection| ejection.target == semantic_id)
     {
         return Err(Failure::Told(format!(
-            "semantic target `{semantic_id}` is already reader-owned.\n       fix: edit its source under `src/`; Jails will not reclaim it"
+            "`{semantic_id}` is already reader-owned.\n       fix: edit its source under `src/`; Jails will not reclaim it"
         )));
     }
     // **Ejection is a lock edit, not a move.** The boundary's files stay

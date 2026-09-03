@@ -118,7 +118,7 @@ pub(crate) fn preflight(
             "compile-capability-needs-newer-boot",
             format!("$.capabilities.{kind}"),
             format!(
-                "canonical `{kind}` writes `{needs}`, which needs Spring Boot {minimum}, and this is a Spring Boot {actual} project"
+                "`{kind}` writes `{needs}`, which needs Spring Boot {minimum}, and this is a Spring Boot {actual} project"
             ),
             "raise the Spring Boot version, or keep to what compiles there -- `jails g scaffold`, `jails g usecase`, `jails g enum` and `jails add cors` all do",
         ));
@@ -149,7 +149,7 @@ pub(crate) fn preflight(
             "compile-operation-without-storage-adapter",
             format!("$.operations.{}", operation.label),
             format!(
-                "canonical operation `{}` answers a route through a `JdbcClient` adapter, and this model declares no SQL storage -- so nothing implements the port its controller takes",
+                "operation `{}` answers a route through a `JdbcClient` adapter, and this model declares no SQL storage -- so nothing implements the port its controller takes",
                 operation.label
             ),
             "run `jails add db`, or remove the `api` capability",
@@ -170,7 +170,7 @@ pub(crate) fn preflight(
         return Err(Diagnostic::new(
             "compile-spring-unit-needs-spring-boot",
             "$.units",
-            "canonical Spring source units require a captured Spring Boot project",
+            "Spring source units require a captured Spring Boot project",
             "add Spring Boot to the build or use a plain class/interface unit",
         ));
     }
@@ -231,7 +231,7 @@ pub(crate) fn preflight(
         return Err(Diagnostic::new(
             "compile-dto-facet-needs-spring-boot",
             "$.entities",
-            "canonical DTO facets require a captured Spring Boot project",
+            "DTO facets require a captured Spring Boot project",
             "add Spring Boot to the build or remove the `dto` facet",
         ));
     }
@@ -244,7 +244,7 @@ pub(crate) fn preflight(
             "compile-component-without-backend",
             format!("$.components.{}", component.label),
             format!(
-                "canonical `component {}` has no compiler backend yet",
+                "`component {}` has no compiler backend yet",
                 component.kind.label()
             ),
             format!(
@@ -423,7 +423,7 @@ pub(crate) fn storage_abandoned<'a>(holders: impl Iterator<Item = &'a str>) -> D
     Diagnostic::new(
         "compile-storage-abandoned",
         "$.capabilities.db",
-        "removing canonical `db` would abandon accepted storage",
+        "removing `db` would abandon accepted storage",
         format!(
             "retire each accepted table first -- {commands}{rest}, or `--storage preserve` to keep the rows -- then remove `db`"
         ),

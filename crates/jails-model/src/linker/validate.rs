@@ -346,7 +346,7 @@ impl Linker {
             self.problem(
                 "model-java-package",
                 path,
-                format!("`{value}` is not a canonical Java package"),
+                format!("`{value}` is not a valid Java package"),
                 "use dot-separated lowercase Java package segments",
             );
         }
@@ -379,7 +379,7 @@ impl Linker {
             self.problem(
                 "model-sql-identifier",
                 path,
-                format!("`{value}` is not a canonical SQL identifier"),
+                format!("`{value}` is not a valid SQL identifier"),
                 "use lowercase snake_case without quoting",
             );
         }
@@ -453,7 +453,7 @@ impl Linker {
                 "model-route",
                 format!("{path}.route"),
                 crate::naming::route_problem(route)
-                    .unwrap_or_else(|| format!("`{route}` is not a canonical HTTP route")),
+                    .unwrap_or_else(|| format!("`{route}` is not a valid HTTP route")),
                 "use `METHOD /path`, for example `GET /notes/{id}`",
             );
             return;
@@ -515,8 +515,8 @@ pub(crate) fn collision(
         linker.problem(
             code,
             path,
-            format!("{kind} projection `{projection}` is already used at {first}"),
-            format!("give each declaration a unique {kind} projection"),
+            format!("{kind} name `{projection}` is already used at {first}"),
+            format!("give each declaration a unique {kind} name"),
         );
     }
 }

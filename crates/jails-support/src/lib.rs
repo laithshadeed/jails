@@ -64,7 +64,7 @@ pub enum Failure {
     /// `jails_model::Diagnostic`, which carries a code saying *which pass*
     /// said so. The human line is unchanged: `message` is whatever the
     /// diagnostic rendered, interpolated into whatever sentence the caller
-    /// wraps it in, so `jails: could not apply exact plan: ...` reads today
+    /// wraps it in, so `jails: could not apply the plan: ...` reads today
     /// as it read before. The code is what `--output json` puts in the
     /// envelope's `error.code`, where the constant `invalid-request` used to
     /// stand for every refusal alike.

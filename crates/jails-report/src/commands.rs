@@ -71,7 +71,7 @@ fn global_flags(root: &Command) -> Vec<String> {
 /// Every subcommand, at every depth, named by the whole path you type.
 ///
 /// Stopping at depth one would make this output claim a surface it does not
-/// describe: `resource field add`, `remove fast-test`, `app apply` and
+/// describe: `entity field add`, `remove fast-test`, `app apply` and
 /// `db console` are all real commands. A completer would offer half the verbs,
 /// and a message telling a reader to run `jails remove fast-test` could not be
 /// checked against the parser that would accept it.

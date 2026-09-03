@@ -106,7 +106,7 @@ pub(crate) struct AddFieldRequest {
 pub(crate) fn add_generated_field(args: GenerateArgs, invocation: Invocation) -> Result<()> {
     if args.fields.len() != 1 {
         return Err(Failure::Told(
-            "adding a field takes exactly one field spec\n       fix: run `jails resource field add Entity name:type`"
+            "adding a field takes exactly one field spec\n       fix: run `jails entity field add Entity name:type`"
                 .to_string(),
         ));
     }
@@ -125,7 +125,7 @@ pub(crate) fn add_generated_field(args: GenerateArgs, invocation: Invocation) ->
 pub(crate) fn add_field(request: AddFieldRequest, invocation: Invocation) -> Result<()> {
     if request.package.is_some() {
         return Err(Failure::Told(
-            "canonical entities have one stable identity and do not accept a legacy package selector.\n       fix: remove `--package` and name the entity declared in the application model"
+            "entities have one stable identity and do not accept a legacy package selector.\n       fix: remove `--package` and name the entity declared in the application model"
                 .to_string(),
         ));
     }
@@ -144,7 +144,7 @@ pub(crate) fn add_field(request: AddFieldRequest, invocation: Invocation) -> Res
         })
         .ok_or_else(|| {
             Failure::Told(format!(
-                "canonical entity `{}` does not exist.\n       fix: name an entity declared under `[entities]`",
+                "entity `{}` does not exist.\n       fix: name an entity declared under `[entities]`",
                 request.entity
             ))
         })?;
@@ -154,7 +154,7 @@ pub(crate) fn add_field(request: AddFieldRequest, invocation: Invocation) -> Res
     // no migration and nothing to backfill -- the same answer the policy below
     // gives a project with no database at all. `has_database` alone is only
     // equivalent while every entity in a stored project is itself stored, and
-    // `g record` then `resource field add` must not depend on an unrelated project
+    // `g record` then `entity field add` must not depend on an unrelated project
     // property.
     let stored = has_database && entity.facets.contains(&Facet::Repository);
     entity.refuse_retired().map_err(Failure::Told)?;
@@ -177,7 +177,7 @@ pub(crate) fn add_field(request: AddFieldRequest, invocation: Invocation) -> Res
         .any(|field| field.names.java_member == parsed.java_name || field.label == parsed.label)
     {
         return Err(Failure::Told(format!(
-            "`{entity_java_name}` already has a `{}` component.\n       fix: change it with `jails resource field type|nullability|rename`, or drop it first",
+            "`{entity_java_name}` already has a `{}` component.\n       fix: change it with `jails entity field type|nullability|rename`, or drop it first",
             parsed.java_name
         )));
     }

@@ -24,7 +24,7 @@ pub(crate) fn encode_compiler_lock(
     let model_digest = digest(&model_bytes)?;
     let projection_bytes = serde_json::to_vec(projection).map_err(|error| {
         lock_encoding(format!(
-            "could not encode accepted compiler projection: {error}"
+            "could not encode the accepted generated tree: {error}"
         ))
     })?;
     let projection_digest = digest(&projection_bytes)?;

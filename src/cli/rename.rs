@@ -57,11 +57,12 @@ impl From<ExternalRenamePolicy> for jails_spec::spec::policy::ExternalRenamePoli
 
 #[derive(Subcommand)]
 pub(crate) enum RenameCommand {
-    /// Rename a managed resource with an explicit storage strategy
+    /// Rename a managed entity with an explicit storage strategy
+    #[command(name = "entity", visible_alias = "resource")]
     Resource {
         /// `<slice>.<current-name>` selector resolved before planning
         from: String,
-        /// New logical resource name
+        /// New entity name
         to: String,
         /// Explicit physical-storage transition
         #[arg(long, value_enum)]

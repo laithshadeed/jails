@@ -9,22 +9,22 @@ pub(crate) enum ModelCommand {
     Init,
     /// Parse, link, and type-check the application model without writing
     Check {
-        /// Canonical model file to check
+        /// Model file to check
         #[arg(long)]
         manifest: Option<PathBuf>,
         /// Also require the committed managed tree to equal this compilation
         #[arg(long)]
         frozen: bool,
     },
-    /// Canonically format the JDL authoring source
+    /// Lay out the JDL authoring source the way jails writes it
     Fmt {
         /// Refuse without writing when the source is not canonically formatted
         #[arg(long)]
         check: bool,
     },
-    /// Compile the model into one content-addressed exact plan without applying it
+    /// Compile the model into one content-addressed plan without applying it
     Plan {
-        /// Canonical model file to compile
+        /// Model file to compile
         #[arg(long)]
         manifest: Option<PathBuf>,
         /// Write the complete portable plan bundle to this path
@@ -36,9 +36,9 @@ pub(crate) enum ModelCommand {
         #[arg(long, value_name = "FILE", hide = true)]
         bundle: Option<PathBuf>,
     },
-    /// Apply one previously reviewed exact plan without recompiling
+    /// Apply one previously reviewed plan without compiling again
     Apply {
-        /// Portable exact plan bundle written by `jails model plan`
+        /// Portable plan file written by `jails model plan`
         ///
         /// **Hidden, because `--plan-in` is the spelling.** It is the same
         /// question the global flag asks -- apply this reviewed bundle and do
@@ -46,7 +46,7 @@ pub(crate) enum ModelCommand {
         #[arg(long, value_name = "FILE", hide = true)]
         bundle: Option<PathBuf>,
     },
-    /// List the files the accepted projection owns, and whether each still matches it
+    /// List the files jails generated, and whether each still matches the model
     Status,
     /// Move managed output a release before this one wrote under .jails/generated into src/
     Relocate,
@@ -55,9 +55,10 @@ pub(crate) enum ModelCommand {
         /// Stable id, role, package or value to filter by; omit to list every record
         filter: Option<String>,
     },
-    /// Release one implementation boundary to you: its files stay put and leave the accepted projection
+    /// Release one implementation boundary to you: its files stay put and leave the generated tree
     Eject {
         /// A boundary path (Note.repo.fake, Audit.implementation), an artifact id from provenance, or a capability id
+        #[arg(value_name = "TARGET")]
         semantic_id: String,
     },
 }

@@ -292,10 +292,7 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
         },
     )
     .map_err(|error| {
-        Failure::diagnosed(
-            error.code,
-            format!("could not materialize exact plan: {error}"),
-        )
+        Failure::diagnosed(error.code, format!("could not build the plan: {error}"))
     })?;
     clock.mark("materialize", || {
         format!(
@@ -346,7 +343,7 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
             )
         });
     let execution = jails_workspace::execute(&root, &bundle).map_err(|error| {
-        Failure::diagnosed(error.code, format!("could not apply exact plan: {error}"))
+        Failure::diagnosed(error.code, format!("could not apply the plan: {error}"))
     })?;
     clock.mark("execute", || {
         format!(
@@ -583,7 +580,7 @@ pub(crate) fn operation_field_label(model: &AppModel, entity: &str, token: &str)
         .find(|candidate| candidate.label == entity)
         .ok_or_else(|| {
             Failure::Told(format!(
-                "`{entity}` does not name a canonical entity.\n       fix: choose an entity declared under `[entities]`"
+                "`{entity}` does not name a entity.\n       fix: choose an entity declared under `[entities]`"
             ))
         })?;
     if !token.contains(':') {
@@ -624,7 +621,7 @@ pub(crate) fn operation_field_label(model: &AppModel, entity: &str, token: &str)
         || parsed.non_blank != field.non_blank
     {
         return Err(Failure::Told(format!(
-            "operation field `{token}` disagrees with canonical entity field `{entity}.{}`.\n       fix: use `{}:{expected_type}{}` or the bare field name",
+            "operation field `{token}` disagrees with entity field `{entity}.{}`.\n       fix: use `{}:{expected_type}{}` or the bare field name",
             field.label,
             field.names.java_member,
             if !field.required {

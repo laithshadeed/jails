@@ -378,7 +378,7 @@ fn doctor_reports_missing_and_changed_managed_outputs_with_repair_guidance() {
     );
 }
 
-/// A migration written by `jails resource field` carries no renderer stamp,
+/// A migration written by `jails entity field` carries no renderer stamp,
 /// so it is not *managed output*; published schema history is sealed with its
 /// content digest, and the seal is what `doctor` checks a deleted or edited
 /// migration against.
@@ -396,7 +396,7 @@ fn doctor_reports_a_sealed_migration_that_was_deleted_or_edited() {
     );
     assert!(
         jails_cmd(&root, None)
-            .args(["resource", "field", "add", "Task", "priority:int?"])
+            .args(["entity", "field", "add", "Task", "priority:int?"])
             .status()
             .unwrap()
             .success()
@@ -495,7 +495,7 @@ fn an_unwritable_path_leaves_the_project_exactly_as_it_was() {
     std::os::unix::fs::PermissionsExt::set_mode(&mut locked, 0o555);
     fs::set_permissions(&migrations, locked).unwrap();
     let torn = jails_cmd(&root, None)
-        .args(["resource", "field", "add", "Task", "priority:int?"])
+        .args(["entity", "field", "add", "Task", "priority:int?"])
         .output()
         .unwrap();
     assert!(!torn.status.success(), "the write was not refused");
@@ -513,7 +513,7 @@ fn an_unwritable_path_leaves_the_project_exactly_as_it_was() {
 
     // And the same command, run again, converges.
     let again = jails_cmd(&root, None)
-        .args(["resource", "field", "add", "Task", "priority:int?"])
+        .args(["entity", "field", "add", "Task", "priority:int?"])
         .output()
         .unwrap();
     assert!(again.status.success(), "{again:?}");

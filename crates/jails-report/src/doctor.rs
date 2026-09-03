@@ -220,7 +220,7 @@ fn capability_drift_checks() -> Vec<Check> {
     vec![Check::new(
         Status::Skip,
         "capabilities",
-        "declared in the model -- reconciled by `jails sync`",
+        "declared in the model -- applied by `jails sync`",
     )]
 }
 

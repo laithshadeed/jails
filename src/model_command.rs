@@ -89,7 +89,7 @@ pub(crate) fn read_source(root: &Path, model_path: &Path) -> Result<String> {
         }
         Err(error) => {
             return Err(Failure::Told(format!(
-                "could not read canonical model `{}`: {error}",
+                "could not read model `{}`: {error}",
                 model_path.display()
             )));
         }
@@ -236,7 +236,7 @@ pub(crate) fn sync(no_start: bool, invocation: Invocation) -> Result<()> {
         model,
         // **`sync` is the verb that makes the tree match the model, and a
         // deleted managed file is the tree not matching it.** It used to
-        // refuse and name `jails resource repair`, which is a second verb for
+        // refuse and name `jails entity repair`, which is a second verb for
         // the same sentence -- and the reader who deleted the file reached
         // for `sync` first, got a refusal, and had to learn a command they
         // will use once. Nothing can be lost: a managed file is reproducible
@@ -256,10 +256,7 @@ pub(crate) fn sync(no_start: bool, invocation: Invocation) -> Result<()> {
         return crate::model_generate::report_plan(&bundle, &invocation);
     }
     let execution = jails_workspace::execute(root, &bundle).map_err(|error| {
-        Failure::diagnosed(
-            error.code,
-            format!("could not synchronize canonical model: {error}"),
-        )
+        Failure::diagnosed(error.code, format!("could not synchronize model: {error}"))
     })?;
     if invocation.output == Output::Human {
         // The same distinction `add` draws: a sync over a project that is
@@ -378,7 +375,7 @@ fn format(check: bool, invocation: Invocation) -> Result<()> {
         && *model != parse(&next_source)?
     {
         return Err(Failure::Told(
-            "the JDL formatter changed linked model semantics.\n       fix: report this formatter bug; the source was not written"
+            "the JDL formatter changed what the model means.\n       fix: report this formatter bug; the source was not written"
                 .to_string(),
         ));
     }
@@ -386,7 +383,7 @@ fn format(check: bool, invocation: Invocation) -> Result<()> {
     if check {
         if source != next_source {
             return Err(Failure::Told(format!(
-                "canonical formatting differs in `{JDL_PATH}`.\n       fix: run `jails model fmt` and review the exact source update"
+                "formatting differs in `{JDL_PATH}`.\n       fix: run `jails model fmt` and review the change it makes"
             )));
         }
         if invocation.output == Output::Human {
@@ -447,19 +444,19 @@ fn format(check: bool, invocation: Invocation) -> Result<()> {
 pub(crate) fn apply(bundle_path: &Path, output: Output) -> Result<()> {
     let bytes = std::fs::read(bundle_path).map_err(|error| {
         Failure::Told(format!(
-            "could not read exact plan bundle `{}`: {error}\n       fix: pass the file written by `jails model plan --bundle <path>`",
+            "could not read plan file `{}`: {error}\n       fix: pass the file written by `jails model plan --bundle <path>`",
             bundle_path.display()
         ))
     })?;
     let bundle: jails_contracts::PlanBundle = serde_json::from_slice(&bytes).map_err(|error| {
         Failure::Told(format!(
-            "could not decode exact plan bundle `{}`: {error}\n       fix: regenerate the bundle with this version of jails",
+            "could not decode plan file `{}`: {error}\n       fix: regenerate the bundle with this version of jails",
             bundle_path.display()
         ))
     })?;
     let root = crate::model_command::root()?;
     let execution = jails_workspace::execute(&root, &bundle).map_err(|error| {
-        Failure::diagnosed(error.code, format!("could not apply exact plan: {error}"))
+        Failure::diagnosed(error.code, format!("could not apply the plan: {error}"))
     })?;
     if output == Output::Human {
         println!(
@@ -545,7 +542,7 @@ fn plan(root: &Path, manifest: &Path, bundle_path: Option<&Path>, output: Output
         Notice::Print,
     )?;
     let encoded = serde_json::to_vec_pretty(&bundle)
-        .map_err(|error| Failure::Told(format!("could not encode exact plan: {error}")))?;
+        .map_err(|error| Failure::Told(format!("could not encode the plan: {error}")))?;
     if let Some(path) = bundle_path {
         jails_support::apply::put_outside_project_private_atomic(path, &encoded)?;
     }
@@ -590,7 +587,7 @@ pub(crate) fn materialize_seed(root: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Whether this compilation is `jails resource repair`.
+/// Whether this compilation is `jails entity repair`.
 ///
 /// It rides on `compile` rather than on a wrapper beside it: a second
 /// root-taking entry point is one more place re-deriving what the existing
@@ -600,7 +597,7 @@ enum Repair {
     No,
     /// `jails sync`: write back what is simply gone.
     MissingManagedFiles,
-    /// `jails resource repair`: also rewrite an edited sealed migration.
+    /// `jails entity repair`: also rewrite an edited sealed migration.
     MissingOrEditedMigrations,
 }
 
@@ -690,15 +687,10 @@ fn compile(
             Repair::MissingOrEditedMigrations => jails_workspace::Restore::MissingOrEdited,
         },
     )
-    .map_err(|error| {
-        Failure::diagnosed(
-            error.code,
-            format!("could not materialize exact plan: {error}"),
-        )
-    })
+    .map_err(|error| Failure::diagnosed(error.code, format!("could not build the plan: {error}")))
 }
 
-/// `jails resource repair` on a canonical project.
+/// `jails entity repair` on a canonical project.
 ///
 /// **Ordinary compilation with one guard waived**, which is the whole of it:
 /// managed output is reproducible from the model, so
@@ -750,7 +742,7 @@ fn frozen_failure(
         manifest.display(),
         bundle.plan.digest.as_str()
     );
-    let fix = "review `jails model plan`, then apply that exact plan";
+    let fix = "review `jails model plan`, then apply that plan";
     if output == Output::Human {
         return Err(Failure::Told(format!("{message}\n       fix: {fix}")));
     }

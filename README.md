@@ -22,7 +22,7 @@ Installs `jails` into cargo's install root (`~/.cargo/bin` unless
 ## The application compiler
 
 A project has one human-authored desired-state model at `.jails/model.jdl`.
-Every `jails g`, `jails add`, `jails resource`, `jails set` and `jails destroy`
+Every `jails g`, `jails add`, `jails entity`, `jails set` and `jails destroy`
 is an edit to that model, followed by one compilation of the whole model into
 an exact, content-addressed plan that is previewed byte for byte and then
 executed. Generated Java is a merge-managed projection written beside your
@@ -121,10 +121,10 @@ lower to `JdbcClient` adapters, and with `api` to Spring controllers with a
 companion test that drives a real request. Every implementation is ejectable
 independently while its port stays managed.
 
-**Evolution** is typed. `rename resource --strategy preserve-table` changes the
-Java projection and keeps the entity ID, table and routes; `resource field
+**Evolution** is typed. `rename entity --strategy preserve-table` changes the
+Java projection and keeps the entity ID, table and routes; `entity field
 rename|type|nullability|drop` are stable-ID patches with exactly one typed
-policy each; `resource index add|remove` and `--storage preserve|drop` append
+policy each; `entity index add|remove` and `--storage preserve|drop` append
 exactly one forward migration. Rolling and expand/contract campaigns refuse.
 
 **Destroy** is subtraction: it removes the declaration and recompiles. The
@@ -206,7 +206,7 @@ source: the next change can be made by hand in the file and applied with
   project (hand-written `pom.xml`, `App.java`, `AppTest.java`), no network
   required. `App.java` is a working command dispatcher, not a Hello World
   stub, so `generate command` has something to register into from the start.
-- `jails generate|g scaffold <Name> [field:type ...]` — a REST resource that
+- `jails generate|g scaffold <Name> [field:type ...]` — a REST entity that
   **runs**, not a set of stubs: immutable record, repository port, a derived
   raw-JDBC adapter, an in-memory adapter (so the app starts before there is a
   database), request/response DTOs with validation from the field spec, a
@@ -259,7 +259,7 @@ source: the next change can be made by hand in the file and applied with
   — the remaining small Java artifacts and their useful companion tests.
 - `jails generate|g controller <Name> [--method <get|post|put|patch|delete>]
   [--on <Type>] [--returns <Type>]` — one route, in the shape you say. The
-  default is `GET` returning the resource name, which is a route that works and
+  default is `GET` returning the entity name, which is a route that works and
   a test that runs. `--returns <Type>` makes it the response type and `--on
   <Type>` the `@RequestBody`, importing each from the domain layer.
 
@@ -444,7 +444,7 @@ there the unit is a whole service block rather than a setting.)
   --yields <Resource>` (alias `djob`) — PostgreSQL-backed work with atomic
   claim, expiring leases, `SKIP LOCKED`, bounded exponential retry, observable
   terminal failure, and payload idempotency. The payload must exactly match an
-  existing generated command and carry the resource's stable UUID identity;
+  existing generated command and carry the entity's stable UUID identity;
   replay after a crash between the business commit and queue acknowledgement
   observes that identity before repeating the effect.
 - `jails generate|g http-sink <Name> --on <Usecase> --yields <Event>` (alias
@@ -483,7 +483,7 @@ there the unit is a whole service block rather than a setting.)
   a leased relay delivers to every configured sink, and PostgreSQL tests prove
   bounded retry and inspectable terminal failure. An event component named
   `<Resource>Id` is the identity of the row the use case just created; the
-  event's own `id` is minted, so two events about one resource are two rows
+  event's own `id` is minted, so two events about one entity are two rows
   rather than one silently discarded as a duplicate.
 
   **`--on-conflict <component>` makes the create a get-or-create.** The
@@ -751,7 +751,7 @@ there the unit is a whole service block rather than a setting.)
   are strings the caller picks — jails does not know what is present in what.
   The generated `IT` is the point: two adapters are two nodes, one joins and
   the other is asked. Needs `jails add db`.
-- `jails generate|g seed <Resource>` — development data for a resource that
+- `jails generate|g seed <Entity>` — development data for an entity that
   already exists: `src/main/resources/db/seeds/<table>.json` with one sample
   row built from the record's own components, and a `@Profile("seed")`
   `ApplicationRunner` that loads it **through the repository port**, never SQL
@@ -861,7 +861,7 @@ there the unit is a whole service block rather than a setting.)
   mentions it skipped. Neovim's `grn` (jdt.ls) is scope-aware and better where
   it works — this is for when the language server is not attached or the
   project does not currently compile.
-- `jails rename resource <Current> <New> --strategy
+- `jails rename entity <Current> <New> --strategy
   preserve-table|single-cutover` — coordinate the declaration, the generated
   Java, the table binding, the migration history, and owned SQL literals in
   one reviewed plan. `preserve-table` is the safe shape: it changes the
@@ -871,8 +871,8 @@ there the unit is a whole service block rather than a setting.)
   names. `--strategy rolling` is refused by name: a rolling or
   expand/contract rename is a *campaign* of ordinary plans run as the readers
   are ready, and the tool will not own the waiting between them.
-- `jails adopt resource <Name>` — register a type you wrote in the model, so
-  `resource field`, `rename resource` and `destroy` work on it. Reads the
+- `jails adopt entity <Name>` — register a type you wrote in the model, so
+  `entity field`, `rename entity` and `destroy` work on it. Reads the
   record's components off `src/main/java`, maps each Java type through the
   field-type table or refuses by component, and marks the record yours with
   `eject <Name>.record @adopted`; your file is a plan input, never an output.
@@ -1161,7 +1161,7 @@ The manifest is intentionally a closed schema: `schema`, `capabilities`, and
 `package`, `on`, and `yields`. Unknown keys fail instead of being silently
 ignored.
 
-`on` and `yields` are the reference keys — the resource an intent acts on, and
+`on` and `yields` are the reference keys — the entity an intent acts on, and
 what it produces. `strategy_on` and `strategy_yields` parse as deprecated
 aliases; setting the same reference under both names is an error rather than a
 coin toss. [`examples/ACCEPTANCE.md`](examples/ACCEPTANCE.md) is the executable
@@ -1304,11 +1304,11 @@ on purpose — Rails puts it on every generator rather than on the few that
 looked risky, and the value is never having to remember which commands
 support it. One spelling per verb: `--dry-run` still parses for one release
 and is advertised nowhere, and so do `--force` (now `--yes`), `g field` (now
-`jails resource field add`), `model plan --bundle` (now `--plan-out`) and
+`jails entity field add`), `model plan --bundle` (now `--plan-out`) and
 `model apply --bundle` (now `--plan-in`).
 
 - `jails generate|g handler <Name>` — an `HttpHandler` in `api/` for one
-  resource: derives its path (`WorkItem` → `/work-items`), takes its service as
+  entity: derives its path (`WorkItem` → `/work-items`), takes its service as
   a constructor dependency so the same code path serves CLI and HTTP, and maps
   outcomes to 400 / 404 / 422 through a shared `ApiError` envelope (generated
   if absent). The companion test drives it over a real loopback socket on an
@@ -1409,11 +1409,11 @@ Column names in `--index` are checked against the table before anything is
 written; a typo there would otherwise surface at `flyway migrate` on whichever
 machine ran it first.
 
-**Afterwards, `jails resource index add`.** `--index` and `@index` are both
+**Afterwards, `jails entity index add`.** `--index` and `@index` are both
 creation-time, so an index a table turns out to need later had no verb:
 
 ```
-jails resource index add Message 'customer_id, created_at desc'
+jails entity index add Message 'customer_id, created_at desc'
 ```
 
 Adding writes one forward migration, checks the columns the same way, and
@@ -1422,13 +1422,13 @@ the exact physical index name and writes a later `drop index`; the accepted
 create migration is never rewritten:
 
 ```
-jails resource index remove Message 'customer_id, created_at desc' \
+jails entity index remove Message 'customer_id, created_at desc' \
   --confirm-index idx_message_index_ab12cd34ef56
 ```
 
 A wrong confirmation, missing shape, or direct model deletion refuses before
 any byte changes. The same index twice is refused rather than written twice.
-An index is the easy half of what `resource field add` already does — a new
+An index is the easy half of what `entity field add` already does — a new
 column has to argue about a data plan for a populated table and an index has
 none.
 
@@ -1649,16 +1649,16 @@ Run `jails adopt --pretend` first.
 `.jails/model.jdl` from what the project already says about itself, and
 nothing else.
 
-### `jails adopt resource <Name>`
+### `jails adopt entity <Name>`
 
 For a type you wrote before jails knew the project. Once the model exists,
-`jails resource field add Message ...`, `jails rename resource Message ...`
+`jails entity field add Message ...`, `jails rename entity Message ...`
 and `jails destroy record Message` all answer *"no `Message` is declared"*
 about a record that is plainly there — because the model is what those
-commands read, and nothing put it in the model. `adopt resource` does:
+commands read, and nothing put it in the model. `adopt entity` does:
 
 ```text
-jails adopt resource Message
+jails adopt entity Message
   adopt   Message  src/main/java/com/example/notes/domain/Message.java
   field   id:uuid
   field   title:string
@@ -1700,9 +1700,9 @@ did not render need not have. A record outside the `domain` layer is pinned
 with `@package` rather than moved. Your repository, service or controller
 stay yours and unmodelled: jails does not guess which of its facets they are.
 
-From then on the entity is one the resource commands know. `resource field
+From then on the entity is one the `jails entity` commands know. `entity field
 add` evolves the model — the field in your record is yours to add, and the
-generated code that reads it compiles against your file. `rename resource`
+generated code that reads it compiles against your file. `rename entity`
 follows you rather than leading: while your file still names `Message` it
 refuses with `manual-edit-required` and the path, and once you have renamed
 the type it moves the declaration and the `eject Message.record` line with
@@ -1969,7 +1969,7 @@ Deferred out of v1 on purpose — this is meant to stay a small tool:
   one is a version boundary rather than a keyword: a compiler that did not
   know the word would accept the declaration and quietly ignore every name
   it moves. `--package` is the vertical slice today, collapsing one
-  resource's classes into a single package. `rename resource` still accepts
+  entity's classes into a single package. `rename entity` still accepts
   a `Billing.Task` prefix and ignores it, which is harmless because two
-  resources cannot project to one Java type; the prefix goes with the next
+  entities cannot project to one Java type; the prefix goes with the next
   deliberate breaking change rather than on its own.

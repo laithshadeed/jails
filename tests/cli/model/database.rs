@@ -70,7 +70,7 @@ fn canonical_database_query_keeps_the_iterative_loop_and_ejects_only_its_adapter
     );
     fs::write(&adapter, &hand_edited).unwrap();
     let evolved = jails_cmd(&root, None)
-        .args(["resource", "field", "add", "Note", "summary:string?"])
+        .args(["entity", "field", "add", "Note", "summary:string?"])
         .output()
         .unwrap();
     assert!(
@@ -105,7 +105,7 @@ fn canonical_database_query_keeps_the_iterative_loop_and_ejects_only_its_adapter
     fs::write(&adapter, edited_adapter).unwrap();
     let before_overlap = snapshot_tree(&root);
     let refused = jails_cmd(&root, None)
-        .args(["resource", "field", "add", "Note", "priority:int?"])
+        .args(["entity", "field", "add", "Note", "priority:int?"])
         .output()
         .unwrap();
     assert!(!refused.status.success());
@@ -122,7 +122,7 @@ fn canonical_database_query_keeps_the_iterative_loop_and_ejects_only_its_adapter
 
     fs::write(&adapter, &evolved_source).unwrap();
     let retried = jails_cmd(&root, None)
-        .args(["resource", "field", "add", "Note", "priority:int?"])
+        .args(["entity", "field", "add", "Note", "priority:int?"])
         .output()
         .unwrap();
     assert!(
@@ -152,7 +152,7 @@ fn canonical_database_query_keeps_the_iterative_loop_and_ejects_only_its_adapter
 
     let reader_bytes = fs::read(&reader).unwrap();
     let evolved_after_ejection = jails_cmd(&root, None)
-        .args(["resource", "field", "add", "Note", "archived:boolean?"])
+        .args(["entity", "field", "add", "Note", "archived:boolean?"])
         .output()
         .unwrap();
     assert!(
@@ -273,7 +273,7 @@ fn canonical_database_commands_and_transitions_are_independent_iterative_boundar
     .unwrap();
 
     let evolved = jails_cmd(&root, None)
-        .args(["resource", "field", "add", "Note", "summary:string?"])
+        .args(["entity", "field", "add", "Note", "summary:string?"])
         .output()
         .unwrap();
     assert!(
@@ -307,7 +307,7 @@ fn canonical_database_commands_and_transitions_are_independent_iterative_boundar
     fs::write(&command, edited_command).unwrap();
     let before_overlap = snapshot_tree(&root);
     let refused = jails_cmd(&root, None)
-        .args(["resource", "field", "add", "Note", "priority:int?"])
+        .args(["entity", "field", "add", "Note", "priority:int?"])
         .output()
         .unwrap();
     assert!(!refused.status.success());
@@ -324,7 +324,7 @@ fn canonical_database_commands_and_transitions_are_independent_iterative_boundar
 
     fs::write(&command, &evolved_command).unwrap();
     let retried = jails_cmd(&root, None)
-        .args(["resource", "field", "add", "Note", "priority:int?"])
+        .args(["entity", "field", "add", "Note", "priority:int?"])
         .output()
         .unwrap();
     assert!(
@@ -363,7 +363,7 @@ fn canonical_database_commands_and_transitions_are_independent_iterative_boundar
     let reader_command_bytes = fs::read(&reader_command).unwrap();
 
     let evolved_after_command_ejection = jails_cmd(&root, None)
-        .args(["resource", "field", "add", "Note", "category:string?"])
+        .args(["entity", "field", "add", "Note", "category:string?"])
         .output()
         .unwrap();
     assert!(
@@ -401,7 +401,7 @@ fn canonical_database_commands_and_transitions_are_independent_iterative_boundar
     let reader_transition_bytes = fs::read(&reader_transition).unwrap();
 
     let evolved_after_both_ejections = jails_cmd(&root, None)
-        .args(["resource", "field", "add", "Note", "tag:string?"])
+        .args(["entity", "field", "add", "Note", "tag:string?"])
         .output()
         .unwrap();
     assert!(
@@ -529,7 +529,7 @@ fn canonical_migration_plan_refuses_a_concurrent_history_append_without_writes()
     let plan = root.join("field-plan.json");
     let planned = jails_cmd(&root, None)
         .args([
-            "resource",
+            "entity",
             "field",
             "add",
             "Note",
@@ -604,7 +604,7 @@ fn canonical_reader_sql_is_exact_plan_input_and_stale_changes_refuse_all_writes(
     let plan = root.join("field-plan.json");
     let planned = jails_cmd(&root, None)
         .args([
-            "resource",
+            "entity",
             "field",
             "add",
             "Note",
@@ -660,7 +660,7 @@ fn canonical_reader_sql_is_exact_plan_input_and_stale_changes_refuse_all_writes(
 
     let applied = jails_cmd(&root, None)
         .args([
-            "resource",
+            "entity",
             "field",
             "add",
             "Note",

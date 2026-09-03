@@ -259,7 +259,7 @@ fn a_manifest_field_appended_to_a_scaffold_becomes_a_forward_migration() {
     let stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(stderr.contains("cannot say which change it is"), "{stderr}");
     assert!(
-        stderr.contains("jails resource field rename|type|nullability|drop Deal"),
+        stderr.contains("jails entity field rename|type|nullability|drop Deal"),
         "{stderr}"
     );
 }

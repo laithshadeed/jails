@@ -59,7 +59,7 @@ pub(super) fn lower(
         return Err(Diagnostic::new(
             "compile-query-zero-limit",
             format!("$.operations.{}", operation.label),
-            format!("canonical query `{}` has a zero row limit", operation.label),
+            format!("query `{}` has a zero row limit", operation.label),
             format!("set a positive limit or omit it for the bounded default of {DEFAULT_LIMIT}"),
         ));
     }

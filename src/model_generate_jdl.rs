@@ -111,7 +111,7 @@ fn run_operation(args: GenerateArgs, invocation: Invocation) -> Result<()> {
                 .find(|entity| entity.label == requested_entity || entity.names.java_type == on)
                 .ok_or_else(|| {
                     Failure::Told(format!(
-                        "`{on}` does not name a canonical entity.\n       fix: choose an entity declared in `{MODEL_PATH}`"
+                        "`{on}` does not name a entity.\n       fix: choose an entity declared in `{MODEL_PATH}`"
                     ))
                 })?;
             (entity.label.clone(), entity.names.java_type.clone())
@@ -179,7 +179,7 @@ fn run_operation(args: GenerateArgs, invocation: Invocation) -> Result<()> {
             })?;
         if existing != requested {
             return Err(Failure::Told(format!(
-                "canonical operation `{}` is already declared with a different shape.\n       fix: remove it explicitly before changing its semantic contract",
+                "operation `{}` is already declared with a different shape.\n       fix: remove it explicitly before changing what it declares",
                 args.name
             )));
         }
@@ -283,7 +283,7 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
                 .collect::<Vec<_>>();
             if !dropped.is_empty() {
                 return Err(Failure::Told(format!(
-                    "canonical entity `{}` gained {} and lost {}, and jails cannot say which change it is: a rename, a drop and an add, or a type change.\n       fix: `jails resource field rename|type|nullability|drop {}` states which one, and each keeps the rows differently",
+                    "entity `{}` gained {} and lost {}, and jails cannot say which change it is: a rename, a drop and an add, or a type change.\n       fix: `jails entity field rename|type|nullability|drop {}` states which one, and each keeps the rows differently",
                     args.name,
                     quoted_list(&added),
                     quoted_list(&dropped),
@@ -329,7 +329,7 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
                 }
             } else if added.is_empty() || !unchanged {
                 return Err(Failure::Told(format!(
-                    "canonical entity `{}` is already declared with a different shape.\n       fix: evolve it with `jails resource field add` or `jails rename resource`",
+                    "entity `{}` is already declared with a different shape.\n       fix: evolve it with `jails entity field add` or `jails rename resource`",
                     args.name
                 )));
             }
@@ -341,7 +341,7 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
                     .cloned()
                 else {
                     return Err(Failure::Told(format!(
-                        "canonical entity `{}` gained field `{label}` from a declaration this command cannot restate.\n       fix: add it with `jails resource field add {} {label}:<type>`",
+                        "entity `{}` gained field `{label}` from a declaration this command cannot restate.\n       fix: add it with `jails entity field add {} {label}:<type>`",
                         args.name, args.name
                     )));
                 };
@@ -382,7 +382,7 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
     })?;
     // **`--index` is a second mutation, not a flag on the first.** An index is a
     // stable entity child with its own identity and its own forward
-    // migration, which is `resource index add`'s whole contract -- so the
+    // migration, which is `entity index add`'s whole contract -- so the
     // frontend that owns it is the one that applies it, rather than the entity
     // renderer growing a copy.
     //

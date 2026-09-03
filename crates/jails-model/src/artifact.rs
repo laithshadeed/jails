@@ -40,10 +40,10 @@ pub enum ArtifactKind {
     /// Add one component to an existing record and safely refresh unchanged
     /// derived files; edited files are reported, never overwritten
     ///
-    /// **Hidden, because `jails resource field add` is the spelling.** Three
+    /// **Hidden, because `jails entity field add` is the spelling.** Three
     /// ways to add a field is two too many, and the other two are already
     /// answered: re-running `g scaffold` with a longer list refuses and names
-    /// `resource field add`, and this parses for one release so a script that
+    /// `entity field add`, and this parses for one release so a script that
     /// types it keeps working. `skip` would take it out of clap entirely,
     /// which is a removal rather than a deprecation.
     #[cfg_attr(feature = "cli", value(hide = true))]
@@ -85,9 +85,10 @@ pub enum ArtifactKind {
     /// schedule by throwing (Spring only)
     Job,
     /// A durable, bounded HTTP graph walk composed with an existing safe
-    /// fetcher. Generates a PostgreSQL frontier, robots policy, canonical
-    /// exact-origin traversal, status/pages/cancel API, and adversarial IT.
-    /// `--on` names the fetcher; limits are request/configuration data.
+    /// fetcher. Generates a PostgreSQL frontier, robots policy, same-origin
+    /// traversal over normalised URLs, status/pages/cancel API, and
+    /// adversarial IT. `--on` names the fetcher; limits are
+    /// request/configuration data.
     #[cfg_attr(feature = "cli", value(name = "http-workflow", alias = "hflow"))]
     HttpWorkflow,
     /// A validated relational invariant between two existing scaffolds.

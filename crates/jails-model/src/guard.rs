@@ -174,7 +174,7 @@ impl AppModel {
             .any(|ejection| artifact_mentions(&ejection.target, target))
         {
             return Err(format!(
-                "semantic target `{target}` is reader-owned\n       fix: remove or migrate its ejection declaration before removing the target"
+                "`{target}` is reader-owned\n       fix: remove or migrate its ejection declaration before removing the target"
             ));
         }
         Ok(())

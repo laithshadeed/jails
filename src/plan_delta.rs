@@ -46,7 +46,7 @@ pub(crate) fn deleted_paths(
 ///
 /// **A file list is the change, not the tree.** Every path the managed tree
 /// holds is in the plan's after-image whether or not this transition touches
-/// it, so a `write` line per entry described a `resource field add` as
+/// it, so a `write` line per entry described a `entity field add` as
 /// twenty-two files where `git status` showed three. `write` meant *in the
 /// plan*; the reader read it as *rewritten*. The executor already skips an
 /// entry whose bytes are already on disk, so the count under the list was

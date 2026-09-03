@@ -30,7 +30,7 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
         &current.model,
         args.strategy_on.as_deref().ok_or_else(|| {
             Failure::Told(format!(
-                "canonical association `{}` needs its child resource\n       fix: pass `--on <Child>` -- the foreign key column is the child's",
+                "association `{}` needs its child entity\n       fix: pass `--on <Child>` -- the foreign key column is the child's",
                 args.name
             ))
         })?,
@@ -40,7 +40,7 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
         &current.model,
         args.strategy_yields.as_deref().ok_or_else(|| {
             Failure::Told(format!(
-                "canonical association `{}` needs its parent resource\n       fix: pass `--yields <Parent>`",
+                "association `{}` needs its parent entity\n       fix: pass `--yields <Parent>`",
                 args.name
             ))
         })?,
@@ -124,7 +124,7 @@ fn stored<'a>(model: &'a jails_model::AppModel, name: &str, side: &str) -> Resul
         .find(|entity| entity.label == label || entity.names.java_type == name)
         .ok_or_else(|| {
             Failure::Told(format!(
-                "`{name}` does not name a canonical entity\n       fix: generate the {side} resource first"
+                "`{name}` does not name an entity\n       fix: generate the {side} entity first"
             ))
         })?;
     if !entity.active || !entity.facets.contains(&Facet::Repository) {
@@ -139,7 +139,7 @@ fn stored<'a>(model: &'a jails_model::AppModel, name: &str, side: &str) -> Resul
 fn mappings(args: &GenerateArgs, child: &Entity, parent: &Entity) -> Result<Vec<(String, String)>> {
     if args.fields.is_empty() {
         return Err(Failure::Told(format!(
-            "canonical association `{}` needs at least one column pair\n       fix: pass `<childField>=<parentField>`, for example `ownerId=id`",
+            "association `{}` needs at least one column pair\n       fix: pass `<childField>=<parentField>`, for example `ownerId=id`",
             args.name
         )));
     }
@@ -192,7 +192,7 @@ fn reject_unsupported_options(args: &GenerateArgs) -> Result<()> {
         || args.consumes.is_some();
     if unsupported {
         return Err(Failure::Told(
-            "a canonical association is two entities and the columns between them\n       fix: run `jails g association <Name> <childField>=<parentField> --on <Child> --yields <Parent>`"
+            "a association is two entities and the columns between them\n       fix: run `jails g association <Name> <childField>=<parentField> --on <Child> --yields <Parent>`"
                 .to_string(),
         ));
     }

@@ -37,7 +37,7 @@ pub(crate) enum EditorCommand {
         #[arg(last = true, allow_hyphen_values = true)]
         argv: Vec<String>,
     },
-    /// Return project symbols with stable semantic identities
+    /// Return project symbols with their stable model identities
     Symbols {
         #[arg(value_enum)]
         kind: EditorSymbolKindArg,

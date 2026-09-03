@@ -88,7 +88,7 @@ pub fn parse_field(token: &str) -> Result<ParsedField, String> {
             }
             other => {
                 return Err(format!(
-                    "`@{other}` is not represented by the canonical field model.\n       fix: use a documented field marker such as `@pk`, `@scope`, `@positive`, or `@column(name)`"
+                    "`@{other}` is not represented by the field model.\n       fix: use a documented field marker such as `@pk`, `@scope`, `@positive`, or `@column(name)`"
                 ));
             }
         }

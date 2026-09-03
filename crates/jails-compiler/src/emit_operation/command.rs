@@ -69,7 +69,7 @@ pub(super) fn lower(
                 "compile-command-field-supplied-twice",
                 format!("$.operations.{}", operation.label),
                 format!(
-                    "canonical command `{}` supplies field `{}` from both input and a constant assignment",
+                    "command `{}` supplies field `{}` from both input and a constant assignment",
                     operation.label, assignment.field
                 ),
                 "remove the field parameter or its `set` statement",
@@ -156,7 +156,7 @@ pub(super) fn lower(
                 "compile-command-required-field-unconstructable",
                 format!("$.operations.{}", operation.label),
                 format!(
-                    "canonical command `{}` cannot construct required field `{}`",
+                    "command `{}` cannot construct required field `{}`",
                     operation.label, field.label
                 ),
                 format!(
@@ -312,7 +312,7 @@ fn local_parameters<'a>(
                 "compile-command-field-from-many-parameters",
                 format!("$.entities.{}", target.label),
                 format!(
-                    "canonical command supplies field `{}` from more than one parameter",
+                    "command supplies field `{}` from more than one parameter",
                     field.field
                 ),
             ));
@@ -350,7 +350,7 @@ fn lower_resolutions(
                 "compile-command-resolved-field-supplied-twice",
                 format!("$.operations.{}", operation.label),
                 format!(
-                    "canonical command `{}` supplies resolved field `{}` from more than one source",
+                    "command `{}` supplies resolved field `{}` from more than one source",
                     operation.label, target_field.label
                 ),
                 "remove its direct parameter or constant assignment",
@@ -391,7 +391,7 @@ fn lower_resolutions(
                 "compile-command-resolve-type-mismatch",
                 format!("$.operations.{}", operation.label),
                 format!(
-                    "canonical command `{}` resolves `{}` from incompatible field `{}.{}`",
+                    "command `{}` resolves `{}` from incompatible field `{}.{}`",
                     operation.label, target_field.label, remote.label, remote_value.label
                 ),
                 "resolve from a field with the same logical type",
@@ -402,7 +402,7 @@ fn lower_resolutions(
                 "compile-command-resolve-lookup-not-unique",
                 format!("$.operations.{}", operation.label),
                 format!(
-                    "canonical command `{}` resolves through non-unique field `{}.{}`",
+                    "command `{}` resolves through non-unique field `{}.{}`",
                     operation.label, remote.label, remote_lookup.label
                 ),
                 "declare that lookup field primary or unique",
@@ -428,7 +428,7 @@ fn lower_resolutions(
                 "compile-command-resolve-parameter-type",
                 format!("$.operations.{}", operation.label),
                 format!(
-                    "canonical command `{}` resolves through parameter `{}` with the wrong type",
+                    "command `{}` resolves through parameter `{}` with the wrong type",
                     operation.label, parameter.name
                 ),
                 format!(
@@ -442,7 +442,7 @@ fn lower_resolutions(
                 "compile-command-resolve-parameter-optional",
                 format!("$.operations.{}", operation.label),
                 format!(
-                    "canonical command `{}` uses optional resolve parameter `{}`",
+                    "command `{}` uses optional resolve parameter `{}`",
                     operation.label, parameter.name
                 ),
                 "make the lookup parameter required",
@@ -466,7 +466,7 @@ fn lower_resolutions(
                 "compile-command-field-resolved-twice",
                 format!("$.operations.{}", operation.label),
                 format!(
-                    "canonical command `{}` resolves field `{}` more than once",
+                    "command `{}` resolves field `{}` more than once",
                     operation.label, target_field.label
                 ),
             ));

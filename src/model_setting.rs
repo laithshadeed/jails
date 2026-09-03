@@ -69,7 +69,7 @@ pub(crate) fn unset(key: String, tests: bool, invocation: Invocation) -> Result<
         .cloned()
         .ok_or_else(|| {
             Failure::Told(format!(
-                "canonical {} setting `{key}` is not declared.\n       fix: unset a key declared under `[settings]` for target `{}`",
+                "{} setting `{key}` is not declared.\n       fix: unset a key declared under `[settings]` for target `{}`",
                 target.label(),
                 target.label()
             ))

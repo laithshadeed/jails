@@ -268,7 +268,7 @@ fn main() -> std::process::ExitCode {
             if command.is_none() {
                 let (Some(old), Some(new)) = (old, new) else {
                     let result = Err(jails_support::Failure::Told(
-                        "`jails rename` takes either a resource -- `rename resource <current> <new> --strategy ...` -- or two simple type names.\n       fix: name what you are renaming".to_string(),
+                        "`jails rename` takes either an entity -- `rename entity <current> <new> --strategy ...` -- or two simple type names.\n       fix: name what you are renaming".to_string(),
                     ));
                     return dispatch::finish_invocation(result, failure_output, &failure_path);
                 };
@@ -350,7 +350,7 @@ fn main() -> std::process::ExitCode {
             ResourceCommand::Repair { selector } => {
                 if selector.is_some() {
                     Err(jails_support::Failure::Told(
-                        "canonical `resource repair` repairs every managed file and takes no selector: it renders them from the model.\n       fix: run `jails resource repair` with no selector".to_string(),
+                        "`entity repair` repairs every managed file and takes no selector: it renders them from the model.\n       fix: run `jails entity repair` with no selector".to_string(),
                     ))
                 } else {
                     model_command::ensure_owned(invocation.clone())

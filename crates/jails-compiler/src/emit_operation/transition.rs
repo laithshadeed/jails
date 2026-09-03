@@ -61,10 +61,7 @@ pub(super) fn lower(
         return Err(Diagnostic::new(
             "compile-transition-changes-nothing",
             format!("$.operations.{}", operation.label),
-            format!(
-                "canonical transition `{}` changes no fields",
-                operation.label
-            ),
+            format!("transition `{}` changes no fields", operation.label),
             "declare at least one field in `update` or a constant `set` statement",
         ));
     }
@@ -76,7 +73,7 @@ pub(super) fn lower(
             "compile-transition-field-supplied-twice",
             format!("$.operations.{}", operation.label),
             format!(
-                "canonical transition `{}` supplies field `{}` from both input and a constant assignment",
+                "transition `{}` supplies field `{}` from both input and a constant assignment",
                 operation.label, field.label
             ),
             "remove the field from `update` or remove its `set` statement",
@@ -88,7 +85,7 @@ pub(super) fn lower(
                 "compile-transition-sets-uncarried-field",
                 format!("$.operations.{}", operation.label),
                 format!(
-                    "canonical transition `{}` sets `{}` without carrying it as input",
+                    "transition `{}` sets `{}` without carrying it as input",
                     operation.label, field.label
                 ),
                 format!("add `{}` to `fields` or remove it from `sets`", field.label),
@@ -104,7 +101,7 @@ pub(super) fn lower(
             "compile-transition-rewrites-primary-key",
             format!("$.operations.{}", operation.label),
             format!(
-                "canonical transition `{}` attempts to rewrite primary key `{}`",
+                "transition `{}` attempts to rewrite primary key `{}`",
                 operation.label, primary_key.label
             ),
             "remove the primary key from `sets`",
@@ -401,7 +398,7 @@ fn selector<'a>(
             "compile-transition-selector-not-single",
             format!("$.operations.{}", operation.label),
             format!(
-                "canonical transition `{}` selects rows by {} fields, and the update statement binds one",
+                "transition `{}` selects rows by {} fields, and the update statement binds one",
                 operation.label,
                 selected.len()
             ),

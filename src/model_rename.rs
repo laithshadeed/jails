@@ -28,7 +28,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
         RenameStrategy::SingleCutover => true,
         _ => {
             return Err(Failure::Told(
-                "canonical resource rename implements `--strategy preserve-table` and `single-cutover`.\n       fix: a rolling or expand/contract rename is a campaign of plans rather than one; run the cutover when the readers are ready"
+                "entity rename implements `--strategy preserve-table` and `single-cutover`.\n       fix: a rolling or expand/contract rename is a campaign of plans rather than one; run the cutover when the readers are ready"
                     .to_string(),
             ));
         }
@@ -41,7 +41,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
     }
     if request.api != ExternalRenamePolicy::Preserve || request.route.is_some() {
         return Err(Failure::Told(
-            "canonical preserve-table rename keeps external names unchanged.\n       fix: remove `--api rename` and `--route`; API cutover needs its own compatibility policy"
+            "preserve-table rename keeps external names unchanged.\n       fix: remove `--api rename` and `--route`; API cutover needs its own compatibility policy"
                 .to_string(),
         ));
     }
@@ -51,7 +51,7 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
     let selector = request.from.rsplit('.').next().unwrap_or_default();
     if selector.is_empty() {
         return Err(Failure::Told(
-            "canonical resource rename needs a non-empty entity selector.\n       fix: pass an entity label or Java type after `rename resource`"
+            "entity rename needs a non-empty entity selector.\n       fix: pass an entity label or Java type after `rename resource`"
                 .to_string(),
         ));
     }
@@ -61,13 +61,13 @@ pub(crate) fn run(request: Request, invocation: Invocation) -> Result<()> {
         .find(|entity| entity.label == selector || entity.names.java_type == selector)
         .ok_or_else(|| {
             Failure::Told(format!(
-                "canonical entity `{}` does not exist.\n       fix: name an entity label or Java type declared under `[entities]`",
+                "entity `{}` does not exist.\n       fix: name an entity label or Java type declared under `[entities]`",
                 request.from
             ))
         })?;
     if entity.names.java_type == request.to {
         return Err(Failure::Told(format!(
-            "canonical entity `{}` already projects to `{}`.\n       fix: choose a different Java type name",
+            "entity `{}` already projects to `{}`.\n       fix: choose a different Java type name",
             entity.label, request.to
         )));
     }

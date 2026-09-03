@@ -267,7 +267,7 @@ fn postgres_17_accepts_the_retirement_jails_wrote() {
     // catalog is `resource status --datasource`, which is not answered yet, so
     // this asserts the half jails is the authority on.
     let status = jails_cmd(&root, Some(&tools))
-        .args(["resource", "status", "Task", "--output", "json"])
+        .args(["entity", "status", "Task", "--output", "json"])
         .output()
         .unwrap();
     assert!(status.status.success(), "{status:?}");

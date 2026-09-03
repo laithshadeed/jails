@@ -20,9 +20,7 @@ impl SqlName {
     pub fn parse(value: &str) -> Result<Self> {
         let mut chars = value.chars();
         let Some(first) = chars.next() else {
-            return Err(
-                "SQL name is empty.\n       fix: pass the exact generated table name.".into(),
-            );
+            return Err("SQL name is empty.\n       fix: pass the generated table name.".into());
         };
         if !(first.is_ascii_lowercase() || first == '_')
             || !chars.all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')

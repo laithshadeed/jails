@@ -188,7 +188,7 @@ fn reconcile_managed_file(
                                 "`{path}` has {hunks} overlapping edit{} between your file and the generator",
                                 if hunks == 1 { "" } else { "s" }
                             ),
-                            "reconcile that project file by hand; nothing was written",
+                            "settle that project file by hand; nothing was written",
                         ));
                     }
                 }
@@ -199,7 +199,7 @@ fn reconcile_managed_file(
                 Ok(ManagedFileMerge::Write(merged))
             }
         }
-        // See `reconcile.rs`: `resource repair` writes it back.
+        // See `reconcile.rs`: `entity repair` writes it back.
         (Some(_), None, Some(desired)) if restore.restores_missing() => {
             Ok(ManagedFileMerge::Write(desired.to_vec()))
         }
@@ -209,7 +209,7 @@ fn reconcile_managed_file(
             format!(
                 "managed project file `{path}` was deleted by you while the generator still needs it"
             ),
-            "`jails resource repair` writes it back from the model, or remove the owning model component; nothing was written",
+            "`jails entity repair` writes it back from the model, or remove the owning model component; nothing was written",
         )),
         (Some(base), Some(current), None) if current == base => Ok(ManagedFileMerge::Remove),
         (Some(_), Some(_), None) if restore == crate::materialize::Restore::EditedAndRemoved => {

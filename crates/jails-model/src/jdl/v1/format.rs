@@ -73,7 +73,7 @@ pub fn format(input: &str) -> Result<String, Diagnostics> {
 /// **The one place a column is decided.** A scaffold renders its fields, an
 /// appended field is spliced in on its own, and a reader writes theirs by
 /// hand; three writers each choosing a column is three answers, and the
-/// visible cost was a `resource field add` line sitting one space off every
+/// visible cost was a `entity field add` line sitting one space off every
 /// line above it. Alignment is layout, so it belongs to the formatter -- and
 /// because every model mutation is formatted before it becomes the plan's
 /// after-image, the appended line comes out aligned without the splice

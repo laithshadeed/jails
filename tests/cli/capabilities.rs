@@ -1806,7 +1806,7 @@ fn add_help_lists_worked_examples() {
     assert!(output.status.success());
     let help = String::from_utf8_lossy(&output.stdout);
     assert!(help.contains("jails add db kafka redis"), "{help}");
-    assert!(help.contains("is the exact inverse"), "{help}");
+    assert!(help.contains("is the inverse"), "{help}");
 }
 
 /// `jails add csv security` on a plain Maven project: `security` is Spring-only

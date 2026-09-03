@@ -94,12 +94,12 @@ pub(crate) fn reject_unsupported_options(
         (
             args.default_literal.is_some(),
             "--default-literal",
-            "`resource field` commands",
+            "`entity field` commands",
         ),
         (
             args.backfill_file.is_some(),
             "--backfill-file",
-            "`resource field nullability`",
+            "`entity field nullability`",
         ),
         (args.strategy_on.is_some(), "--on", "operations"),
         (args.strategy_yields.is_some(), "--yields", "operations"),
@@ -281,7 +281,7 @@ pub(crate) fn reject_unsupported_operation_options(
     // other operation writes or reads a row and needs one.
     if args.strategy_on.is_none() && profile != OperationProfile::Event {
         return Err(Failure::Told(format!(
-            "canonical `{}` needs the entity it operates on.\n       fix: pass `--on <Entity>`",
+            "`{}` needs the entity it operates on.\n       fix: pass `--on <Entity>`",
             kind_name(args.kind)
         )));
     }

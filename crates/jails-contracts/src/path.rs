@@ -33,9 +33,7 @@ impl ProjectPath {
                 .split('/')
                 .any(|component| component.is_empty() || matches!(component, "." | ".."))
         {
-            return Err(format!(
-                "`{value}` is not a canonical project-relative path"
-            ));
+            return Err(format!("`{value}` is not a project-relative path"));
         }
         Ok(Self(value))
     }

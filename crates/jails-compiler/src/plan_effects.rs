@@ -187,7 +187,7 @@ fn true_of(next_model: &AppModel) -> Vec<jails_contracts::CompilerDiagnostic> {
                 // change with no evolution policy, so the order the two are
                 // offered in is the order they work in.
                 fix: format!(
-                    "run `jails resource index add {} '<columns>'` naming a filtered column first, or add `@index` to the field before the table is accepted",
+                    "run `jails entity index add {} '<columns>'` naming a filtered column first, or add `@index` to the field before the table is accepted",
                     target.names.java_type
                 ),
             });
@@ -236,7 +236,7 @@ use repo for Task\n";
         );
         assert!(reported.message.contains("tasks.owner"), "{reported:?}");
         assert!(
-            reported.fix.contains("jails resource index add Task"),
+            reported.fix.contains("jails entity index add Task"),
             "{reported:?}"
         );
     }

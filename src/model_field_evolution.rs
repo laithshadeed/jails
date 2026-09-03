@@ -28,7 +28,7 @@ pub(crate) fn rename(request: RenameRequest, invocation: Invocation) -> Result<(
     let (column, mut next_source) = match request.column {
         CliColumnPolicy::Rolling => {
             return Err(Failure::Told(
-                "rolling column rename is a multi-release campaign, not one exact patch.\n       fix: use `--column preserve` or `--column single-cutover`"
+                "rolling column rename is a multi-release campaign, not one patch.\n       fix: use `--column preserve` or `--column single-cutover`"
                     .to_string(),
             ));
         }
@@ -71,7 +71,7 @@ pub(crate) fn change_type(request: TypeRequest, invocation: Invocation) -> Resul
     reject_package(request.package.as_deref())?;
     if request.strategy == CliTypeStrategy::ExpandContract {
         return Err(Failure::Told(
-            "expand/contract is a multi-release campaign, not one exact patch.\n       fix: use `--strategy safe` for a proven widening"
+            "expand/contract is a multi-release campaign, not one patch.\n       fix: use `--strategy safe` for a proven widening"
                 .to_string(),
         ));
     }
@@ -208,7 +208,7 @@ fn resolve(entity_name: &str, field_name: &str, invocation: &Invocation) -> Resu
         .find(|entity| entity.label == entity_label || entity.names.java_type == entity_name)
         .ok_or_else(|| {
             Failure::Told(format!(
-                "canonical entity `{entity_name}` does not exist.\n       fix: name an entity declared under `[entities]`"
+                "entity `{entity_name}` does not exist.\n       fix: name an entity declared under `[entities]`"
             ))
         })?;
     let requested_field = java_to_label(field_name);
@@ -218,7 +218,7 @@ fn resolve(entity_name: &str, field_name: &str, invocation: &Invocation) -> Resu
         .find(|field| field.label == requested_field || field.names.java_member == field_name)
         .ok_or_else(|| {
             Failure::Told(format!(
-                "canonical field `{entity_name}.{field_name}` does not exist.\n       fix: name a field declared under `[entities.{}.fields]`",
+                "field `{entity_name}.{field_name}` does not exist.\n       fix: name a field declared under `[entities.{}.fields]`",
                 entity.label
             ))
         })?;
@@ -266,7 +266,7 @@ fn finish_replace(
 fn reject_package(package: Option<&str>) -> Result<()> {
     if package.is_some() {
         return Err(Failure::Told(
-            "canonical entities have one stable identity and do not accept a legacy package selector.\n       fix: remove `--package` and name the entity declared in the application model"
+            "entities have one stable identity and do not accept a legacy package selector.\n       fix: remove `--package` and name the entity declared in the application model"
                 .to_string(),
         ));
     }

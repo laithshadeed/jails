@@ -45,7 +45,7 @@ pub(crate) fn add(
     let current = crate::model_command::Current::load(&invocation)?;
     if package.is_some() {
         return Err(Failure::Told(
-            "JDL v1 derives capability packages from the closed projection registry.\n       fix: remove `--package`; eject the implementation boundary if it needs a reader-owned destination"
+            "JDL v1 derives capability packages from a closed list.\n       fix: remove `--package`; eject the implementation boundary if it needs a reader-owned destination"
                 .to_string(),
         ));
     }
@@ -67,7 +67,7 @@ pub(crate) fn add(
             });
             if existing.name != name || existing.java_package != requested_package {
                 return Err(Failure::Told(format!(
-                    "canonical capability `{label}` is already declared with a different name or package.\n       fix: rerun it with the recorded projection, or edit the capability declaration and run `jails sync`"
+                    "capability `{label}` is already declared with a different name or package.\n       fix: rerun it with the recorded name and package, or edit the capability declaration and run `jails sync`"
                 )));
             }
             continue;
@@ -128,14 +128,14 @@ pub(crate) fn remove(
             .find(|candidate| candidate.kind == label)
             .ok_or_else(|| {
                 Failure::Told(format!(
-                    "canonical capability `{label}` is not declared.\n       fix: remove a capability declared under `[capabilities]`"
+                    "capability `{label}` is not declared.\n       fix: remove a capability declared under `[capabilities]`"
                 ))
             })?;
         if let Some(name) = &name
             && declaration.name.as_ref() != Some(name)
         {
             return Err(Failure::Told(format!(
-                "canonical capability `{label}` is recorded with name `{}` rather than `{name}`.\n       fix: omit `--name`; the model already identifies the generated boundary",
+                "capability `{label}` is recorded with name `{}` rather than `{name}`.\n       fix: omit `--name`; the model already identifies the generated boundary",
                 declaration.name.as_deref().unwrap_or("<default>")
             )));
         }
@@ -147,7 +147,7 @@ pub(crate) fn remove(
             };
             if declaration.java_package.as_deref() != Some(expected.as_str()) {
                 return Err(Failure::Told(format!(
-                    "canonical capability `{label}` is not recorded in package `{package}`.\n       fix: omit `--package`; the model already identifies the generated boundary"
+                    "capability `{label}` is not recorded in package `{package}`.\n       fix: omit `--package`; the model already identifies the generated boundary"
                 )));
             }
         }
@@ -197,7 +197,7 @@ pub(crate) fn add_dependency(
     {
         if existing.version != version || existing.scope != scope {
             return Err(Failure::Told(format!(
-                "canonical dependency `{coordinate}` is already declared with a different version or scope.\n       fix: remove the dependency, then add it again with the desired options"
+                "dependency `{coordinate}` is already declared with a different version or scope.\n       fix: remove the dependency, then add it again with the desired options"
             )));
         }
         return finish_generation(PreparedMutation {
@@ -259,7 +259,7 @@ pub(crate) fn remove_dependency(
         .cloned()
         .ok_or_else(|| {
             Failure::Told(format!(
-                "canonical dependency `{coordinate}` is not declared.\n       fix: remove a coordinate declared under `[dependencies]`"
+                "dependency `{coordinate}` is not declared.\n       fix: remove a coordinate declared under `[dependencies]`"
             ))
         })?;
     let next_source =
@@ -339,7 +339,7 @@ fn validate_request(
             ))
     {
         return Err(Failure::Told(
-            "canonical `--name` and `--package` currently belong to one `csv`, `json`, `http`, or `sqlite` capability pack.\n       fix: add one named capability at a time, or remove those projection overrides"
+            "`--name` and `--package` currently belong to one `csv`, `json`, `http`, or `sqlite` capability pack.\n       fix: add one named capability at a time, or remove those name and package overrides"
                 .to_string(),
         ));
     }
@@ -358,7 +358,7 @@ fn validate_supported(capabilities: &[CapabilityKind]) -> Result<()> {
             .collect::<Vec<_>>()
             .join(", ");
         return Err(Failure::Told(format!(
-            "canonical capability backend is not implemented for `{asked}`.\n       fix: use compiler-owned `jails add fake`, `jails add db`, `jails add api`, `jails add csv`, `jails add json`, `jails add http`, `jails add sqlite`, `jails add h2`, `jails add actuator`, `jails add cache`, `jails add coverage`, `jails add cors`, `jails add observability`, `jails add security`, `jails add sse`, `jails add redis`, `jails add kafka`, `jails add mail`, `jails add testkit`, `jails add toxiproxy`, `jails add loadtest`, `jails add ci`, `jails add docker`, `jails add k8s`, or `jails add format`; other capabilities refuse instead of entering the legacy planner"
+            "capability backend is not implemented for `{asked}`.\n       fix: use compiler-owned `jails add fake`, `jails add db`, `jails add api`, `jails add csv`, `jails add json`, `jails add http`, `jails add sqlite`, `jails add h2`, `jails add actuator`, `jails add cache`, `jails add coverage`, `jails add cors`, `jails add observability`, `jails add security`, `jails add sse`, `jails add redis`, `jails add kafka`, `jails add mail`, `jails add testkit`, `jails add toxiproxy`, `jails add loadtest`, `jails add ci`, `jails add docker`, `jails add k8s`, or `jails add format`; other capabilities refuse instead of entering the legacy planner"
         )));
     }
     Ok(())

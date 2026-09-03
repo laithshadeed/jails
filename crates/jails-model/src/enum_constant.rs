@@ -22,7 +22,7 @@ impl EnumConstant {
             });
         if !valid_name {
             return Err(format!(
-                "`{java_name}` is not a canonical enum constant; use uppercase ASCII letters, digits and `_`"
+                "`{java_name}` is not a valid enum constant; use uppercase ASCII letters, digits and `_`"
             ));
         }
         if wire_name.is_some_and(|wire| {

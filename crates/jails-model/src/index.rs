@@ -40,8 +40,8 @@ pub(crate) fn link(
             linker.problem(
                 "model-sql-index-collision",
                 &index_path,
-                format!("SQL index projection `{sql_name}` is already used at {first}"),
-                "give each declaration a unique SQL index projection",
+                format!("SQL index name `{sql_name}` is already used at {first}"),
+                "give each declaration a unique SQL index name",
             );
         }
         if index.columns.is_empty() {

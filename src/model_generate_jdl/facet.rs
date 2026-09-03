@@ -124,7 +124,7 @@ fn refuse_unindexable(kind: Kind, entity: &jails_model::Entity, fields: &[String
         };
         if !indexable(field) {
             return Err(Failure::Told(format!(
-                "full-text search indexes text, and `{}` on `{}` is not.\n       fix: name a string component, or add a plain index with `jails resource index add {} {}`",
+                "full-text search indexes text, and `{}` on `{}` is not.\n       fix: name a string component, or add a plain index with `jails entity index add {} {}`",
                 field.names.java_member,
                 entity.names.java_type,
                 entity.names.java_type,
@@ -164,7 +164,7 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation, kind: Kind) -> Res
     })?;
     if !entity.active || !entity.facets.contains(&Facet::Record) {
         return Err(Failure::Told(format!(
-            "canonical `{}` is not an active record\n       fix: revive or generate the record before adding its {}",
+            "`{}` is not an active record\n       fix: revive or generate the record before adding its {}",
             args.name,
             kind.name()
         )));
@@ -196,7 +196,7 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation, kind: Kind) -> Res
             && existing != arguments
         {
             return Err(Failure::Told(format!(
-                "canonical `{}` already declares `{}{existing}`\n       fix: the indexed set is a generated column, so changing it is a migration jails does not write -- edit `{MODEL_PATH}` and add one by hand, or keep the current fields",
+                "`{}` already declares `{}{existing}`\n       fix: the indexed set is a generated column, so changing it is a migration jails does not write -- edit `{MODEL_PATH}` and add one by hand, or keep the current fields",
                 args.name,
                 kind.name()
             )));
@@ -516,7 +516,7 @@ fn projection_name(segment: &str) -> &str {
 fn reject_unsupported_options(args: &GenerateArgs, kind: Kind) -> Result<()> {
     if kind.takes_fields() && args.fields.is_empty() {
         return Err(Failure::Told(format!(
-            "canonical `{}` needs the components to index
+            "`{}` needs the components to index
        fix: run `jails g {} Name title body` -- indexing every text column would index ids and status codes as prose",
             kind.name(),
             kind.name()
@@ -544,7 +544,7 @@ fn reject_unsupported_options(args: &GenerateArgs, kind: Kind) -> Result<()> {
         || args.consumes.is_some();
     if unsupported {
         return Err(Failure::Told(format!(
-            "a canonical {} derives every field from its entity and accepts only the record name\n       fix: run `jails g {} Name` without fields or projection flags",
+            "a {} derives every field from its entity and accepts only the record name\n       fix: run `jails g {} Name` without fields or facet flags",
             kind.name(),
             kind.name()
         )));

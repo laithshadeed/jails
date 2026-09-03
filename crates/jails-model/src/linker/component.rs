@@ -100,7 +100,7 @@ pub(super) fn link(
                     declaration.name,
                     rule.forbidden_suffix.expect("checked above")
                 ),
-                "declare the semantic stem without its generated suffix",
+                "declare the name without its generated suffix",
             );
         }
         let parameters = link_parameters(declaration.parameters, &path, linker);
@@ -346,7 +346,7 @@ fn link_reference(
         "model-component-reference",
         path,
         format!("`{reference}` does not name an entity, operation, or component"),
-        "reference a declared semantic symbol",
+        "reference a declaration that exists",
     );
     None
 }

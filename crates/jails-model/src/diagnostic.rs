@@ -143,7 +143,7 @@ impl Diagnostic {
 /// **This is what keeps adopting the contract from rewriting any message.** A
 /// phase below the CLI used to return a `String` shaped
 /// `"<what is wrong>\n       fix: <what to do>"`, and callers interpolate that
-/// string into a sentence of their own (`could not apply exact plan: {error}`).
+/// string into a sentence of their own (`could not apply the plan: {error}`).
 /// Splitting it into `message` and `fix` and rendering it back here produces
 /// the same bytes, so a `?` through `jails_support::Failure` carries the
 /// text unchanged and only the code is added. The seven-space indent is the

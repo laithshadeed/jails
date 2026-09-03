@@ -69,7 +69,7 @@ pub fn relocation_targets(
         return Err(Diagnostic::new(
             "workspace-relocate-nothing-accepted",
             "$.projection",
-            "this project has no accepted projection",
+            "this project has no generated tree yet",
             "nothing is managed yet, so there is nothing to relocate",
         ));
     };
@@ -100,7 +100,7 @@ pub fn relocate(
     let projection = snapshot
         .accepted_projection
         .as_ref()
-        .expect("relocation targets came from the accepted projection");
+        .expect("relocation targets came from the generated tree");
     let mut blobs = BTreeMap::new();
     let mut before = TreeManifest::default();
     let mut after = TreeManifest::default();
@@ -187,7 +187,7 @@ pub fn relocate(
     let accepted_model = snapshot
         .accepted_model
         .as_ref()
-        .expect("a projection is accepted beside its model");
+        .expect("a generated tree is accepted beside its model");
     let lock_bytes = crate::materialize::encode_compiler_lock(
         snapshot
             .accepted_compiler

@@ -21,7 +21,7 @@ const MESSAGE_PATH: &str = "src/main/java/com/example/notes/domain/Message.java"
 
 fn adopt(root: &Path, name: &str) -> std::process::Output {
     jails_cmd(root, None)
-        .args(["adopt", "resource", name])
+        .args(["adopt", "entity", name])
         .output()
         .unwrap()
 }
@@ -36,7 +36,7 @@ fn adopt_resource_registers_a_hand_written_record_as_the_readers_own() {
     // was asked for.
     let bundle = temp_dir("adopt-resource-bundle").join("preview.json");
     let preview = jails_cmd(&root, None)
-        .args(["adopt", "resource", "Message", "--pretend", "--plan-out"])
+        .args(["adopt", "entity", "Message", "--pretend", "--plan-out"])
         .arg(&bundle)
         .output()
         .unwrap();
@@ -253,7 +253,7 @@ fn an_adopted_resource_evolves_renames_and_destroys_like_a_generated_one() {
     );
 
     let added = jails_cmd(&root, None)
-        .args(["resource", "field", "add", "Message", "summary:string!"])
+        .args(["entity", "field", "add", "Message", "summary:string!"])
         .output()
         .unwrap();
     assert!(
@@ -308,7 +308,7 @@ fn an_adopted_resource_evolves_renames_and_destroys_like_a_generated_one() {
     let refused = jails_cmd(&root, None)
         .args([
             "rename",
-            "resource",
+            "entity",
             "Message",
             "Note",
             "--strategy",
@@ -330,7 +330,7 @@ fn an_adopted_resource_evolves_renames_and_destroys_like_a_generated_one() {
     let renamed = jails_cmd(&root, None)
         .args([
             "rename",
-            "resource",
+            "entity",
             "Message",
             "Note",
             "--strategy",
@@ -413,9 +413,9 @@ fn an_adopted_record_is_what_generated_code_compiles_against() {
     .unwrap();
 
     for arguments in [
-        vec!["adopt", "resource", "Message"],
+        vec!["adopt", "entity", "Message"],
         vec!["g", "query", "OpenMessages", "title", "--on", "Message"],
-        vec!["resource", "field", "add", "Message", "summary:string?"],
+        vec!["entity", "field", "add", "Message", "summary:string?"],
     ] {
         let output = jails_cmd_with_path(&root, &path)
             .args(&arguments)

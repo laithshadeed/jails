@@ -69,7 +69,7 @@ impl TooStale {
     ///
     /// A reader who is told the outputs are stale and not which source did it
     /// has to go and find the file themselves, and the one they reach for
-    /// first is the one they just edited -- which, after a `resource field
+    /// first is the one they just edited -- which, after a `entity field
     /// add`, is the model rather than the seven files it rewrote.
     pub fn summary(&self) -> String {
         match self {

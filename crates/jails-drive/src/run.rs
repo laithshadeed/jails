@@ -775,11 +775,11 @@ fn plugin_argument_line(args: &[std::ffi::OsString]) -> Result<Option<String>> {
     let mut encoded = Vec::with_capacity(args.len());
     for argument in args {
         let text = argument.to_str().ok_or({
-            "build-tool launch cannot represent a non-UTF-8 application argument\n       fix: use `--launcher classpath` to preserve the exact operating-system bytes"
+            "build-tool launch cannot represent a non-UTF-8 application argument\n       fix: use `--launcher classpath` to preserve the operating-system bytes as they are"
         })?;
         if text.is_empty() || text.chars().any(char::is_control) {
             return Err(
-                "build-tool launch cannot represent an empty or control-character application argument\n       fix: use `--launcher classpath` to preserve the exact argument vector"
+                "build-tool launch cannot represent an empty or control-character application argument\n       fix: use `--launcher classpath` to preserve the argument vector as it is"
                     .into(),
             );
         }

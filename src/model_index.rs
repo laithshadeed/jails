@@ -34,7 +34,7 @@ pub(crate) fn add(
 ) -> Result<()> {
     if package.is_some() {
         return Err(Failure::Told(
-            "canonical entities have one stable identity and do not accept a legacy package selector.\n       fix: remove `--package` and name the entity declared in the application model"
+            "entities have one stable identity and do not accept a legacy package selector.\n       fix: remove `--package` and name the entity declared in the application model"
                 .to_string(),
         ));
     }
@@ -46,7 +46,7 @@ pub(crate) fn add(
         .any(|capability| capability.kind == "db")
     {
         return Err(Failure::Told(
-            "canonical index evolution needs an accepted database schema.\n       fix: add the `db` capability before evolving an existing table"
+            "index evolution needs an accepted database schema.\n       fix: add the `db` capability before evolving an existing table"
                 .to_string(),
         ));
     }
@@ -57,12 +57,12 @@ pub(crate) fn add(
         .find(|entity| entity.label == entity_label || entity.names.java_type == entity_name)
         .ok_or_else(|| {
             Failure::Told(format!(
-                "canonical entity `{entity_name}` does not exist.\n       fix: name an entity declared under `[entities]`"
+                "entity `{entity_name}` does not exist.\n       fix: name an entity declared under `[entities]`"
             ))
         })?;
     if !entity.facets.contains(&Facet::Repository) {
         return Err(Failure::Told(format!(
-            "canonical entity `{}` has no stored repository facet.\n       fix: add the index to a stored entity",
+            "entity `{}` has no stored repository facet.\n       fix: add the index to a stored entity",
             entity.label
         )));
     }
@@ -110,7 +110,7 @@ pub(crate) fn remove(
 ) -> Result<()> {
     if package.is_some() {
         return Err(Failure::Told(
-            "canonical entities have one stable identity and do not accept a legacy package selector.\n       fix: remove `--package` and name the entity declared in the application model"
+            "entities have one stable identity and do not accept a legacy package selector.\n       fix: remove `--package` and name the entity declared in the application model"
                 .to_string(),
         ));
     }
@@ -122,7 +122,7 @@ pub(crate) fn remove(
         .any(|capability| capability.kind == "db")
     {
         return Err(Failure::Told(
-            "canonical index evolution needs an accepted database schema.\n       fix: add the `db` capability before evolving an existing table"
+            "index evolution needs an accepted database schema.\n       fix: add the `db` capability before evolving an existing table"
                 .to_string(),
         ));
     }
@@ -133,18 +133,18 @@ pub(crate) fn remove(
         .find(|entity| entity.label == entity_label || entity.names.java_type == entity_name)
         .ok_or_else(|| {
             Failure::Told(format!(
-                "canonical entity `{entity_name}` does not exist.\n       fix: name an entity declared in the application model"
+                "entity `{entity_name}` does not exist.\n       fix: name an entity declared in the application model"
             ))
         })?;
     if !entity.active {
         return Err(Failure::Told(format!(
-            "canonical entity `{}` is retired.\n       fix: revive it before evolving its indexes",
+            "entity `{}` is retired.\n       fix: revive it before evolving its indexes",
             entity.label
         )));
     }
     if !entity.facets.contains(&Facet::Repository) {
         return Err(Failure::Told(format!(
-            "canonical entity `{}` has no stored repository facet.\n       fix: remove an index from a stored entity",
+            "entity `{}` has no stored repository facet.\n       fix: remove an index from a stored entity",
             entity.label
         )));
     }
@@ -173,7 +173,7 @@ pub(crate) fn remove(
         })
         .ok_or_else(|| {
             Failure::Told(format!(
-                "canonical entity `{}` has no index on `{}`.\n       fix: pass the exact ordered fields used by `resource index add`",
+                "entity `{}` has no index on `{}`.\n       fix: pass the ordered fields used by `entity index add`",
                 entity.label,
                 canonical.join(", ")
             ))
@@ -199,7 +199,7 @@ pub(crate) fn remove(
         .is_some_and(|entity| entity.indexes.contains_key(&index_id))
     {
         return Err(Failure::Told(format!(
-            "index `{index_id}` remained after editing the canonical model.\n       fix: keep its generated JDL declaration on one line and retry"
+            "index `{index_id}` remained after editing the model.\n       fix: keep its generated JDL declaration on one line and retry"
         )));
     }
     finish_generation(PreparedMutation {
@@ -226,7 +226,7 @@ fn canonical_columns(entity: &jails_model::Entity, columns: &str) -> Result<Vec<
             [name, "desc"] => (*name, true),
             _ => {
                 return Err(Failure::Told(format!(
-                    "`{}` is not a canonical index field.\n       fix: use comma-separated `field`, `field asc`, or `field desc` entries",
+                    "`{}` is not a index field.\n       fix: use comma-separated `field`, `field asc`, or `field desc` entries",
                     raw.trim()
                 )));
             }

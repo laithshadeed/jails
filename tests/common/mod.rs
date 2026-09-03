@@ -2169,7 +2169,7 @@ pub fn managed_listing(root: &Path) -> String {
     found.join("\n")
 }
 
-/// What `jails resource status --output json` says about one resource.
+/// What `jails entity status --output json` says about one resource.
 ///
 /// **The canonical lifecycle record, read through the command that reports
 /// it.** A project keeps three facts -- which Java type, which table, which
@@ -2180,7 +2180,7 @@ pub fn managed_listing(root: &Path) -> String {
 pub fn resource_status(root: &Path, selector: &str) -> serde_json::Value {
     let output = Command::new(bin())
         .current_dir(root)
-        .args(["resource", "status", selector, "--output", "json"])
+        .args(["entity", "status", selector, "--output", "json"])
         .output()
         .unwrap();
     assert!(

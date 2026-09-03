@@ -513,10 +513,7 @@ fn operation_frontend_refuses_field_type_drift_without_writing() {
         .unwrap();
     assert!(!refused.status.success());
     let stderr = String::from_utf8(refused.stderr).unwrap();
-    assert!(
-        stderr.contains("disagrees with canonical entity field"),
-        "{stderr}"
-    );
+    assert!(stderr.contains("disagrees with entity field"), "{stderr}");
     assert!(stderr.contains("fix:"), "{stderr}");
     assert_eq!(snapshot_tree(&root), before, "refusal mutated the project");
 }
@@ -594,7 +591,7 @@ fn canonical_api_adapters_merge_then_eject_at_the_operation_boundary() {
     )
     .unwrap();
     let evolved = jails_cmd(&root, None)
-        .args(["resource", "field", "add", "Note", "summary:string?"])
+        .args(["entity", "field", "add", "Note", "summary:string?"])
         .output()
         .unwrap();
     assert!(
@@ -628,7 +625,7 @@ fn canonical_api_adapters_merge_then_eject_at_the_operation_boundary() {
     );
     let reader_bytes = fs::read(&reader).unwrap();
     let evolved_again = jails_cmd(&root, None)
-        .args(["resource", "field", "add", "Note", "priority:int?"])
+        .args(["entity", "field", "add", "Note", "priority:int?"])
         .output()
         .unwrap();
     assert!(

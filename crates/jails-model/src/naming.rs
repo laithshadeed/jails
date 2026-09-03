@@ -205,7 +205,7 @@ pub(crate) fn route_problem(route: &str) -> Option<String> {
         return Some(format!("`{path}` does not start with `/`"));
     }
     if path.len() == 1 {
-        return Some("the path is just `/`, which names no resource".to_string());
+        return Some("the path is just `/`, which names nothing".to_string());
     }
     if path.contains(char::is_whitespace) {
         return Some(format!("`{path}` contains ` `"));

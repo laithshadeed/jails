@@ -350,7 +350,7 @@ pub(super) fn link(
             }
             let java_type = operation_java_types
                 .remove(&label)
-                .expect("every operation label receives a Java projection");
+                .expect("every operation label receives a Java name");
             operations.insert(
                 id.clone(),
                 Operation {

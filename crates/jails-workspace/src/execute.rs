@@ -158,7 +158,7 @@ pub fn execute(root: &Path, bundle: &PlanBundle) -> Result<Execution, Diagnostic
 ///
 /// The operation list is applied in order, so an unwritable *later*
 /// destination would leave the earlier ones published: a read-only migration
-/// directory would take `resource field add` from "add a column" to a managed
+/// directory would take `entity field add` from "add a column" to a managed
 /// tree whose insert names a column no migration creates, with the lock still
 /// describing the tree before it -- so `doctor` calls jails' own output a
 /// reader edit and reports all clear. The transition converges when it is run
@@ -483,7 +483,7 @@ fn verify_after(root: &Path, bundle: &PlanBundle) -> Result<(), Diagnostic> {
             return Err(Diagnostic::without_a_fix(
                 "workspace-after-image-not-published",
                 path.to_string(),
-                format!("executor did not publish exact after-image `{path}`"),
+                format!("executor did not publish the after-image `{path}`"),
             ));
         }
     }

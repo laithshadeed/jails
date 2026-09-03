@@ -742,6 +742,230 @@ fn quoted_jails_commands() -> Vec<(String, String)> {
     out
 }
 
+/// **A vocabulary budget, gated.**
+///
+/// Six words described jails to itself rather than to a reader.
+/// *Authenticated prepared transaction* was `--plan-out`'s help line, echoed
+/// on ninety-six command pages. *Canonical* distinguished the model from a
+/// second model that no longer exists. *Semantic*, *exact*, *projection* and
+/// *reconcile* are the compiler's own nouns for things a reader knows by
+/// other names, and every one of them appeared in refusals a person reads
+/// when something has gone wrong.
+///
+/// Two exemptions, both because the word is somebody else's and changing it
+/// would be worse: the JDL specification calls a `use` declaration a
+/// **projection** (§11), so the parser's diagnostics keep the language's own
+/// word; and `canonicalize`, `canonically` and the like are ordinary English
+/// for a different operation, which is why the pattern is a whole word.
+///
+/// The message half scans production Rust the way the `fix:` gate next door
+/// does: literals of twenty characters or more that contain a space, with
+/// `{placeholder}` names blanked, because a format argument's name is an
+/// identifier and never reaches the reader.
+#[test]
+fn the_six_retired_words_appear_in_no_help_page_and_no_message() {
+    const RETIRED: &[(&str, &str)] = &[
+        ("authenticated prepared transaction", "plan file"),
+        ("canonical", "nothing -- there is one model"),
+        ("semantic", "nothing -- say what the thing is"),
+        ("exact", "nothing"),
+        ("projection", "generated tree (the JDL §11 word is exempt)"),
+        ("reconcile", "update"),
+    ];
+
+    // The help half: every page the binary can print.
+    let workdir = temp_dir("vocabulary-budget");
+    let catalog = jails_cmd(&workdir, None)
+        .args(["commands", "--json"])
+        .output()
+        .unwrap();
+    assert!(catalog.status.success());
+    let catalog = String::from_utf8_lossy(&catalog.stdout).to_string();
+    let mut pages: Vec<Vec<String>> = vec![Vec::new()];
+    pages.extend(command_paths(&catalog));
+    assert!(pages.len() > 90, "only {} help pages", pages.len());
+    let mut offenders: Vec<String> = Vec::new();
+    for page in &pages {
+        let output = jails_cmd(&workdir, None)
+            .args(page)
+            .arg("--help")
+            .output()
+            .unwrap();
+        let help = String::from_utf8_lossy(&output.stdout).to_lowercase();
+        for (word, instead) in RETIRED {
+            if contains_word(&help, word) {
+                offenders.push(format!(
+                    "`jails {} --help` still says `{word}` -- say {instead}",
+                    page.join(" ")
+                ));
+            }
+        }
+    }
+
+    // The message half: production string literals.
+    for (file, literal) in production_message_literals() {
+        for (word, instead) in RETIRED {
+            if *word == "projection" && speaks_the_jdl_word(&file) {
+                continue;
+            }
+            if contains_word(&literal.to_lowercase(), word) {
+                offenders.push(format!("{file}: `{word}` in `{literal}` -- say {instead}"));
+            }
+        }
+    }
+    offenders.sort();
+    offenders.dedup();
+    assert!(
+        offenders.is_empty(),
+        "{} retired word(s) are back in the reader's way:\n{}",
+        offenders.len(),
+        offenders.join("\n")
+    );
+}
+
+/// The four files that diagnose a JDL `use` declaration.
+///
+/// **The specification's word, not jails' own.** JDL v1 §11 calls a `use`
+/// declaration a projection, `docs/10-language.md` indexes it that way, and a
+/// parser that refuses one has to name what the reader wrote. Renaming it in
+/// the diagnostic and not in the language would be the drift this file's
+/// gates exist to stop, so the exemption is by file and by reason rather than
+/// by a looser pattern.
+fn speaks_the_jdl_word(file: &str) -> bool {
+    [
+        // The parser for `use ...`, and the model node it produces.
+        "jdl/v1",
+        "jails-model/src/projection.rs",
+        // The frontend that spells one, and the search facet whose JDL
+        // argument list is part of the declaration.
+        "model_generate_jdl/facet.rs",
+        "emit_sql/search.rs",
+    ]
+    .iter()
+    .any(|owner| file.contains(owner))
+}
+
+/// Whole words only: `canonicalize` is a different operation and `exactly` is
+/// ordinary English.
+fn contains_word(haystack: &str, word: &str) -> bool {
+    let boundary = |byte: Option<u8>| byte.is_none_or(|byte| !byte.is_ascii_alphabetic());
+    let bytes = haystack.as_bytes();
+    haystack.match_indices(word).any(|(at, _)| {
+        boundary(at.checked_sub(1).map(|before| bytes[before]))
+            && boundary(bytes.get(at + word.len()).copied())
+    })
+}
+
+/// Every command path in the catalog, deepest first, as argument vectors.
+fn command_paths(catalog: &str) -> Vec<Vec<String>> {
+    // The catalog prints one command per line with its whole path already
+    // joined in `"name"`, so this reads that rather than rebuilding the tree.
+    let mut out = Vec::new();
+    for line in catalog.lines() {
+        let Some(rest) = line.trim_start().strip_prefix("{\"name\": \"") else {
+            continue;
+        };
+        let Some(path) = rest.split('"').next() else {
+            continue;
+        };
+        if path.is_empty() {
+            continue;
+        }
+        out.push(path.split_whitespace().map(str::to_string).collect());
+    }
+    out
+}
+
+/// Production string literals long enough to be prose, with placeholder names
+/// blanked and `#[cfg(test)]` modules cut off.
+fn production_message_literals() -> Vec<(String, String)> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<(String, String)>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        let mut paths: Vec<std::path::PathBuf> =
+            entries.flatten().map(|entry| entry.path()).collect();
+        paths.sort();
+        for path in paths {
+            if path.is_dir() {
+                walk(&path, out);
+                continue;
+            }
+            if path.extension().is_none_or(|extension| extension != "rs") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let text = match text.find("\n#[cfg(test)]") {
+                Some(at) => text[..at].to_string(),
+                None => text,
+            };
+            let name = path.display().to_string();
+            for line in text.lines() {
+                if line.trim_start().starts_with("//") {
+                    continue;
+                }
+                for literal in string_literals(line) {
+                    if literal.len() < 20 || !literal.contains(' ') {
+                        continue;
+                    }
+                    out.push((name.clone(), blank_placeholders(&literal)));
+                }
+            }
+        }
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut out = Vec::new();
+    walk(&root.join("src"), &mut out);
+    walk(&root.join("crates"), &mut out);
+    assert!(
+        out.len() > 500,
+        "the message scanner found only {} literals -- it has lost the code",
+        out.len()
+    );
+    out
+}
+
+/// The double-quoted literals on one line, escapes skipped over.
+fn string_literals(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let bytes = line.as_bytes();
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at] != b'"' {
+            at += 1;
+            continue;
+        }
+        let start = at + 1;
+        let mut end = start;
+        while end < bytes.len() && bytes[end] != b'"' {
+            end += if bytes[end] == b'\\' { 2 } else { 1 };
+        }
+        if end > bytes.len() {
+            break;
+        }
+        out.push(line[start..end.min(bytes.len())].to_string());
+        at = end + 1;
+    }
+    out
+}
+
+/// `{entity}` is an argument's name, not a word the reader sees.
+fn blank_placeholders(literal: &str) -> String {
+    let mut out = String::with_capacity(literal.len());
+    let mut depth = 0usize;
+    for character in literal.chars() {
+        match character {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            _ if depth == 0 => out.push(character),
+            _ => {}
+        }
+    }
+    out
+}
+
 /// A word jails does not have, answered with the thing it has instead:
 /// `jails add websocket` points at `jails g socket <Name>` rather than at
 /// clap's bare list of capabilities.
@@ -915,7 +1139,7 @@ fn the_first_screen_of_help_is_one_screen_and_hides_nothing_from_the_catalog() {
          screen:\n{help}"
     );
     for word in [
-        "new", "generate", "add", "remove", "set", "destroy", "rename", "resource", "sync", "run",
+        "new", "generate", "add", "remove", "set", "destroy", "rename", "entity", "sync", "run",
         "test", "check", "build", "start", "stop", "doctor", "why", "explain", "routes", "beans",
     ] {
         assert!(
@@ -1648,7 +1872,7 @@ fn one_spelling_per_verb_is_what_the_surface_advertises() {
     assert!(kinds.contains(&"scaffold"), "{kinds:?}");
     assert!(
         !kinds.contains(&"field"),
-        "`g field` is still advertised; `jails resource field add` is the spelling"
+        "`g field` is still advertised; `jails entity field add` is the spelling"
     );
 
     // Hidden, not gone: each retired spelling still parses for one release.

@@ -64,7 +64,7 @@ pub(crate) fn derive_changes(
                         old_index.sql_name
                     ),
                     format!(
-                        "use `resource index remove {} {} --confirm-index {}`",
+                        "use `entity index remove {} {} --confirm-index {}`",
                         old.names.java_type, old_index.label, old_index.sql_name
                     ),
                 ));

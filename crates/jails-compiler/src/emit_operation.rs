@@ -261,7 +261,7 @@ fn query_filters<'a>(
                 return Err(Diagnostic::new(
 "compile-query-parameter-without-column",
 format!("$.operations.{}", operation.label),
-format!("canonical query `{}` declares parameter `{}` with no source column", operation.label, parameter.name),
+format!("query `{}` declares parameter `{}` with no source column", operation.label, parameter.name),
 "filter on a declared field of the query's entity or one it joins",
 ));
             };
@@ -293,7 +293,7 @@ format!("canonical query `{}` declares parameter `{}` with no source column", op
                         Diagnostic::new(
 "compile-query-filter-not-joined",
 format!("$.operations.{}", operation.label),
-format!("canonical query `{}` filters on `{}`, which is not the query's entity and is not joined", operation.label, parameter.name),
+format!("query `{}` filters on `{}`, which is not the query's entity and is not joined", operation.label, parameter.name),
 format!("add a `join {} as <alias> on <local> -> <alias>.<remote>` to the query", owner.names.java_type),
 )
                     })?;
@@ -325,7 +325,7 @@ fn stored_entity<'a>(
             "compile-operation-target-without-storage",
             format!("$.operations.{}", operation.label),
             format!(
-                "canonical {kind} `{}` targets an entity without active storage",
+                "{kind} `{}` targets an entity without active storage",
                 operation.label
             ),
             "target an active scaffold or remove the `db` capability",
@@ -388,7 +388,7 @@ pub(super) fn publications(
                 "compile-event-from-another-entity",
                 format!("$.operations.{}", operation.label),
                 format!(
-                    "canonical operation `{}` emits event `{}` from another entity",
+                    "operation `{}` emits event `{}` from another entity",
                     operation.label, yielded.label
                 ),
                 format!("emit an event projected from `{}`", target.label),
@@ -452,7 +452,7 @@ format!("project it from a field of `{}`, or declare it `uuid` (minted) or `inst
                 jails_model::ParameterSource::Typed(_) => Err(Diagnostic::new(
 "compile-event-parameter-not-on-row",
 format!("$.operations.{}", yielded.label),
-format!("canonical event `{}` declares `{}`, which the target row does not carry", yielded.label, parameter.name),
+format!("event `{}` declares `{}`, which the target row does not carry", yielded.label, parameter.name),
 format!("project it from a field of `{}`, or deliver this command through an outbox, which can mint one", target.label),
 )),
             })
@@ -490,7 +490,7 @@ fn ordering<'a>(
                 return Err(Diagnostic::new(
 "compile-query-orders-by-joined-column",
 format!("$.operations.{}", operation.label),
-format!("canonical query `{}` orders by a joined column", operation.label),
+format!("query `{}` orders by a joined column", operation.label),
 format!("order by a field of `{}`, or eject this adapter and write the statement by hand", target.label),
 ));
             }
@@ -639,7 +639,7 @@ fn assignment_sql_value(
             "compile-constant-not-lowerable",
             format!("$.operations.{}", operation.label),
             format!(
-                "canonical operation `{}` cannot lower the constant assigned to `{}`",
+                "operation `{}` cannot lower the constant assigned to `{}`",
                 operation.label, field.label
             ),
             "use a string, enum, numeric, boolean, or `now()` constant, or eject the implementation boundary",

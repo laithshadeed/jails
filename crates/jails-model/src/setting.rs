@@ -21,7 +21,7 @@ pub(crate) fn link(
             linker.problem(
                 "model-setting-key",
                 format!("{path}.key"),
-                format!("`{}` is not a canonical properties key", setting.key),
+                format!("`{}` is not a valid properties key", setting.key),
                 "use ASCII letters, digits, `.`, `_`, or `-` without whitespace or separators",
             );
         }

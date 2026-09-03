@@ -410,13 +410,13 @@ pub(super) fn reject_v1_options(args: &GenerateArgs, kind: ComponentKind) -> Res
     }
     if requires_on && args.strategy_on.is_none() {
         return Err(Failure::Told(format!(
-            "component {} requires `--on`.\n       fix: name its input semantic symbol",
+            "component {} requires `--on`.\n       fix: name the declaration it reads",
             kind.label()
         )));
     }
     if requires_yields && args.strategy_yields.is_none() {
         return Err(Failure::Told(format!(
-            "component {} requires `--yields`.\n       fix: name its output semantic symbol",
+            "component {} requires `--yields`.\n       fix: name the declaration it writes",
             kind.label()
         )));
     }

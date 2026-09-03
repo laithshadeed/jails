@@ -75,7 +75,7 @@ fn strategy_package(source: &SourceUnit) -> Diagnostic {
         "compile-strategy-package-not-canonical",
         format!("$.units.{}", source.label),
         format!(
-            "strategy `{}` must use the canonical domain package",
+            "strategy `{}` must use the domain package",
             source.java_type
         ),
     )

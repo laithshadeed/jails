@@ -3,7 +3,7 @@
 //!
 use super::*;
 
-/// `jails resource status` answers about an entity the model describes, from
+/// `jails entity status` answers about an entity the model describes, from
 /// every authority it names. This drives all four -- declaration, generated,
 /// migration history, and the SQL table -- and the two states that are not
 /// `consistent`.
@@ -162,7 +162,7 @@ entity Memo {
 
     // Declared and not yet accepted: an ordinary state, not a fault.
     let pending = jails_cmd(&root, None)
-        .args(["resource", "status", "Order"])
+        .args(["entity", "status", "Order"])
         .output()
         .unwrap();
     let pending = String::from_utf8_lossy(&pending.stdout).to_string();
@@ -179,12 +179,12 @@ entity Memo {
     );
 
     let stored = jails_cmd(&root, None)
-        .args(["resource", "status", "Order"])
+        .args(["entity", "status", "Order"])
         .output()
         .unwrap();
     let stored = String::from_utf8_lossy(&stored.stdout).to_string();
     for expected in [
-        "resource: Order",
+        "entity: Order",
         "state: consistent",
         "declaration: present",
         "generated: present",
@@ -205,7 +205,7 @@ entity Memo {
     // consulted -- `unknown`, which widens, rather than `absent`, which would
     // claim a missing migration nobody asked for.
     let source_only = jails_cmd(&root, None)
-        .args(["resource", "status", "Memo"])
+        .args(["entity", "status", "Memo"])
         .output()
         .unwrap();
     let source_only = String::from_utf8_lossy(&source_only.stdout).to_string();
@@ -223,7 +223,7 @@ entity Memo {
     );
     fs::write(&generated, edited).unwrap();
     let drifted = jails_cmd(&root, None)
-        .args(["resource", "status", "Order"])
+        .args(["entity", "status", "Order"])
         .output()
         .unwrap();
     let drifted = String::from_utf8_lossy(&drifted.stdout).to_string();
@@ -234,17 +234,17 @@ entity Memo {
 
     // `--json` is the same report, and names its schema.
     let json = jails_cmd(&root, None)
-        .args(["--output", "json", "resource", "status", "Order"])
+        .args(["--output", "json", "entity", "status", "Order"])
         .output()
         .unwrap();
     let json: serde_json::Value =
         serde_json::from_slice(&json.stdout).expect("resource status --json is JSON");
-    assert_eq!(json["schema"], "jails.resource-status.v1");
+    assert_eq!(json["schema"], "jails.entity-status.v1");
     assert_eq!(json["table"], "orders");
     assert_eq!(json["state"], "drifted");
 
     let unknown = jails_cmd(&root, None)
-        .args(["resource", "status", "Nobody"])
+        .args(["entity", "status", "Nobody"])
         .output()
         .unwrap();
     let unknown = String::from_utf8_lossy(&unknown.stdout).to_string();
@@ -634,7 +634,7 @@ fn model_status_lists_the_lock_and_tells_edited_from_missing() {
         .unwrap();
     assert!(unowned.status.success());
     assert!(
-        String::from_utf8_lossy(&unowned.stdout).contains("no accepted projection"),
+        String::from_utf8_lossy(&unowned.stdout).contains("nothing is generated yet"),
         "{}",
         String::from_utf8_lossy(&unowned.stdout)
     );

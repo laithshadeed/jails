@@ -34,6 +34,9 @@ fn canonical_command_path(arguments: impl IntoIterator<Item = std::ffi::OsString
         "d" => "destroy",
         "dbconsole" => "db",
         "c" => "console",
+        // `entity` is the visible name; `resource` is its alias, and a report
+        // says which command ran, not which spelling was typed.
+        "resource" => "entity",
         other => other,
     };
     let mut path = vec![first.to_string()];
@@ -55,8 +58,10 @@ fn canonical_child(parent: &str, child: &str) -> Option<&'static str> {
         | ("model", "check" | "plan" | "apply" | "eject" | "explain")
         | ("editor", "handshake" | "complete" | "symbols" | "diagnostics")
         | ("contract", "emit" | "check")
-        | ("resource", "status" | "revive" | "repair" | "field")
-        | ("rename", "resource") => Some(match child {
+        // `entity` is the visible name and `resource` its alias, so both
+        // spellings arrive here and both report the same path.
+        | ("entity" | "resource", "status" | "revive" | "repair" | "field")
+        | ("rename", "entity" | "resource") => Some(match child {
             "init" => "init",
             "plan" => "plan",
             "apply" => "apply",
@@ -72,7 +77,7 @@ fn canonical_child(parent: &str, child: &str) -> Option<&'static str> {
             "revive" => "revive",
             "repair" => "repair",
             "field" => "field",
-            "resource" => "resource",
+            "entity" | "resource" => "entity",
             _ => unreachable!(),
         }),
         _ => None,
@@ -81,7 +86,7 @@ fn canonical_child(parent: &str, child: &str) -> Option<&'static str> {
 
 fn canonical_grandchild(parent: &str, child: &str, grandchild: &str) -> Option<&'static str> {
     match (parent, child, grandchild) {
-        ("resource", "field", "add" | "rename" | "type" | "nullability" | "drop") => {
+        ("entity" | "resource", "field", "add" | "rename" | "type" | "nullability" | "drop") => {
             Some(match grandchild {
                 "add" => "add",
                 "rename" => "rename",
@@ -115,12 +120,18 @@ mod tests {
     #[test]
     fn nested_mutation_paths_keep_every_command_component() {
         assert_eq!(
+            path(&["entity", "field", "rename", "Note", "title", "name"]),
+            ["entity", "field", "rename"]
+        );
+        // The alias reports the path the command actually has, so a report
+        // does not depend on which spelling the reader typed.
+        assert_eq!(
             path(&["resource", "field", "rename", "Note", "title", "name"]),
-            ["resource", "field", "rename"]
+            ["entity", "field", "rename"]
         );
         assert_eq!(
             path(&["--plan-in=plan.json", "rename", "resource"]),
-            ["rename", "resource"]
+            ["rename", "entity"]
         );
         assert_eq!(
             path(&["--output", "json", "model", "check"]),

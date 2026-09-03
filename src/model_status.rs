@@ -1,4 +1,4 @@
-//! `jails resource status` for a canonical project.
+//! `jails entity status` for a canonical project.
 //!
 //! Four authorities, each read where it lives:
 //!
@@ -26,12 +26,12 @@ use jails_model::{AppModel, StableId};
 use jails_support::{Failure, Result};
 use serde_json::json;
 
-const SCHEMA: &str = "jails.resource-status.v1";
+const SCHEMA: &str = "jails.entity-status.v1";
 
 /// What one authority says about the resource.
 ///
 /// `Unknown` is not a failure: it is what an authority that was not consulted
-/// reports, and it widens rather than narrowing. `jails resource status` with
+/// reports, and it widens rather than narrowing. `jails entity status` with
 /// no `--datasource` cannot know what the database holds and says so.
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum Authority {
@@ -351,7 +351,7 @@ fn inspect(
     // command insists on.
     if !entity.active && stored {
         next.push(format!(
-            "jails resource revive {} --table {}",
+            "jails entity revive {} --table {}",
             entity.names.java_type, entity.names.sql_table
         ));
     }
@@ -424,7 +424,7 @@ fn inspect(
 ///
 /// A reader types the name they see in their editor, which is the Java type;
 /// the model's own label is lower camel. Accepting both is what keeps
-/// `jails resource status order` and `jails resource status Order` the same
+/// `jails entity status order` and `jails entity status Order` the same
 /// question.
 fn find<'a>(model: &'a AppModel, selector: &str) -> Option<&'a jails_model::Entity> {
     model.entities.values().find(|entity| {
@@ -448,7 +448,7 @@ fn mentions_table(bytes: &[u8], table: &str) -> bool {
 
 fn render_human(report: &Report) -> String {
     let mut out = format!(
-        "resource: {}\nstate: {}\n",
+        "entity: {}\nstate: {}\n",
         report.resource.as_deref().unwrap_or("unknown"),
         report.state.label()
     );
@@ -480,7 +480,7 @@ fn render_human(report: &Report) -> String {
 fn render_json(report: &Report) -> serde_json::Value {
     json!({
         "schema": SCHEMA,
-        "resource": report.resource,
+        "entity": report.resource,
         "state": report.state.label(),
         "declaration": report.declaration.label(),
         "generated": report.generated.label(),

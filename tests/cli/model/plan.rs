@@ -404,7 +404,7 @@ fn the_lock_stores_managed_bytes_as_text_and_still_reads_the_old_array_form() {
     // A mutation over that project reads the old lock, merges against it, and
     // writes the new shape back.
     let evolved = jails_cmd(&root, None)
-        .args(["resource", "field", "add", "Note", "body:string?"])
+        .args(["entity", "field", "add", "Note", "body:string?"])
         .output()
         .unwrap();
     assert!(
@@ -516,7 +516,7 @@ fn every_line_of_a_mutation_report_is_a_file_git_sees_change() {
     for mutation in [
         vec!["g", "scaffold", "Note", "id:uuid@pk", "title:string!"],
         vec!["g", "scaffold", "Task", "id:uuid@pk", "name:string!"],
-        vec!["resource", "field", "add", "Task", "priority:int"],
+        vec!["entity", "field", "add", "Task", "priority:int"],
         vec!["add", "json"],
         vec!["g", "record", "Money", "amount:long"],
         vec!["destroy", "record", "Money", "--force"],

@@ -35,7 +35,7 @@ struct Explanation {
 const EXPLANATIONS: &[Explanation] = &[
     Explanation {
         kind: ArtifactKind::Scaffold,
-        summary: "A running resource: record, port, two adapters, service, controller, DTOs, tests, and a migration.",
+        summary: "A running entity: record, port, two adapters, service, controller, DTOs, tests, and a migration.",
         body: "Exactly one repository adapter carries `@Repository`, and which one depends on \
                the project. With `spring-boot-starter-jdbc` present the JdbcClient adapter is \
                the bean and the in-memory one is an unannotated fake; without it the JDBC \
@@ -129,7 +129,7 @@ const EXPLANATIONS: &[Explanation] = &[
                not. It needs `version:long` or `version:int` -- the compare-and-set column is \
                what makes the update safe under concurrency rather than last-write-wins.\n\n\
                A ported schema that has no such column grows one: \
-               `jails resource field add Loan version:long --default-literal 0`, then this command.\n\n\
+               `jails entity field add Loan version:long --default-literal 0`, then this command.\n\n\
                The guard travels as `If-Match` and comes back as an `ETag`, and it is \
                required by default -- an update with no compare-and-set is a lost update \
                nothing reports. `--if-match optional` says the guarantee is available and \
@@ -504,7 +504,7 @@ JSON is not an answer: the check runs before the encoding is chosen.",
     ),
     (
         "plan-out",
-        "Write the exact reviewed transition to a file.",
+        "Write the reviewed transition to a file.",
         "A plan is a value with a digest, so review and apply can be separated: `--plan-out` \
 writes it, `--plan-in` applies exactly that one and never replans. What is applied is what \
 was read.",

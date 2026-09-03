@@ -1401,7 +1401,7 @@ fn canonical_repository_is_a_managed_abi_facet_of_the_record() {
     let before = snapshot_tree(&root);
     let refused = jails_cmd(&root, None)
         .args([
-            "resource",
+            "entity",
             "field",
             "type",
             "Note",
@@ -1428,7 +1428,7 @@ fn canonical_repository_is_a_managed_abi_facet_of_the_record() {
     fs::write(&repository, &evolved_repository).unwrap();
     let changed = jails_cmd(&root, None)
         .args([
-            "resource",
+            "entity",
             "field",
             "type",
             "Note",
@@ -1605,7 +1605,7 @@ fn canonical_dto_evolves_three_merge_managed_abi_files_without_losing_reader_edi
     let before = snapshot_tree(&root);
     let refused = jails_cmd(&root, None)
         .args([
-            "resource",
+            "entity",
             "field",
             "nullability",
             "Task",
@@ -1625,7 +1625,7 @@ fn canonical_dto_evolves_three_merge_managed_abi_files_without_losing_reader_edi
     fs::write(&request, &request_with_reader_edits).unwrap();
     let changed = jails_cmd(&root, None)
         .args([
-            "resource",
+            "entity",
             "field",
             "type",
             "Task",
@@ -1783,7 +1783,7 @@ entity Widget {
     // one case `sync` leaves alone: a sealed migration whose bytes changed.
     fs::remove_file(&widget).unwrap();
     let repaired = jails_cmd(&root, None)
-        .args(["resource", "repair"])
+        .args(["entity", "repair"])
         .output()
         .unwrap();
     assert!(
@@ -1814,7 +1814,7 @@ entity Widget {
     );
     fs::write(&widget, format!("{edited}}}\n")).unwrap();
     let again = jails_cmd(&root, None)
-        .args(["resource", "repair"])
+        .args(["entity", "repair"])
         .output()
         .unwrap();
     assert!(
@@ -1832,7 +1832,7 @@ entity Widget {
     // Compilation is whole-model, so a selector is refused rather than
     // silently ignored.
     let scoped = jails_cmd(&root, None)
-        .args(["resource", "repair", "Widget"])
+        .args(["entity", "repair", "Widget"])
         .output()
         .unwrap();
     assert!(!scoped.status.success());

@@ -242,7 +242,7 @@ fn preserving_a_column_renames_the_component_and_writes_no_migration() {
 
     let renamed = jails_cmd(&root, None)
         .args([
-            "resource", "field", "rename", "Account", "userId", "ownerId", "--column", "preserve",
+            "entity", "field", "rename", "Account", "userId", "ownerId", "--column", "preserve",
         ])
         .output()
         .unwrap();
@@ -297,7 +297,7 @@ fn resource_field_uses_scaffold_storage_identity_and_leaves_plain_records_source
 
     let renamed = jails_cmd(&root, None)
         .args([
-            "resource",
+            "entity",
             "field",
             "rename",
             "Customer",
@@ -326,7 +326,7 @@ fn resource_field_uses_scaffold_storage_identity_and_leaves_plain_records_source
     let before = fs::read_dir(&migrations).unwrap().count();
     let renamed = jails_cmd(&root, None)
         .args([
-            "resource",
+            "entity",
             "field",
             "rename",
             "Tag",
@@ -347,7 +347,7 @@ fn resource_field_uses_scaffold_storage_identity_and_leaves_plain_records_source
     // planning an update against a table that is not there.
     let refused = jails_cmd(&root, None)
         .args([
-            "resource",
+            "entity",
             "field",
             "add",
             "Tag",
@@ -635,7 +635,7 @@ fn an_index_can_be_added_to_a_table_that_already_exists() {
 
     let added = jails_cmd(&root, None)
         .args([
-            "resource",
+            "entity",
             "index",
             "add",
             "Message",
@@ -666,7 +666,7 @@ fn an_index_can_be_added_to_a_table_that_already_exists() {
     // same index is refused rather than writing a duplicate migration.
     let again = jails_cmd(&root, None)
         .args([
-            "resource",
+            "entity",
             "index",
             "add",
             "Message",
@@ -687,7 +687,7 @@ fn an_index_can_be_added_to_a_table_that_already_exists() {
     // A typo fails here rather than at `flyway migrate` on whichever machine
     // runs it first.
     let typo = jails_cmd(&root, None)
-        .args(["resource", "index", "add", "Message", "custmoer_id"])
+        .args(["entity", "index", "add", "Message", "custmoer_id"])
         .output()
         .unwrap();
     assert!(!typo.status.success());
@@ -2008,7 +2008,7 @@ fn task_scaffold_cannot_rewrite_or_delete_its_published_v001() {
     );
 
     let status = jails_cmd(&root, None)
-        .args(["resource", "status", "Task", "--output", "json"])
+        .args(["entity", "status", "Task", "--output", "json"])
         .output()
         .unwrap();
     assert!(status.status.success(), "{status:?}");
@@ -2017,13 +2017,13 @@ fn task_scaffold_cannot_rewrite_or_delete_its_published_v001() {
     assert_eq!(parsed["state"], "retired", "{status_json}");
     assert_eq!(parsed["table"], "tasks", "{status_json}");
     assert!(
-        status_json.contains("jails resource revive Task --table tasks"),
+        status_json.contains("jails entity revive Task --table tasks"),
         "{status_json}"
     );
 
     let before_wrong_table = snapshot_tree(&root);
     let wrong_table = jails_cmd(&root, None)
-        .args(["resource", "revive", "Task", "--table", "task"])
+        .args(["entity", "revive", "Task", "--table", "task"])
         .output()
         .unwrap();
     assert!(!wrong_table.status.success(), "{wrong_table:?}");
@@ -2039,7 +2039,7 @@ fn task_scaffold_cannot_rewrite_or_delete_its_published_v001() {
     );
 
     let revived = jails_cmd(&root, None)
-        .args(["resource", "revive", "Task", "--table", "tasks"])
+        .args(["entity", "revive", "Task", "--table", "tasks"])
         .output()
         .unwrap();
     assert!(revived.status.success(), "{revived:?}");
@@ -2070,7 +2070,7 @@ fn task_scaffold_cannot_rewrite_or_delete_its_published_v001() {
     );
 
     let active_status = jails_cmd(&root, None)
-        .args(["resource", "status", "Task", "--output", "json"])
+        .args(["entity", "status", "Task", "--output", "json"])
         .output()
         .unwrap();
     assert!(active_status.status.success(), "{active_status:?}");
@@ -2127,7 +2127,7 @@ fn regenerating_a_dropped_resource_returns_it_to_a_consistent_lifecycle() {
     }
 
     let status = jails_cmd(&root, None)
-        .args(["resource", "status", "Book"])
+        .args(["entity", "status", "Book"])
         .output()
         .unwrap();
     let status = String::from_utf8_lossy(&status.stdout);
@@ -2183,7 +2183,7 @@ fn renaming_a_storage_backed_resource_keeps_its_table_or_refuses() {
     let stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(stderr.contains("backed by table `members`"), "{stderr}");
     assert!(
-        stderr.contains("jails rename resource Member Reader --strategy preserve-table"),
+        stderr.contains("jails rename entity Member Reader --strategy preserve-table"),
         "{stderr}"
     );
 
@@ -2191,7 +2191,7 @@ fn renaming_a_storage_backed_resource_keeps_its_table_or_refuses() {
     let renamed = jails_cmd(&root, None)
         .args([
             "rename",
-            "resource",
+            "entity",
             "Member",
             "Reader",
             "--strategy",
@@ -2216,7 +2216,7 @@ fn renaming_a_storage_backed_resource_keeps_its_table_or_refuses() {
     assert!(adapter.contains("from members"), "{adapter}");
     assert!(!adapter.contains("readers"), "{adapter}");
     let status = jails_cmd(&root, None)
-        .args(["resource", "status", "Reader"])
+        .args(["entity", "status", "Reader"])
         .output()
         .unwrap();
     let status = String::from_utf8_lossy(&status.stdout);
@@ -2265,7 +2265,7 @@ fn renaming_a_storage_backed_resource_keeps_its_table_or_refuses() {
     let renamed = jails_cmd(&root, None)
         .args([
             "rename",
-            "resource",
+            "entity",
             "Note",
             "Memo",
             "--strategy",
@@ -2303,7 +2303,7 @@ fn coordinated_preserve_table_rename_keeps_storage_and_moves_lifecycle_lineage()
     let renamed = jails_cmd(&root, None)
         .args([
             "rename",
-            "resource",
+            "entity",
             "Billing.Task",
             "WorkItem",
             "--strategy",
@@ -2340,7 +2340,7 @@ fn coordinated_preserve_table_rename_keeps_storage_and_moves_lifecycle_lineage()
     // Renamed in Java, unmoved in storage, and no second migration -- which
     // is the whole of what preserve-table means.
     let status = common::resource_status(&root, "WorkItem");
-    assert_eq!(status["resource"], "WorkItem", "{status}");
+    assert_eq!(status["entity"], "WorkItem", "{status}");
     assert_eq!(status["table"], "tasks", "{status}");
     assert_eq!(status["migrations"], serde_json::json!(["001"]), "{status}");
 }
@@ -2369,7 +2369,7 @@ fn coordinated_single_cutover_appends_one_migration_and_switches_the_binding() {
     let renamed = jails_cmd(&root, None)
         .args([
             "rename",
-            "resource",
+            "entity",
             "Billing.Task",
             "WorkItem",
             "--strategy",
@@ -2415,7 +2415,7 @@ fn coordinated_single_cutover_appends_one_migration_and_switches_the_binding() {
     // is `WorkItem` over `work_items`, and its history is both migrations --
     // the create under the old table name and the cutover that moved it.
     let status = common::resource_status(&root, "WorkItem");
-    assert_eq!(status["resource"], "WorkItem", "{status}");
+    assert_eq!(status["entity"], "WorkItem", "{status}");
     assert_eq!(status["table"], "work_items", "{status}");
     assert_eq!(
         status["migrations"],
@@ -2444,7 +2444,7 @@ fn single_cutover_reports_reader_owned_storage_object_names_without_writing() {
     let refused = jails_cmd(&root, None)
         .args([
             "rename",
-            "resource",
+            "entity",
             "Billing.Task",
             "WorkItem",
             "--strategy",
@@ -2478,7 +2478,7 @@ fn single_cutover_reports_reader_owned_sql_without_writing() {
     let refused = jails_cmd(&root, None)
         .args([
             "rename",
-            "resource",
+            "entity",
             "Billing.Task",
             "WorkItem",
             "--strategy",
@@ -2514,7 +2514,7 @@ fn single_cutover_refuses_opaque_database_dependencies_without_writing() {
     let refused = jails_cmd(&root, None)
         .args([
             "rename",
-            "resource",
+            "entity",
             "Billing.Task",
             "WorkItem",
             "--strategy",
@@ -2549,7 +2549,7 @@ fn a_rolling_rename_is_refused_as_the_campaign_it_is() {
     let refused = jails_cmd(&root, None)
         .args([
             "rename",
-            "resource",
+            "entity",
             "Task",
             "WorkItem",
             "--strategy",
@@ -2571,7 +2571,7 @@ fn a_rolling_rename_is_refused_as_the_campaign_it_is() {
     let cutover = jails_cmd(&root, None)
         .args([
             "rename",
-            "resource",
+            "entity",
             "Task",
             "WorkItem",
             "--strategy",
@@ -2609,7 +2609,7 @@ fn coordinated_resource_rename_reports_reader_owned_java_without_rewriting_it() 
     let refused = jails_cmd(&root, None)
         .args([
             "rename",
-            "resource",
+            "entity",
             "Billing.Task",
             "WorkItem",
             "--strategy",
@@ -2637,7 +2637,7 @@ fn resource_repair_restores_sealed_history_and_missing_owned_projections() {
         .unwrap();
     assert!(generated.status.success(), "{generated:?}");
     let evolved = jails_cmd(&root, None)
-        .args(["resource", "field", "add", "Task", "priority:int?"])
+        .args(["entity", "field", "add", "Task", "priority:int?"])
         .output()
         .unwrap();
     assert!(evolved.status.success(), "{evolved:?}");
@@ -2652,7 +2652,7 @@ fn resource_repair_restores_sealed_history_and_missing_owned_projections() {
     fs::remove_file(&controller).unwrap();
 
     let repaired = jails_cmd(&root, None)
-        .args(["resource", "repair"])
+        .args(["entity", "repair"])
         .output()
         .unwrap();
     assert!(
@@ -2669,7 +2669,7 @@ fn resource_repair_restores_sealed_history_and_missing_owned_projections() {
 
     fs::remove_file(&migration).unwrap();
     let repaired_missing = jails_cmd(&root, None)
-        .args(["resource", "repair"])
+        .args(["entity", "repair"])
         .output()
         .unwrap();
     assert!(repaired_missing.status.success(), "{repaired_missing:?}");
@@ -2741,7 +2741,7 @@ fn task_drop_keeps_v001_and_appends_an_exact_forward_migration() {
     assert_eq!(
         fs::read_to_string(root.join("src/main/resources/db/migration/V002__drop_tasks.sql"))
             .unwrap(),
-        "-- Generated by jails from the accepted semantic schema.\ndrop table tasks;\n"
+        "-- Generated by jails from the accepted model.\ndrop table tasks;\n"
     );
     assert!(
         !root
@@ -2761,7 +2761,7 @@ fn task_drop_keeps_v001_and_appends_an_exact_forward_migration() {
 
     let before_revive = snapshot_tree(&root);
     let revive = jails_cmd(&root, None)
-        .args(["resource", "revive", "Task", "--table", "tasks"])
+        .args(["entity", "revive", "Task", "--table", "tasks"])
         .output()
         .unwrap();
     assert!(!revive.status.success(), "{revive:?}");
@@ -3137,7 +3137,7 @@ fn generate_field_updates_unchanged_derivatives_preserves_edits_and_adds_a_migra
     fs::write(&request, &edited).unwrap();
 
     let refused = jails_cmd(&root, None)
-        .args(["resource", "field", "add", "Note", "createdAt:instant"])
+        .args(["entity", "field", "add", "Note", "createdAt:instant"])
         .output()
         .unwrap();
     assert!(!refused.status.success());
@@ -3155,7 +3155,7 @@ fn generate_field_updates_unchanged_derivatives_preserves_edits_and_adds_a_migra
 
     let output = jails_cmd(&root, None)
         .args([
-            "resource",
+            "entity",
             "field",
             "add",
             "Note",
@@ -3301,7 +3301,7 @@ fn resource_field_commands_use_the_risk_specific_cli_contracts() {
 
     for args in [
         vec![
-            "resource",
+            "entity",
             "field",
             "rename",
             "Task",
@@ -3311,7 +3311,7 @@ fn resource_field_commands_use_the_risk_specific_cli_contracts() {
             "single-cutover",
         ],
         vec![
-            "resource",
+            "entity",
             "field",
             "type",
             "Task",
@@ -3322,7 +3322,7 @@ fn resource_field_commands_use_the_risk_specific_cli_contracts() {
             "safe",
         ],
         vec![
-            "resource",
+            "entity",
             "field",
             "nullability",
             "Task",
@@ -3330,7 +3330,7 @@ fn resource_field_commands_use_the_risk_specific_cli_contracts() {
             "--nullable",
         ],
         vec![
-            "resource",
+            "entity",
             "field",
             "drop",
             "Task",
@@ -3350,7 +3350,7 @@ fn resource_field_commands_use_the_risk_specific_cli_contracts() {
 
     let refused = jails_cmd(&root, None)
         .args([
-            "resource",
+            "entity",
             "field",
             "nullability",
             "Task",
@@ -3367,7 +3367,7 @@ fn resource_field_commands_use_the_risk_specific_cli_contracts() {
     );
     let required = jails_cmd(&root, None)
         .args([
-            "resource",
+            "entity",
             "field",
             "nullability",
             "Task",

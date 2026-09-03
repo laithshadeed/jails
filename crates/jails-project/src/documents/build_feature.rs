@@ -45,8 +45,8 @@ pub fn reconcile_gradle_build_features(
         return Err(Diagnostic::new(
             "workspace-gradle-formatting-unsupported",
             super::BUILD_SUBJECT,
-            "the canonical Gradle backend cannot install formatting: Spotless needs `id 'com.diffplug.spotless'` inside `plugins { }`, which must be the first statement in the script.",
-            "add the plugin entry yourself and configure `spotless { }`, or keep formatting outside the canonical model",
+            "the Gradle adapter cannot install formatting: Spotless needs `id 'com.diffplug.spotless'` inside `plugins { }`, which must be the first statement in the script.",
+            "add the plugin entry yourself and configure `spotless { }`, or keep formatting outside the model",
         ));
     }
     Ok(text)
@@ -72,7 +72,7 @@ fn reconcile_maven_coverage(text: &str, enabled: bool) -> Result<String, Diagnos
             format!(
                 "Maven already configures `jacoco-maven-plugin` outside `<!-- {COVERAGE_MARKER} -->`"
             ),
-            "remove the reader-owned duplicate or keep coverage outside the canonical model",
+            "remove the reader-owned duplicate or keep coverage outside the model",
         ));
     }
     insert_maven_feature_plugin(text, COVERAGE_MARKER, maven_coverage_plugin())
@@ -103,7 +103,7 @@ fn reconcile_maven_formatting(text: &str, enabled: bool) -> Result<String, Diagn
             format!(
                 "Maven already configures `spotless-maven-plugin` outside `<!-- {FORMATTING_MARKER} -->`"
             ),
-            "remove the reader-owned duplicate or keep formatting outside the canonical model",
+            "remove the reader-owned duplicate or keep formatting outside the model",
         ));
     }
     insert_maven_feature_plugin(text, FORMATTING_MARKER, maven_formatting_plugin())
@@ -183,7 +183,7 @@ fn reconcile_gradle_coverage(
     if text.contains("jacocoTestCoverageVerification") || text.contains("plugin: 'jacoco'") {
         return Err(reader_owned_feature(
             format!("Gradle already configures JaCoCo outside `// {COVERAGE_MARKER}`"),
-            "remove the reader-owned duplicate or keep coverage outside the canonical model",
+            "remove the reader-owned duplicate or keep coverage outside the model",
         ));
     }
     let separator = if text.is_empty() || text.ends_with('\n') {
@@ -254,7 +254,7 @@ fn reconcile_maven_integration_tests(
             format!(
                 "Maven already configures `maven-failsafe-plugin` outside `<!-- {INTEGRATION_TESTS_MARKER} -->`"
             ),
-            "remove the reader-owned duplicate or keep integration-test execution outside the canonical model",
+            "remove the reader-owned duplicate or keep integration-test execution outside the model",
         ));
     }
     insert_maven_plugin(text, managed_versions)
@@ -324,7 +324,7 @@ fn reconcile_gradle_integration_tests(
             format!(
                 "Gradle already declares `integrationTest` outside `// {INTEGRATION_TESTS_MARKER}`"
             ),
-            "remove the reader-owned duplicate or keep integration-test execution outside the canonical model",
+            "remove the reader-owned duplicate or keep integration-test execution outside the model",
         ));
     }
     let separator = if text.is_empty() || text.ends_with('\n') {

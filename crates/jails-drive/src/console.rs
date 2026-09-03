@@ -364,7 +364,7 @@ fn confirm_boot(
     }
     if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
         return Err(
-            "Spring boot confirmation requires a terminal.\n       fix: review the preflight above, then pass `--yes` to authorize that exact boot in automation."
+            "Spring boot confirmation requires a terminal.\n       fix: review the preflight above, then pass `--yes` to authorize that boot in automation."
                 .into(),
         );
     }

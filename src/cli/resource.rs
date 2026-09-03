@@ -9,22 +9,22 @@ use clap::Subcommand;
 
 #[derive(Subcommand)]
 pub(crate) enum ResourceCommand {
-    /// Reconcile recorded identity, generated source, and sealed migrations
+    /// Check that recorded identity, generated source and sealed migrations agree
     Status {
         /// Simple entity name or fully qualified generated Java type
         selector: String,
     },
-    /// Restore projections for preserved storage without another create migration
+    /// Regenerate the files for preserved storage without another create migration
     Revive {
         /// Simple entity name or fully qualified generated Java type
         selector: String,
-        /// Exact preserved SQL table name
+        /// The preserved SQL table name
         #[arg(long)]
         table: String,
     },
     /// Rewrite a sealed migration whose bytes changed
     ///
-    /// On a canonical project this takes no arguments: managed output is
+    /// On a modelled project this takes no arguments: managed output is
     /// rendered from the model, so repair is ordinary compilation with two
     /// guards waived, and there is nothing to select or to choose a strategy
     /// between. `jails sync` waives the first of them -- it writes back any
@@ -51,7 +51,7 @@ pub(crate) enum ResourceCommand {
 pub(crate) enum ResourceIndexCommand {
     /// Append one composite or ordered index and its migration
     ///
-    ///   jails resource index add Message 'customer_id, created_at desc'
+    ///   jails entity index add Message 'customer_id, created_at desc'
     ///
     /// The columns are the ones the table has, each optionally `asc`/`desc`
     /// and nothing else -- arbitrary SQL is refused rather than recorded as
@@ -65,12 +65,12 @@ pub(crate) enum ResourceIndexCommand {
     },
     /// Drop one previously declared composite or ordered index
     ///
-    ///   jails resource index remove Message 'customer_id, created_at desc' \
+    ///   jails entity index remove Message 'customer_id, created_at desc' \
     ///     --confirm-index idx_message_index_ab12cd34ef56
     Remove {
         entity: String,
         columns: String,
-        /// Exact physical index name that will be dropped
+        /// The physical index name that will be dropped
         #[arg(long)]
         confirm_index: String,
         /// Subpackage containing the generated entity
@@ -138,7 +138,7 @@ pub(crate) enum ResourceFieldCommand {
         #[arg(long)]
         package: Option<String>,
     },
-    /// Drop a field after confirming the exact physical column
+    /// Drop a field after confirming the physical column it maps to
     Drop {
         entity: String,
         field: String,

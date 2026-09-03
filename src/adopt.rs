@@ -3,7 +3,7 @@
 //! Two halves, for the two things a project jails did not create already
 //! owns. **`jails adopt`** records what the project calls its layers, and
 //! **`jails adopt resource <Name>`** registers a type the reader wrote in the
-//! model, so the commands that evolve a declared entity -- `resource field`,
+//! model, so the commands that evolve a declared entity -- `entity field`,
 //! `rename resource`, `destroy` -- work on it.
 //!
 //! ## The layout half

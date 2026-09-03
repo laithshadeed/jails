@@ -109,7 +109,7 @@ fn lock_projection_mismatch() -> Diagnostic {
     Diagnostic::new(
         "workspace-lock-projection-mismatch",
         COMPILER_LOCK,
-        format!("compiler lock `{COMPILER_LOCK}` does not match its accepted projection"),
+        format!("compiler lock `{COMPILER_LOCK}` does not match the generated tree it accepted"),
         "restore a known-good lock; do not infer merge bases from generated source",
     )
 }
@@ -948,6 +948,11 @@ mod tests {
         .unwrap();
 
         let error = decode_compiler_lock(&bytes).unwrap_err();
-        assert!(error.to_string().contains("accepted projection"), "{error}");
+        assert!(
+            error
+                .to_string()
+                .contains("does not match the generated tree"),
+            "{error}"
+        );
     }
 }

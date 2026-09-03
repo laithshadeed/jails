@@ -153,7 +153,7 @@ pub(crate) fn relayed<'a>(
             "compile-outbox-relays-many-events",
             format!("$.operations.{}", operation.label),
             format!(
-                "canonical command `{}` delivers {} events through one outbox",
+                "command `{}` delivers {} events through one outbox",
                 operation.label,
                 command.semantics.emits.len()
             ),
@@ -165,7 +165,7 @@ pub(crate) fn relayed<'a>(
             "compile-outbox-event-missing",
             format!("$.operations.{}", operation.label),
             format!(
-                "canonical command `{}` emits missing event `{event_id}`",
+                "command `{}` emits missing event `{event_id}`",
                 operation.label
             ),
             "declare the event, or remove the `emit`",
@@ -176,7 +176,7 @@ pub(crate) fn relayed<'a>(
             "compile-outbox-emits-non-event",
             format!("$.operations.{}", operation.label),
             format!(
-                "canonical command `{}` emits non-event operation `{}`",
+                "command `{}` emits non-event operation `{}`",
                 operation.label, event.label
             ),
             "`emit` names an event; declare one",
@@ -196,7 +196,7 @@ pub(crate) fn relayed<'a>(
                 "outbox event `{}` projects its `id` from the target row",
                 event.label
             ),
-            "declare `id uuid` on the event so it is minted -- a staged event keyed on the resource id makes `on conflict (id) do nothing` discard the second event about that resource",
+            "declare `id uuid` on the event so it is minted -- a staged event keyed on the entity id makes `on conflict (id) do nothing` discard the second event about that resource",
         )),
         None => Err(Diagnostic::new(
             "compile-outbox-event-without-id",

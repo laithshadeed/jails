@@ -98,7 +98,7 @@ pub(super) fn unsupported_change(entity: &Entity, before: &Field) -> Diagnostic 
             "accepted column `{}.{}` changed without an evolution policy",
             entity.names.sql_table, before.names.sql_column
         ),
-        "use the canonical rename, type, nullability, or index command for this change",
+        "use the rename, type, nullability, or index command for this change",
     )
 }
 
@@ -161,7 +161,7 @@ pub(super) fn evolve_field(
                         "column `{}` did not change during single-cutover rename",
                         before.names.sql_column
                     ),
-                    "choose a Java field name with a different SQL projection, or use `--column preserve`",
+                    "choose a Java field name with a different SQL name, or use `--column preserve`",
                 ));
             }
             Ok(vec![format!(
@@ -179,7 +179,7 @@ pub(super) fn evolve_field(
                 return Err(Diagnostic::new(
                     "compile-widening-strategy-required",
                     format!("$.entities.{}.fields.{}", entity.label, before.label),
-                    "only proven safe field widening lowers as one canonical migration",
+                    "only proven safe field widening lowers as one forward migration",
                     "use `--strategy safe`, or model expand/contract as a multi-release campaign",
                 ));
             }
