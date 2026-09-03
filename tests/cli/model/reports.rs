@@ -490,3 +490,68 @@ entity Bed {
         "an edited migration is named by the seal, as a failure:\n{reported}"
     );
 }
+
+/// `jails model status` is the replacement for `ls .jails/generated`: the
+/// lock's list of managed files, each against its accepted image.
+#[test]
+fn model_status_lists_the_lock_and_tells_edited_from_missing() {
+    let root = model_project("model-status", MODEL);
+    let unowned = jails_cmd(&root, None)
+        .args(["model", "status"])
+        .output()
+        .unwrap();
+    assert!(unowned.status.success());
+    assert!(
+        String::from_utf8_lossy(&unowned.stdout).contains("no accepted projection"),
+        "{}",
+        String::from_utf8_lossy(&unowned.stdout)
+    );
+
+    apply_canonical_model(&root, "initial-plan");
+    const RECORD: &str = "src/main/java/com/example/notes/domain/Note.java";
+    const SERVICE: &str = "src/main/java/com/example/notes/service/NoteService.java";
+    let mut edited = fs::read_to_string(root.join(RECORD)).unwrap();
+    edited.push_str("// reader edit\n");
+    fs::write(root.join(RECORD), edited).unwrap();
+    fs::remove_file(root.join(SERVICE)).unwrap();
+
+    let status = jails_cmd(&root, None)
+        .args(["model", "status", "--output", "json"])
+        .output()
+        .unwrap();
+    assert!(status.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
+    let state = |path: &str| {
+        report["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|file| file["path"] == path)
+            .unwrap_or_else(|| panic!("{path} is not listed"))["state"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(state(RECORD), "edited");
+    assert_eq!(state(SERVICE), "missing");
+    assert_eq!(
+        state("src/main/java/com/example/notes/repository/NoteRepository.java"),
+        "managed"
+    );
+    assert!(
+        report["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|file| file["artifact"].as_str().unwrap().starts_with("art_")),
+        "{report}"
+    );
+
+    let human = jails_cmd(&root, None)
+        .args(["model", "status"])
+        .output()
+        .unwrap();
+    let shown = String::from_utf8_lossy(&human.stdout);
+    assert!(shown.contains(&format!("edited   {RECORD}")), "{shown}");
+    assert!(shown.contains(&format!("missing  {SERVICE}")), "{shown}");
+}

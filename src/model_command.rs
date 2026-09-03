@@ -318,6 +318,7 @@ pub(crate) fn run(command: ModelCommand, invocation: Invocation) -> Result<()> {
         ModelCommand::Apply { bundle } => apply(&bundle, invocation.output),
         ModelCommand::Eject { semantic_id } => crate::model_eject::run(semantic_id, invocation),
         ModelCommand::Explain { filter } => crate::model_explain::run(filter, invocation),
+        ModelCommand::Status => crate::model_ownership::run(invocation),
     }
 }
 

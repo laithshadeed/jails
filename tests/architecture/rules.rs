@@ -59,6 +59,10 @@ fn owns_terminal_output(path: &Path) -> bool {
         // whose whole contract is the four authority lines it prints. The
         // legacy half is already allowed through `jails-report`.
         || relative == "src/model_status.rs"
+        // `jails model status` is the replacement for `ls .jails/generated`:
+        // the lock's list of managed files, one line each, and a read-only
+        // report whose whole contract is that list.
+        || relative == "src/model_ownership.rs"
         || relative == "src/parse_error.rs"
         // `app init` prints the file it seeded and what to do with it, and
         // `app plan` prints the manifest's declarations -- a plan that
@@ -485,6 +489,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails", "model_resource", 9),
     ("jails", "model_setting", 9),
     ("jails", "model_status", 9),
+    ("jails", "model_ownership", 9),
     ("jails", "model_migration", 9),
     ("jails", "canonical_support", 9),
     ("jails", "parse_error", 9),

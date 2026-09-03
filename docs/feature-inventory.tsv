@@ -13,6 +13,7 @@ model plan	jails-compiler/jails-workspace	read-only+optional-report-output	model
 model apply	jails-workspace	project-mutation	model_command::apply
 model eject	jails	project-mutation	model_eject::run
 model explain	jails	read-only	model_explain::run
+model status	jails	read-only	model_ownership::run
 model init	jails	project-mutation	model_init::run
 generate	jails	project-mutation	model_generate_jdl::run
 add	jails	project-mutation	model_capability::add

@@ -62,6 +62,7 @@ jails model check [--manifest .jails/model.jdl] [--frozen]
 jails model plan  [--manifest .jails/model.jdl] [--bundle plan.json]
 jails model apply --bundle plan.json
 jails model eject <boundary>
+jails model status
 jails model explain
 jails model fmt [--check]
 jails sync
@@ -74,7 +75,11 @@ before publication. `check --frozen` is the CI assertion that committed managed
 output matches the model and compiler version exactly. `sync` compiles the
 current model and executes its plan directly. `explain` lists every name the
 compiler derived rather than the author writing, with the rule that produced
-it.
+it. `status` lists every file the accepted projection owns -- the lock's
+list, since managed files sit beside yours under `src/` -- and whether each
+is byte for byte what jails wrote, carries a hand edit the next generation
+merges over, or is missing; every managed file also carries a header line
+naming the artifact it was rendered from.
 
 **Ejection** is the escape hatch for one implementation boundary, named by a
 readable path (`Note.repo.fake`, `Note.http.api`, `Audit.implementation`)

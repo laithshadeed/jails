@@ -37,12 +37,14 @@ pub(crate) enum ModelCommand {
         #[arg(long, value_name = "FILE")]
         bundle: PathBuf,
     },
+    /// List the files the accepted projection owns, and whether each still matches it
+    Status,
     /// Show every name the convention derived rather than the author writing it
     Explain {
         /// Stable id, role, package or value to filter by; omit to list every record
         filter: Option<String>,
     },
-    /// Transfer generated Java for one implementation boundary into reader-owned source
+    /// Release one implementation boundary to you: its files stay put and leave the accepted projection
     Eject {
         /// A boundary path (Note.repo.fake, Audit.implementation), an artifact id from provenance, or a capability id
         semantic_id: String,
