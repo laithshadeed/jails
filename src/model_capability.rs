@@ -3,9 +3,8 @@
 use crate::CapabilityKind;
 use crate::Invocation;
 use crate::model_generate::{PreparedMutation, finish_generation};
-use jails_model::{CapabilityId, DependencyId, DependencyScope, Evolution, StableId};
+use jails_model::{DependencyScope, Evolution};
 use jails_support::{Failure, Result};
-use jails_support::{hex, sha256};
 
 /// The `app { storage ... }` value a capability label means, for the two
 /// kinds JDL v1 states as an axis rather than a capability.
@@ -53,11 +52,6 @@ pub(crate) fn add(
     let mut next_source = current.source.clone();
     for capability in capabilities {
         let label = capability.label();
-        let identity_label = name.as_ref().map_or_else(
-            || label.to_string(),
-            |name| format!("{label}_{}", jails_model::field_syntax::java_to_label(name)),
-        );
-        let id = CapabilityId::parse(format!("cap_{identity_label}")).map_err(Failure::Told)?;
         if let Some(existing) = current
             .model
             .capabilities
@@ -89,12 +83,13 @@ pub(crate) fn add(
             next_source = jails_model::set_jdl_app_property(&next_source, "storage", storage)
                 .map_err(crate::model_generate_jdl::jdl_edit_failure)?;
         } else {
+            // The derivation reads the same `<kind>[_<name>]` label back off
+            // the line, so the attribute would be a pin displacing nothing.
             let declaration = format!(
-                "cap {label}{} @id({})",
+                "cap {label}{}",
                 name.as_ref()
                     .map(|name| format!(" {name}"))
                     .unwrap_or_default(),
-                id.as_str(),
             );
             next_source = jails_model::append_jdl_declaration(&next_source, &declaration)
                 .map_err(crate::model_generate_jdl::jdl_edit_failure)?;
@@ -216,14 +211,13 @@ pub(crate) fn add_dependency(
         });
     }
 
-    let suffix = &hex(&sha256(coordinate.as_bytes()))[..16];
-    let label = format!("dep_{suffix}");
-    let id = DependencyId::parse(label.clone()).map_err(Failure::Told)?;
+    // **A coordinate is its own identity**, so the id is the coordinate's
+    // label rather than a hash of it: the parser derives the same thing from
+    // the line, which is what lets the declaration go in without an `@id`.
     let mut next_source = current.source.clone();
     {
         let declaration = format!(
-            "dep {coordinate} @id({}){}{}",
-            id.as_str(),
+            "dep {coordinate}{}{}",
             version
                 .as_ref()
                 .map(|version| quote(version).map(|version| format!(" @version({version})")))
@@ -282,19 +276,14 @@ pub(crate) fn remove_dependency(
 }
 
 pub(crate) fn ensure_fast_test(invocation: Invocation) -> Result<()> {
-    set_tool_capability("fast_test", "fast-test", true, invocation)
+    set_tool_capability("fast-test", true, invocation)
 }
 
 pub(crate) fn remove_fast_test(invocation: Invocation) -> Result<()> {
-    set_tool_capability("fast_test", "fast-test", false, invocation)
+    set_tool_capability("fast-test", false, invocation)
 }
 
-fn set_tool_capability(
-    label: &str,
-    kind: &str,
-    present: bool,
-    invocation: Invocation,
-) -> Result<()> {
+fn set_tool_capability(kind: &str, present: bool, invocation: Invocation) -> Result<()> {
     let current = crate::model_command::Current::load(&invocation)?;
     let existing = current
         .model
@@ -305,12 +294,8 @@ fn set_tool_capability(
     let next_source = match (present, existing) {
         (true, Some(_)) | (false, None) => current.source.clone(),
         (true, None) => {
-            let id = CapabilityId::parse(format!("cap_{label}")).map_err(Failure::Told)?;
-            jails_model::append_jdl_declaration(
-                &current.source,
-                &format!("cap {kind} @id({})", id.as_str()),
-            )
-            .map_err(crate::model_generate_jdl::jdl_edit_failure)?
+            jails_model::append_jdl_declaration(&current.source, &format!("cap {kind}"))
+                .map_err(crate::model_generate_jdl::jdl_edit_failure)?
         }
         (false, Some(capability)) => {
             crate::model_generate_jdl::remove_capability(&current.source, &capability.label)?

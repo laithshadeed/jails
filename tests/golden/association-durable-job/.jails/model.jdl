@@ -7,32 +7,33 @@ app Demo @id(project_demo) {
   storage postgres
 }
 
-cap json @id(cap_json)
+cap json
 
-entity Owner @id(ent_owner) {
+entity Owner {
   use scaffold
 
-  id: uuid @id(fld_owner_id) @pk
-  name: string @id(fld_owner_name) @notBlank
-  createdAt: instant @id(fld_owner_created_at) @default(now())
+  id:        uuid @pk
+  name:      string @notBlank
+  createdAt: instant @default(now())
 }
 
-entity Item @id(ent_item) {
+entity Item {
   use scaffold
 
-  id: uuid @id(fld_item_id) @pk
-  ownerId: uuid @id(fld_item_owner_id) @index
-  name: string @id(fld_item_name) @notBlank
-  createdAt: instant @id(fld_item_created_at) @default(now())
+  id:        uuid @pk
+  ownerId:   uuid @index
+  name:      string @notBlank
+  createdAt: instant @default(now())
 
   relation itemOwner to Owner {
     map ownerId -> id
   }
-  command AddItem(id, owner_id, name) @id(op_add_item) {
+
+  command AddItem(id, owner_id, name) {
   }
 }
 
-component durable-job ItemDispatcher(id: uuid, ownerId: uuid, name: string @notBlank) @id(cmp_durable_job_item_dispatcher) {
+component durable-job ItemDispatcher(id: uuid, ownerId: uuid, name: string @notBlank) {
   on add_item
   yields item
 }

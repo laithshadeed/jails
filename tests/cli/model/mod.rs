@@ -127,3 +127,35 @@ fn canonical_database_project(label: &str) -> PathBuf {
     }
     root
 }
+
+/// One model source with its member columns collapsed to a single space.
+///
+/// **What a declaration says, not which column it says it in.** The formatter
+/// lines up the type column of a run of members, so `title: string` is
+/// `title:     string` beside a `createdAt`, and an assertion about the
+/// attributes on a field would otherwise have to restate a width that moves
+/// whenever a sibling field is added. The two tests that are *about* the
+/// columns assert them directly and do not come through here.
+pub fn unaligned(source: &str) -> String {
+    source
+        .split_inclusive('\n')
+        .map(|line| {
+            let indent = line.len() - line.trim_start().len();
+            let mut collapsed = line[..indent].to_string();
+            let mut spaces = 0;
+            for character in line[indent..].chars() {
+                if character == ' ' {
+                    spaces += 1;
+                    continue;
+                }
+                if spaces > 0 {
+                    collapsed.push(' ');
+                    spaces = 0;
+                }
+                collapsed.push(character);
+            }
+            collapsed.push_str(&" ".repeat(spaces));
+            collapsed
+        })
+        .collect()
+}

@@ -7,19 +7,20 @@ app Demo @id(project_demo) {
   storage postgres
 }
 
-enum SenderType @id(ent_sender_type) {
+enum SenderType {
   CUSTOMER
   ADMIN
 }
 
-entity Note @id(ent_note) {
+entity Note {
   use scaffold
 
-  id: long @id(fld_note_id) @pk
-  authorId: long @id(fld_note_author_id)
-  body: string @id(fld_note_body) @notBlank
-  senderType: SenderType @id(fld_note_sender_type)
-  command PostAdminNote(author_id, body) @id(op_post_admin_note) {
+  id:         long @pk
+  authorId:   long
+  body:       string @notBlank
+  senderType: SenderType
+
+  command PostAdminNote(author_id, body) {
     set sender_type = "ADMIN"
     route POST "/admin_api/notes" consumes form
   }

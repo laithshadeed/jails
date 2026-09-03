@@ -1877,7 +1877,7 @@ fn add_records_what_it_applied_and_remove_takes_it_back_out() {
     // list that can disagree with it.
     let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(
-        model.contains("cap csv @id(cap_csv)"),
+        model.contains("\ncap csv\n"),
         "add did not record the capability it applied:\n{model}"
     );
     assert!(

@@ -7,8 +7,8 @@ app Demo @id(project_demo) {
   storage postgres
 }
 
-component fetcher Page @id(cmp_fetcher_page) {}
+component fetcher Page {}
 
-component http-workflow SiteWalk @id(cmp_http_workflow_site_walk) {
+component http-workflow SiteWalk {
   on page
 }

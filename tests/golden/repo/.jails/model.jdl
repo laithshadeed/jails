@@ -7,8 +7,9 @@ app Demo @id(project_demo) {
   storage none
 }
 
-entity Note @id(ent_note) {
+entity Note {
   use repo
-  id: uuid @id(fld_note_id) @pk
-  title: string @id(fld_note_title)
+
+  id:    uuid @pk
+  title: string
 }

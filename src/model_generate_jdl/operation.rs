@@ -105,12 +105,7 @@ pub(super) fn operation_declaration(
         .filter(|field| !pinned.contains(field) && !managed_inputs.contains(field))
         .map(borrowed)
         .collect::<Vec<_>>();
-    let mut output = format!(
-        "  {kind} {}({}) @id(op_{}) {{\n",
-        args.name,
-        parameters.join(", "),
-        java_to_label(&args.name)
-    );
+    let mut output = format!("  {kind} {}({}) {{\n", args.name, parameters.join(", "));
     if args.kind == ArtifactKind::Query {
         if let Some(order_by) = &args.order_by {
             let order_by = order_by

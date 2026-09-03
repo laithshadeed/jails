@@ -425,6 +425,13 @@ pub(super) fn seed_model(
     // `<!-- jails:dependencies -->` block the compiler owns, rather than
     // beside it as a reader-owned coordinate the first `jails add` would have
     // to refuse.
+    // **The declarations `new` wrote say so.** A reader opening
+    // `.jails/model.jdl` for the first time meets a dependency and five
+    // settings nobody typed, and without a line saying where they came from
+    // the honest reading is that they are jails' and must not be touched.
+    // They are ordinary declarations: editing or deleting one is a model
+    // change like any other.
+    source.push_str("// written by jails new; yours to edit or delete\n");
     source.push_str("dep org.jspecify:jspecify @version(\"1.0.0\")\n");
     for (_, property, applies) in default_properties(boot_major) {
         if !applies {

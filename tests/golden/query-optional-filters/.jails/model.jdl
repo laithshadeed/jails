@@ -7,12 +7,13 @@ app Demo @id(project_demo) {
   storage postgres
 }
 
-entity Ticket @id(ent_ticket) {
+entity Ticket {
   use scaffold
 
-  id: long @id(fld_ticket_id) @pk
-  status: string @id(fld_ticket_status) @notBlank
-  category: string? @id(fld_ticket_category)
-  query TicketsByStatus(status, category?) @id(op_tickets_by_status) {
+  id:       long @pk
+  status:   string @notBlank
+  category: string?
+
+  query TicketsByStatus(status, category?) {
   }
 }

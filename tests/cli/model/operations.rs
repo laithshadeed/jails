@@ -346,10 +346,10 @@ fn every_operation_kind_lowers_to_a_typed_managed_abi() {
     let source = MODEL.replace(
         "  }\n}\n",
         "  }\n\n  \
-         event NoteCreated(id, title) @id(op_note_created) {\n  }\n\n  \
-         query OpenNotes(title) @id(op_open_notes) {\n    order by [id]\n    limit 50\n    \
+         event NoteCreated(id, title) {\n  }\n\n  \
+         query OpenNotes(title) {\n    order by [id]\n    limit 50\n    \
          route GET \"/notes\"\n  }\n\n  \
-         transition RenameNote(title) @id(op_rename_note) {\n    select [id]\n    \
+         transition RenameNote(title) {\n    select [id]\n    \
          update [title]\n    emit note_created\n    route PATCH \"/notes/{id}\"\n  }\n}\n",
     );
     assert_ne!(
@@ -467,10 +467,10 @@ fn familiar_operation_commands_edit_nested_jdl_and_compile_typed_abis() {
 
     let jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     for declaration in [
-        "event NoteCreated(id, title) @id(op_note_created)",
-        "command CreateNote(title) @id(op_create_note)",
-        "query OpenNotes(title) @id(op_open_notes)",
-        "transition RenameNote(title) @id(op_rename_note)",
+        "event NoteCreated(id, title)",
+        "command CreateNote(title)",
+        "query OpenNotes(title)",
+        "transition RenameNote(title)",
         r#"route POST "/notes""#,
         r#"route GET "/notes/search""#,
         r#"route PATCH "/notes/{id}""#,
@@ -528,8 +528,8 @@ fn canonical_api_adapters_merge_then_eject_at_the_operation_boundary() {
     let source = MODEL.replace(
         "  }\n}\n",
         "  }\n\n  \
-         query OpenNotes(title) @id(op_open_notes) {\n    route GET \"/notes/search\"\n  }\n\n  \
-         transition RenameNote(title) @id(op_rename_note) {\n    select [id]\n    \
+         query OpenNotes(title) {\n    route GET \"/notes/search\"\n  }\n\n  \
+         transition RenameNote(title) {\n    select [id]\n    \
          update [title]\n    route PATCH \"/notes/{id}\"\n  }\n}\n",
     );
     assert_ne!(
@@ -1172,7 +1172,7 @@ fn canonical_outbox_delivery_reaches_disk_and_its_table_is_written_once() {
         root.join(".jails/model.jdl"),
         "jdl 1\napp Demo @id(project_demo) {\n  pkg com.example.demo\n  java 26\n  \
          platform spring\n  build maven\n  storage postgres\n}\n\ncap json\n\n\
-         entity Task @id(ent_task) {\n  use repo\n  id: uuid @pk\n  title: string @notBlank\n\n  \
+         entity Task {\n  use repo\n  id: uuid @pk\n  title: string @notBlank\n\n  \
          command Create(title) {\n    emit TaskCreated\n    deliver outbox\n  }\n\n  \
          event TaskCreated(id: uuid, title)\n}\n",
     )

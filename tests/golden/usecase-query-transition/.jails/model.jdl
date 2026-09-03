@@ -7,25 +7,26 @@ app Demo @id(project_demo) {
   storage none
 }
 
-enum PayoutStatus @id(ent_payout_status) {
+enum PayoutStatus {
   PENDING
   SETTLED
   FAILED
 }
 
-entity Payout @id(ent_payout) {
+entity Payout {
   use scaffold
 
-  id: uuid @id(fld_payout_id) @pk
-  amount: long @id(fld_payout_amount) @positive
-  status: PayoutStatus @id(fld_payout_status) @index
-  version: long @id(fld_payout_version) @version @nonnegative
-  createdAt: instant @id(fld_payout_created_at) @default(now())
-  command RequestPayout(id, amount) @id(op_request_payout) {
+  id:        uuid @pk
+  amount:    long @positive
+  status:    PayoutStatus @index
+  version:   long @version @nonnegative
+  createdAt: instant @default(now())
+
+  command RequestPayout(id, amount) {
   }
-  query PayoutsByStatus(status) @id(op_payouts_by_status) {
+  query PayoutsByStatus(status) {
   }
-  transition ChangePayoutStatus(id, status, version) @id(op_change_payout_status) {
+  transition ChangePayoutStatus(id, status, version) {
     select [id]
     update [status]
     if-match required

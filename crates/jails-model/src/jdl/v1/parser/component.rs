@@ -33,9 +33,8 @@ impl Parser<'_> {
         } else {
             Vec::new()
         };
-        let (_, id) = self.declared(&["id"], || {
-            format!("cmp_{}_{}", raw_kind.replace('-', "_"), label)
-        })?;
+        let (_, id) =
+            self.declared(&["id"], || super::identity::component_id(&raw_kind, &label))?;
         let mut component = source::Component {
             id,
             name: name.clone(),
@@ -134,9 +133,8 @@ impl Parser<'_> {
         } else {
             Vec::new()
         };
-        let (_, id) = self.declared(&["id"], || {
-            format!("var_{}_{}", component_id, stable_fragment(&name))
-        })?;
+        let (_, id) =
+            self.declared(&["id"], || super::identity::variant_id(component_id, &name))?;
         self.end_line()?;
         Ok(source::ComponentVariant {
             id,

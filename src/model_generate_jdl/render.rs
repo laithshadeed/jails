@@ -88,7 +88,6 @@ pub(crate) fn relation_member_name(label: &str) -> String {
 /// in.
 pub(crate) struct EntityDeclaration<'a> {
     pub(crate) java_name: &'a str,
-    pub(crate) entity_label: &'a str,
     pub(crate) scaffold: bool,
     pub(crate) fields: &'a [String],
     pub(crate) path: Option<&'a str>,
@@ -103,7 +102,6 @@ pub(crate) fn entity_declaration(
 ) -> Result<String> {
     let EntityDeclaration {
         java_name,
-        entity_label,
         scaffold,
         fields,
         path,
@@ -165,7 +163,13 @@ pub(crate) fn entity_declaration(
         Some(package) => format!(" @package({package})"),
         None => String::new(),
     };
-    let mut output = format!("entity {java_name} @id(ent_{entity_label}){package} {{\n");
+    // **No `@id`, because the convention derives it.** `jails_model::
+    // jdl_identity::entity_id` turns `Note` into `ent_note` on the way back
+    // in, so spelling it here would be a pin that displaces nothing -- the
+    // same rule `DerivedValue::named` uses to decide `pinned`. `rename` is
+    // where an id stops agreeing with the name, and that is the one command
+    // that materialises the attribute.
+    let mut output = format!("entity {java_name}{package} {{\n");
     if scaffold {
         match path {
             Some(path) => output.push_str(&format!(
@@ -176,7 +180,7 @@ pub(crate) fn entity_declaration(
         }
     }
     for field in &parsed {
-        output.push_str(&render_v1_field_line(entity_label, field));
+        output.push_str(&render_v1_field_line(field));
         output.push('\n');
     }
     // **A composite unique is a constraint on the table, not a marker on one
@@ -207,7 +211,7 @@ pub(crate) fn entity_declaration(
     Ok(output)
 }
 
-pub(crate) fn enum_declaration(java_name: &str, label: &str, values: &[String]) -> Result<String> {
+pub(crate) fn enum_declaration(java_name: &str, values: &[String]) -> Result<String> {
     let values = values
         .iter()
         .map(|value| {
@@ -215,7 +219,10 @@ pub(crate) fn enum_declaration(java_name: &str, label: &str, values: &[String]) 
                 .map(|constant| constant.canonical())
         })
         .collect::<Result<Vec<_>>>()?;
-    let mut output = format!("enum {java_name} @id(ent_{label}) {{\n");
+    // An enum is an entity in the linked model and shares its identity
+    // prefix, so this is the same derivation as an entity's and is left
+    // unwritten for the same reason.
+    let mut output = format!("enum {java_name} {{\n");
     for value in values {
         output.push_str("  ");
         if let Some((constant, wire)) = value.split_once('=') {
@@ -233,12 +240,11 @@ pub(crate) fn enum_declaration(java_name: &str, label: &str, values: &[String]) 
     Ok(output)
 }
 
-pub(crate) fn render_v1_field_line(entity_label: &str, field: &ParsedField) -> String {
+pub(crate) fn render_v1_field_line(field: &ParsedField) -> String {
     let optional = if field.required { "" } else { "?" };
-    let mut output = format!(
-        "  {}: {}{} @id(fld_{}_{})",
-        field.java_name, field.type_name, optional, entity_label, field.label
-    );
+    // A field's id derives from its entity's, so an entity that pinned one
+    // carries every field with it and the fields stay unwritten here too.
+    let mut output = format!("  {}: {}{}", field.java_name, field.type_name, optional);
     if let Some(default) = &field.default {
         output.push_str(&format!(" @default({default})"));
     }

@@ -22,10 +22,7 @@ fn canonical_fast_test_is_model_owned_and_never_journaled() {
         String::from_utf8_lossy(&installed.stderr)
     );
     let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
-    assert!(
-        model.contains("cap fast-test @id(cap_fast_test)"),
-        "{model}"
-    );
+    assert!(model.contains("\ncap fast-test\n"), "{model}");
     let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
     assert!(pom.contains("junit-platform-console"), "{pom}");
     for legacy in ["objects", "receipts", "journal", "state"] {
@@ -87,7 +84,7 @@ fn fake_capability_is_a_global_compiler_profile_and_remove_is_recompilation() {
         String::from_utf8_lossy(&added.stderr)
     );
     let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
-    assert!(model.contains("cap fake @id(cap_fake)"), "{model}");
+    assert!(model.contains("\ncap fake\n"), "{model}");
     let adapter_path =
         root.join("src/main/java/com/example/notes/adapters/memory/InMemoryNoteRepository.java");
     let adapter = fs::read_to_string(&adapter_path).unwrap();
@@ -196,11 +193,8 @@ fn canonical_data_capability_packs_keep_the_iterative_loop_and_eject_as_one_boun
         assert!(path.is_file(), "missing {}", path.display());
     }
     let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
-    assert!(
-        model.contains("cap csv Dataset @id(cap_csv_dataset)"),
-        "{model}"
-    );
-    assert!(model.contains("cap json @id(cap_json)"), "{model}");
+    assert!(model.contains("\ncap csv Dataset\n"), "{model}");
+    assert!(model.contains("\ncap json\n"), "{model}");
     let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
     assert!(pom.contains("<artifactId>commons-csv</artifactId>"));
     assert!(pom.contains("<version>1.14.1</version>"));
@@ -265,10 +259,7 @@ fn canonical_data_capability_packs_keep_the_iterative_loop_and_eject_as_one_boun
     let declared = fs::read_to_string(&model_path).unwrap();
     fs::write(
         &model_path,
-        declared.replace(
-            "cap csv Dataset @id(cap_csv_dataset)",
-            "cap csv Dataset @id(cap_csv_dataset) @package(imports)",
-        ),
+        declared.replace("cap csv Dataset", "cap csv Dataset @package(imports)"),
     )
     .unwrap();
     let before_package = snapshot_tree(&root);
@@ -303,10 +294,9 @@ fn canonical_data_capability_packs_keep_the_iterative_loop_and_eject_as_one_boun
         ),
     )
     .unwrap();
-    let repackaged = fs::read_to_string(&model_path).unwrap().replace(
-        "entity Feed @id(ent_feed) {",
-        "entity Feed @id(ent_feed) @package(imports) {",
-    );
+    let repackaged = fs::read_to_string(&model_path)
+        .unwrap()
+        .replace("entity Feed {", "entity Feed @package(imports) {");
     fs::write(&model_path, &repackaged).unwrap();
     let moved = jails_cmd(&root, None).args(["sync"]).output().unwrap();
     assert!(

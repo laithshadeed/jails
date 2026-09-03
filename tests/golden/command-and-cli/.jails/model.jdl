@@ -7,6 +7,6 @@ app Demo @id(project_demo) {
   storage none
 }
 
-component cli Admin @id(cmp_cli_admin) {}
+component cli Admin {}
 
-component command Greet @id(cmp_command_greet) {}
+component command Greet {}

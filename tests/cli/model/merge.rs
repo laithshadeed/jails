@@ -72,10 +72,9 @@ fn jdl_generate_edit_generate_preserves_clean_edits_and_refuses_overlap() {
         String::from_utf8_lossy(&first.stderr)
     );
     let jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
-    assert!(jdl.contains("entity Task @id(ent_task)"), "{jdl}");
-    assert!(jdl.contains("@id(fld_task_title)"), "{jdl}");
+    assert!(jdl.contains("entity Task {"), "{jdl}");
     assert!(
-        jdl.contains("title: string @id(fld_task_title) @length(1..200) @notBlank"),
+        unaligned(&jdl).contains("title: string @length(1..200) @notBlank"),
         "{jdl}"
     );
 
@@ -265,18 +264,9 @@ fn canonical_source_units_merge_every_main_and_test_file_and_wire_both_roots() {
     assert!(!pom.contains("build-helper-maven-plugin"), "{pom}");
 
     let jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
-    assert!(
-        jdl.contains("component class Clock @id(cmp_class_clock)"),
-        "{jdl}"
-    );
-    assert!(
-        jdl.contains("component interface Port @id(cmp_interface_port)"),
-        "{jdl}"
-    );
-    assert!(
-        jdl.contains("component service Billing @id(cmp_service_billing)"),
-        "{jdl}"
-    );
+    assert!(jdl.contains("component class Clock "), "{jdl}");
+    assert!(jdl.contains("component interface Port "), "{jdl}");
+    assert!(jdl.contains("component service Billing "), "{jdl}");
 
     // A component carries no package of its own, and the refusal is the
     // contract rather than a gap in the parser: v1 derives every managed
@@ -286,8 +276,8 @@ fn canonical_source_units_merge_every_main_and_test_file_and_wire_both_roots() {
     fs::write(
         root.join(".jails/model.jdl"),
         jdl.replace(
-            "component class Clock @id(cmp_class_clock)",
-            "component class Clock @id(cmp_class_clock) @package(core)",
+            "component class Clock {",
+            "component class Clock @package(core) {",
         ),
     )
     .unwrap();
@@ -372,12 +362,9 @@ fn canonical_standalone_tests_merge_reader_edits_and_refuse_edited_build_wiring(
     assert!(!pom.contains("<version>3.5.6</version>"), "{pom}");
 
     let jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(jdl.contains("component test Parser "), "{jdl}");
     assert!(
-        jdl.contains("component test Parser @id(cmp_test_parser)"),
-        "{jdl}"
-    );
-    assert!(
-        jdl.contains("component integration-test Checkout @id(cmp_integration_test_checkout)"),
+        jdl.contains("component integration-test Checkout "),
         "{jdl}"
     );
 
@@ -415,8 +402,8 @@ fn canonical_standalone_tests_merge_reader_edits_and_refuse_edited_build_wiring(
     fs::write(
         &jdl_path,
         jdl.replace(
-            "component integration-test Checkout @id(cmp_integration_test_checkout)",
-            "component test Checkout @id(cmp_integration_test_checkout)",
+            "component integration-test Checkout {",
+            "component test Checkout @id(cmp_integration_test_checkout) {",
         ),
     )
     .unwrap();
@@ -483,8 +470,8 @@ fn canonical_sealed_types_evolve_through_merge_and_destroy_as_one_semantic_unit(
     fs::write(
         &jdl_path,
         jdl.replace(
-            "component sealed Outcome @id(cmp_sealed_outcome) {",
-            "// reader model note\ncomponent sealed Outcome @id(cmp_sealed_outcome) {",
+            "component sealed Outcome {",
+            "// reader model note\ncomponent sealed Outcome {",
         ),
     )
     .unwrap();
@@ -512,14 +499,11 @@ fn canonical_sealed_types_evolve_through_merge_and_destroy_as_one_semantic_unit(
     // would need the editor to merge prose it did not write. The property:
     // the reader's wording in the model source outlives an evolve.
     assert!(
-        jdl.contains("// reader model note\ncomponent sealed Outcome @id(cmp_sealed_outcome) {"),
+        jdl.contains("// reader model note\ncomponent sealed Outcome {"),
         "{jdl}"
     );
     for variant in ["Accepted", "Rejected", "Pending"] {
-        assert!(
-            jdl.contains(&format!("variant {variant} @id(var_cmp_sealed_outcome_")),
-            "{jdl}"
-        );
+        assert!(jdl.contains(&format!("variant {variant}")), "{jdl}");
     }
 
     let first = snapshot_tree(&root);
@@ -615,10 +599,7 @@ fn canonical_factory_tracks_entity_fields_without_owning_the_record() {
     let jdl = fs::read_to_string(&jdl_path).unwrap();
     fs::write(
         &jdl_path,
-        jdl.replace(
-            "entity Note @id(ent_note) {",
-            "entity Note @id(ent_note) { // reader model wording",
-        ),
+        jdl.replace("entity Note {", "entity Note { // reader model wording"),
     )
     .unwrap();
     let factory_output = jails_cmd(&root, None)
@@ -635,7 +616,7 @@ fn canonical_factory_tracks_entity_fields_without_owning_the_record() {
     // carried along by it.
     let jdl = fs::read_to_string(&jdl_path).unwrap();
     assert!(
-        jdl.contains("entity Note @id(ent_note) { // reader model wording"),
+        jdl.contains("entity Note { // reader model wording"),
         "{jdl}"
     );
     assert!(jdl.contains("use factory"), "{jdl}");
@@ -705,8 +686,19 @@ fn canonical_factory_tracks_entity_fields_without_owning_the_record() {
         ),
     )
     .unwrap();
+    // The formatter lines the type column up, so the edit is made on the
+    // line rather than on a spelling that moves when a sibling field does.
     let jdl = fs::read_to_string(&jdl_path).unwrap();
-    fs::write(&jdl_path, jdl.replace("done: boolean", "done: string")).unwrap();
+    let done = jdl
+        .lines()
+        .find(|line| line.trim_start().starts_with("done:"))
+        .expect("the entity declares `done`")
+        .to_string();
+    fs::write(
+        &jdl_path,
+        jdl.replace(&done, &done.replace("boolean", "string")),
+    )
+    .unwrap();
     let before = snapshot_tree(&root);
     let refused = jails_cmd(&root, None)
         .args(["model", "plan"])
@@ -774,8 +766,8 @@ fn canonical_strategy_evolves_all_implementation_boundaries_in_one_plan() {
     fs::write(
         &jdl_path,
         jdl.replace(
-            "component strategy PostRule @id(cmp_strategy_post_rule) {",
-            "// reader strategy wording\ncomponent strategy PostRule @id(cmp_strategy_post_rule) {",
+            "component strategy PostRule {",
+            "// reader strategy wording\ncomponent strategy PostRule {",
         ),
     )
     .unwrap();
@@ -989,8 +981,8 @@ fn canonical_controller_merges_both_files_and_refuses_overlapping_route_edits() 
     fs::write(
         &jdl_path,
         jdl.replace(
-            "component controller Verify @id(cmp_controller_verify) {",
-            "// reader route wording\ncomponent controller Verify @id(cmp_controller_verify) {",
+            "component controller Verify {",
+            "// reader route wording\ncomponent controller Verify {",
         ),
     )
     .unwrap();
@@ -1297,10 +1289,7 @@ fn canonical_repository_is_a_managed_abi_facet_of_the_record() {
     let jdl = fs::read_to_string(&jdl_path).unwrap();
     fs::write(
         &jdl_path,
-        jdl.replace(
-            "entity Note @id(ent_note) {",
-            "entity Note @id(ent_note) { // reader model wording",
-        ),
+        jdl.replace("entity Note {", "entity Note { // reader model wording"),
     )
     .unwrap();
 
@@ -1315,7 +1304,7 @@ fn canonical_repository_is_a_managed_abi_facet_of_the_record() {
     );
     let jdl = fs::read_to_string(&jdl_path).unwrap();
     assert!(
-        jdl.contains("entity Note @id(ent_note) { // reader model wording"),
+        jdl.contains("entity Note { // reader model wording"),
         "{jdl}"
     );
     assert!(jdl.contains("use repo"), "{jdl}");
@@ -1491,7 +1480,7 @@ fn canonical_dto_evolves_three_merge_managed_abi_files_without_losing_reader_edi
         assert!(path.is_file(), "missing {}", path.display());
     }
     let jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
-    assert!(jdl.contains("entity Task @id(ent_task) {"), "{jdl}");
+    assert!(jdl.contains("entity Task {"), "{jdl}");
     assert!(jdl.contains("use dto"), "{jdl}");
     assert!(
         fs::read_to_string(root.join("pom.xml"))

@@ -12,7 +12,8 @@ use report::refuse_unconfirmed_deletions;
 pub(crate) use report::{report_plan, write_bundle};
 
 pub(crate) use profile::{
-    operation_profile, reject_unsupported_operation_options, validate_entity_args,
+    operation_profile, refuse_non_java_identifier, reject_unsupported_operation_options,
+    validate_entity_args,
 };
 
 use crate::ArtifactKind;
@@ -128,6 +129,40 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
     // project it is creating rather than into whatever encloses the directory
     // the reader is standing in.
     let root = invocation.root()?;
+    // **What jails writes, its formatter accepts.** Every frontend edits the
+    // JDL text, and a splice cannot see the column its neighbours line up on
+    // or the blank line the group above it wants -- so the edited source is
+    // formatted once, here, before it becomes the plan's after-image. That
+    // makes this the one place layout is decided: a frontend renders the
+    // declaration and the formatter places it, and `model fmt --check` passes
+    // after any mutation rather than after the ones somebody remembered.
+    //
+    // **What jails writes, its formatter accepts.** A frontend renders a
+    // declaration and splices it in; a splice cannot see the column its
+    // neighbours line up on or the blank line the group above it wants, so
+    // the edited source is laid out once, here, before it becomes the plan's
+    // after-image. That makes this the one place layout is decided, and
+    // `model fmt --check` passes after a mutation rather than after the ones
+    // somebody remembered.
+    //
+    // **Only over a source that was already canonical**, which is what keeps
+    // JDL v1 §19.2's promise that a CLI edit preserves every byte outside the
+    // span it touched: when the file already is what the formatter would
+    // produce, laying the whole thing out again rewrites nothing but the
+    // edit. A reader whose model is not formatted keeps their bytes, and
+    // `jails model fmt` -- the explicit format command §19.2 names -- is
+    // still the one way to change them. So a mutation cannot make the layout
+    // worse, and cannot silently tidy a file nobody asked it to.
+    //
+    // A source that does not parse cannot be formatted, and the linker below
+    // is about to say so in a better sentence; the unformatted bytes go
+    // forward and the refusal names the syntax rather than the formatter.
+    let canonical = jails_model::format_jdl_v1(&current.source)
+        .is_ok_and(|formatted| formatted == current.source);
+    let next_source = match canonical && next_source != current.source {
+        true => jails_model::format_jdl_v1(&next_source).unwrap_or(next_source),
+        false => next_source,
+    };
     // **The model is what the edited source links to**, decided once here
     // and nowhere else: the frontend wrote the bytes, and the linker says
     // what they mean.

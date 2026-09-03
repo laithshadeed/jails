@@ -218,7 +218,7 @@ pub(crate) fn add_field(request: AddFieldRequest, invocation: Invocation) -> Res
                 .to_string(),
         )),
     };
-    let line = crate::model_generate_jdl::render_v1_field_line(&entity_label, &parsed);
+    let line = crate::model_generate_jdl::render_v1_field_line(&parsed);
     let next_source =
         crate::model_generate_jdl::insert_field(&current.source, &entity_java_name, &line)?;
     let field_id =

@@ -7,4 +7,4 @@ app Demo @id(project_demo) {
   storage none
 }
 
-cap ci @id(cap_ci)
+cap ci

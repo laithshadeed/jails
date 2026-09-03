@@ -7,6 +7,6 @@ app Demo @id(project_demo) {
   storage none
 }
 
-cap http @id(cap_http)
+cap http
 
-component handler WorkItem @id(cmp_handler_work_item) {}
+component handler WorkItem {}

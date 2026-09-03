@@ -7,10 +7,10 @@ app Demo @id(project_demo) {
   storage none
 }
 
-cap actuator @id(cap_actuator)
+cap actuator
 
-cap observability @id(cap_observability)
+cap observability
 
-cap docker @id(cap_docker)
+cap docker
 
-cap k8s @id(cap_k8s)
+cap k8s

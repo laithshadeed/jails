@@ -7,12 +7,13 @@ app Demo @id(project_demo) {
   storage postgres
 }
 
-entity Ticket @id(ent_ticket) {
+entity Ticket {
   use scaffold
 
-  id: long @id(fld_ticket_id) @pk
-  subject: string @id(fld_ticket_subject) @notBlank
-  command OpenTicket(subject) @id(op_open_ticket) {
+  id:      long @pk
+  subject: string @notBlank
+
+  command OpenTicket(subject) {
     route POST "/customer_api/open" consumes form
   }
 }

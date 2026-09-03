@@ -42,7 +42,7 @@ entity Note {
         String::from_utf8_lossy(&evolved.stderr)
     );
     let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
-    assert!(model.contains("done: boolean"), "{model}");
+    assert!(unaligned(&model).contains("done: boolean"), "{model}");
 
     // No table, so no migration: the only one is the stored entity's create.
     let migrations = root.join("src/main/resources/db/migration");
@@ -345,14 +345,17 @@ app Notes {
 
     let source = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     for expected in [
-        "tenantId: uuid @id(fld_task_tenant_id) @scope",
-        "attempts: int @id(fld_task_attempts) @positive",
-        "credits: decimal? @id(fld_task_credits) @nonnegative",
-        "externalId: string @id(fld_task_external_id) @map(\"external_id\")",
-        "createdAt: instant @id(fld_task_created_at) @default(now())",
-        "updatedAt: instant @id(fld_task_updated_at) @default(now()) @updated",
+        "tenantId: uuid @scope",
+        "attempts: int @positive",
+        "credits: decimal? @nonnegative",
+        "externalId: string @map(\"external_id\")",
+        "createdAt: instant @default(now())",
+        "updatedAt: instant @default(now()) @updated",
     ] {
-        assert!(source.contains(expected), "missing `{expected}`:\n{source}");
+        assert!(
+            unaligned(&source).contains(expected),
+            "missing `{expected}`:\n{source}"
+        );
     }
     let format_check = jails_cmd(&root, None)
         .args(["model", "fmt", "--check"])
@@ -456,8 +459,11 @@ fn familiar_record_generation_is_a_model_patch_in_canonical_projects() {
         String::from_utf8_lossy(&applied.stderr)
     );
     let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
-    assert!(model.contains("entity Note @id(ent_note)"), "{model}");
-    assert!(model.contains("@id(fld_note_title)"), "{model}");
+    assert!(model.contains("entity Note {"), "{model}");
+    assert!(
+        !model.contains("@id(ent_") && !model.contains("@id(fld_"),
+        "a generated declaration pins nothing:\n{model}"
+    );
 
     let source =
         fs::read_to_string(root.join("src/main/java/com/example/notes/domain/Note.java")).unwrap();
@@ -611,7 +617,7 @@ fn canonical_enum_frontend_writes_a_typed_wire_vocabulary() {
         String::from_utf8_lossy(&generated.stderr)
     );
     let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
-    assert!(model.contains("enum Status @id(ent_status)"), "{model}");
+    assert!(model.contains("enum Status {"), "{model}");
     assert!(model.contains("  OPEN\n"), "{model}");
     assert!(model.contains(r#"IN_PROGRESS = "in_progress""#), "{model}");
     let source =
@@ -643,9 +649,17 @@ fn familiar_scaffold_generation_is_one_semantic_entity_profile() {
 
     let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(model.contains("use scaffold"), "{model}");
-    assert!(model.contains("id: uuid @id(fld_note_id) @pk"), "{model}");
-    assert!(model.contains("@id(fld_note_created_at)"), "{model}");
-    assert!(model.contains("@id(fld_note_updated_at)"), "{model}");
+    // The columns line up, and nothing is pinned: this is what the
+    // specification's own example looks like.
+    assert!(model.contains("  id:        uuid @pk\n"), "{model}");
+    assert!(
+        model.contains("  createdAt: instant @default(now())\n"),
+        "{model}"
+    );
+    assert!(
+        !model.contains("@id(ent_") && !model.contains("@id(fld_"),
+        "a scaffold pins nothing:\n{model}"
+    );
 
     for relative in [
         "domain/Note.java",

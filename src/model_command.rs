@@ -339,16 +339,28 @@ pub(crate) fn run(command: ModelCommand, invocation: Invocation) -> Result<()> {
 }
 
 fn format(check: bool, invocation: Invocation) -> Result<()> {
-    if !root()?.join(JDL_PATH).is_file() {
+    if !invocation.root()?.join(JDL_PATH).is_file() {
         return Err(Failure::Told(format!(
             "`jails model fmt` requires the JDL authoring source `{JDL_PATH}`.\n       fix: import or create a JDL v1 model before formatting"
         )));
     }
-    let current = Current::load(&invocation)?;
-    let next_source = jails_model::format_jdl_v1(&current.source)
+    // **Formatting is syntactic, and a model being fixed is the one that most
+    // needs it.** `fmt` used to link before it laid out a byte, so the file a
+    // reader was mid-repair on -- a mistyped type, a name that does not
+    // resolve -- could not be formatted at all, and the command answered with
+    // a diagnostic about something it had not been asked to do. It formats
+    // whatever the parser accepts; the linker's answer follows the layout
+    // rather than standing in front of it.
+    let root = invocation.root()?;
+    let source = read_source(&root, Path::new(JDL_PATH))?;
+    let next_source = jails_model::format_jdl_v1(&source)
         .map_err(|diagnostics| Failure::Told(diagnostics.to_string().trim_end().to_string()))?;
-    let next_model = parse(&next_source)?;
-    if current.model != next_model {
+    // The round-trip is checked where there is a model to compare: a document
+    // that does not link has no semantics for the formatter to have changed.
+    let linked = parse(&source);
+    if let Ok(model) = &linked
+        && *model != parse(&next_source)?
+    {
         return Err(Failure::Told(
             "the JDL formatter changed linked model semantics.\n       fix: report this formatter bug; the source was not written"
                 .to_string(),
@@ -356,7 +368,7 @@ fn format(check: bool, invocation: Invocation) -> Result<()> {
     }
 
     if check {
-        if current.source != next_source {
+        if source != next_source {
             return Err(Failure::Told(format!(
                 "canonical formatting differs in `{JDL_PATH}`.\n       fix: run `jails model fmt` and review the exact source update"
             )));
@@ -371,10 +383,14 @@ fn format(check: bool, invocation: Invocation) -> Result<()> {
                 "manifest": JDL_PATH,
             }))?;
         }
-        return Ok(());
+        // The layout is the question `--check` was asked and it has been
+        // answered; a model that does not link still does not link, and
+        // saying so here is what keeps `fmt` and `fmt --check` from
+        // disagreeing about the same file.
+        return linked.map(|_| ());
     }
 
-    if current.source == next_source {
+    if source == next_source {
         if invocation.output == Output::Human {
             println!("model already formatted: {JDL_PATH}");
         } else {
@@ -385,13 +401,26 @@ fn format(check: bool, invocation: Invocation) -> Result<()> {
                 "manifest": JDL_PATH,
             }))?;
         }
-        return Ok(());
+        // Nothing to lay out, and the same linker answer `--check` gives.
+        return linked.map(|_| ());
     }
 
+    // A model that links goes through the one pipeline, so the layout change
+    // is a reviewed plan like every other edit to this file. One that does
+    // not has no plan to be part of -- the model file is the compiler's
+    // input, not its output -- so the bytes are written and the refusal the
+    // linker was already going to make follows them.
+    let Ok(model) = linked else {
+        jails_support::apply::put_one_shot(root.join(JDL_PATH), next_source)?;
+        if invocation.output == Output::Human {
+            println!("formatted: {JDL_PATH}");
+        }
+        return linked.map(|_| ());
+    };
     crate::model_generate::finish_generation(crate::model_generate::PreparedMutation {
         name: "JDL formatting".to_string(),
         invocation,
-        current,
+        current: Current { source, model },
         next_source,
         evolution: jails_model::Evolution::none(),
         authored_migration: None,

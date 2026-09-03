@@ -185,12 +185,23 @@ pub(super) fn lex(source: &str) -> Result<Vec<Token>, Diagnostics> {
                     .chars()
                     .next()
                     .expect("offset is in source");
+                // **`#` is the one wrong guess worth answering.** A reader
+                // coming from `application.properties`, YAML or a shell
+                // writes a `#` comment, and "use a token from the JDL v1
+                // grammar" tells them the character is wrong without telling
+                // them the thing they were trying to do is spelled `//`.
+                // Every other unexpected character is a typo, where naming
+                // the grammar is the whole of the answer.
+                let fix = match character {
+                    '#' => "comments start with `//`",
+                    _ => "remove it or use a token from the JDL v1 grammar",
+                };
                 return Err(problem(
                     source,
                     offset,
                     "JDL0002",
                     format!("unexpected character `{character}`"),
-                    "remove it or use a token from the JDL v1 grammar",
+                    fix,
                 ));
             }
         }

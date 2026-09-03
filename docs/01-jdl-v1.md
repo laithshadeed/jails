@@ -687,9 +687,9 @@ one linked model. Prefixes are conventional, not separate namespaces.
 |---|---|
 | app | `app_<app>` |
 | entity | `ent_<entity>` |
-| enum | `enum_<enum>` |
+| enum | `ent_<enum>` |
 | enum value | `ev_<enum-id>_<value>` |
-| field | `fld_<entity-id>_<field>` |
+| field | `fld_<entity>_<field>` |
 | relation | `rel_<entity-id>_<relation>` |
 | entity constraint | `<pk\|uq\|idx>_<entity-id>_<fields>` |
 | concrete entity projection | `prj_<entity-id>_<projection>` |
@@ -709,7 +709,12 @@ is truncated and suffixed with the first 12 lowercase hex characters of
 SHA-256 over the untruncated form.
 
 The effective parent ID, not the parent's displayed name, is used when deriving
-child IDs.
+child IDs. A field takes that ID without the parent's own `ent_` prefix, so an
+entity `Note` with a derived ID gives `fld_note_title`; a parent pinned to an
+ID the convention would not produce contributes that ID whole. An enum shares
+the entity prefix because an enum *is* an entity in the linked model, and the
+same declaration must not get two identities depending on whether a hand or
+the CLI wrote it.
 
 `scaffold` is a source profile, not a linked projection node. Its concrete
 `repo`, `service`, and `http` members receive the projection IDs above,
@@ -2328,7 +2333,10 @@ writing when formatting differs. The canonical style is:
 - one blank line between top-level declaration groups;
 - double-quoted strings with the shortest valid JSON escapes;
 - lowercase canonical kind/type/cap names and uppercase HTTP methods;
-- explicit `asc` omitted and `desc` retained; and
+- explicit `asc` omitted and `desc` retained;
+- the type column of a run of `name: type` members lined up on the widest name
+  in the run, where a run is consecutive members at one indent and a comment
+  between two of them does not break it; and
 - attributes ordered `@id`, identity/default, validation, behavior,
   physical, lifecycle, with the registry supplying the exact rank.
 
@@ -2350,7 +2358,14 @@ reviewed apply transaction. They MUST:
 
 - preserve the original newline style until an explicit format command;
 - preserve comments and byte-for-byte text outside touched declaration spans;
-- insert a child beside members of the same class;
+- insert a child beside members of the same class, and a top-level declaration
+  after the last one it is not required to follow, so the order of a file does
+  not record the order its declarations were asked for;
+- emit an `@id` only where it differs from section 8.2's derivation, so a
+  generated declaration reads like a hand-written one;
+- lay the edited source out with section 19.1's formatter when the source it
+  edited was already canonical, which changes no byte the edit did not touch
+  and keeps a formatted file formatted;
 - materialize a derived ID when a rename needs it;
 - omit a package/name/route argument when the convention already determines it;
 - refuse `--package` for managed output with the exact canonical destination

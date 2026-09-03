@@ -7,6 +7,6 @@ app Demo @id(project_demo) {
   storage none
 }
 
-cap testkit @id(cap_testkit)
+cap testkit
 
-cap fake @id(cap_fake)
+cap fake

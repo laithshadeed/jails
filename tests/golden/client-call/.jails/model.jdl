@@ -7,17 +7,17 @@ app Demo @id(project_demo) {
   storage none
 }
 
-entity ChatRequest @id(ent_chat_request) {
-  model: string @id(fld_chat_request_model) @notBlank
-  prompt: string @id(fld_chat_request_prompt) @notBlank
+entity ChatRequest {
+  model:  string @notBlank
+  prompt: string @notBlank
 }
 
-entity ChatReply @id(ent_chat_reply) {
-  id: string @id(fld_chat_reply_id) @notBlank
-  text: string @id(fld_chat_reply_text) @notBlank
+entity ChatReply {
+  id:   string @notBlank
+  text: string @notBlank
 }
 
-component client OpenAiChat @id(cmp_client_open_ai_chat) {
+component client OpenAiChat {
   on chat_request
   yields chat_reply
   route POST "/v1/chat/completions"

@@ -7,6 +7,6 @@ app Demo @id(project_demo) {
   storage none
 }
 
-cap api @id(cap_api)
+cap api
 
-cap actuator @id(cap_actuator)
+cap actuator

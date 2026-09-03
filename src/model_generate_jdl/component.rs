@@ -11,7 +11,6 @@ pub(super) fn v1_declaration(
     kind: &str,
     name: &str,
     variants: &[String],
-    id: &str,
     args: &GenerateArgs,
     model: &jails_model::AppModel,
 ) -> Result<String> {
@@ -103,11 +102,10 @@ pub(super) fn v1_declaration(
         members.push(format!("  bind {parameter} from form {wire_name}"));
     }
     for variant in variants {
-        members.push(format!(
-            "  variant {variant} @id(var_{}_{})",
-            id,
-            jails_model::field_syntax::java_to_label(variant)
-        ));
+        // The parser hangs a variant's id off its component's, so the
+        // derivation reads the same value back and the attribute is a pin
+        // that displaces nothing.
+        members.push(format!("  variant {variant}"));
     }
     if args.kind == ArtifactKind::Cases {
         let source = serde_json::to_string(&args.name)
@@ -120,12 +118,10 @@ pub(super) fn v1_declaration(
         format!("({})", parameters.join(", "))
     };
     if members.is_empty() {
-        return Ok(format!(
-            "component {kind} {name}{parameters} @id({id}) {{}}\n"
-        ));
+        return Ok(format!("component {kind} {name}{parameters} {{}}\n"));
     }
     Ok(format!(
-        "component {kind} {name}{parameters} @id({id}) {{\n{}\n}}\n",
+        "component {kind} {name}{parameters} {{\n{}\n}}\n",
         members.join("\n")
     ))
 }

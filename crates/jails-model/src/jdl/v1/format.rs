@@ -13,6 +13,7 @@
 //! each would be a judgement about the reader's document rather than about its
 //! whitespace.
 
+use super::cst::top_level_order;
 use super::{TokenKind, parse_cst};
 use crate::Diagnostics;
 use std::collections::BTreeSet;
@@ -61,9 +62,88 @@ pub fn format(input: &str) -> Result<String, Diagnostics> {
     while lines.last().is_some_and(String::is_empty) {
         lines.pop();
     }
+    align_member_columns(&mut lines);
     let mut output = lines.join("\n");
     output.push('\n');
     Ok(output)
+}
+
+/// Line up the type column of a run of `name: type` members.
+///
+/// **The one place a column is decided.** A scaffold renders its fields, an
+/// appended field is spliced in on its own, and a reader writes theirs by
+/// hand; three writers each choosing a column is three answers, and the
+/// visible cost was a `resource field add` line sitting one space off every
+/// line above it. Alignment is layout, so it belongs to the formatter -- and
+/// because every model mutation is formatted before it becomes the plan's
+/// after-image, the appended line comes out aligned without the splice
+/// knowing anything about its neighbours.
+///
+/// A run is consecutive lines at one indent that all carry a `name:` head; a
+/// blank line, a different indent or a line with no head ends it. A comment
+/// rides along without ending a run, because a comment between two fields is
+/// about the field below it.
+fn align_member_columns(lines: &mut [String]) {
+    let mut start = 0;
+    while start < lines.len() {
+        let Some((indent, _)) = member_head(&lines[start]) else {
+            start += 1;
+            continue;
+        };
+        let mut end = start;
+        let mut width = 0;
+        while end < lines.len() {
+            match member_head(&lines[end]) {
+                Some((line_indent, head)) if line_indent == indent => {
+                    width = width.max(head);
+                    end += 1;
+                }
+                _ if end > start && is_comment_at(&lines[end], indent) => end += 1,
+                _ => break,
+            }
+        }
+        for line in lines.iter_mut().take(end).skip(start) {
+            let Some((line_indent, head)) = member_head(line) else {
+                continue;
+            };
+            let rest = line[line_indent + head..].trim_start().to_string();
+            if rest.is_empty() {
+                continue;
+            }
+            let padding = " ".repeat(width - head + 1);
+            let head_text = line[..line_indent + head].to_string();
+            *line = format!("{head_text}{padding}{rest}");
+        }
+        start = end.max(start + 1);
+    }
+}
+
+/// The indent and the width of a `name:` head, when the line has one.
+///
+/// Only a member has one: `pkg com.example.demo` and `use scaffold` carry no
+/// colon, an operation's `route POST "/tasks"` carries one only inside a
+/// string, and a top-level declaration is at indent zero.
+fn member_head(line: &str) -> Option<(usize, usize)> {
+    let indent = line.len() - line.trim_start().len();
+    if indent == 0 {
+        return None;
+    }
+    let rest = &line[indent..];
+    let colon = rest.find(':')?;
+    let name = &rest[..colon];
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+    {
+        return None;
+    }
+    Some((indent, colon + 1))
+}
+
+/// A comment sitting inside a run of members, at the run's own indent.
+fn is_comment_at(line: &str, indent: usize) -> bool {
+    line.len() - line.trim_start().len() == indent && line.trim_start().starts_with("//")
 }
 
 fn separate_top_level_groups(input: &str) -> Result<String, Diagnostics> {
@@ -87,7 +167,7 @@ fn separate_top_level_groups(input: &str) -> Result<String, Diagnostics> {
     declarations.sort_by_key(|declaration| declaration.span.start);
     let mut insertions = Vec::new();
     for pair in declarations.windows(2) {
-        if top_level_group(&pair[0].kind) != top_level_group(&pair[1].kind) {
+        if top_level_order(&pair[0].kind).0 != top_level_order(&pair[1].kind).0 {
             insertions.push(pair[0].span.end);
         }
     }
@@ -96,19 +176,6 @@ fn separate_top_level_groups(input: &str) -> Result<String, Diagnostics> {
         output.insert(position, '\n');
     }
     Ok(output)
-}
-
-fn top_level_group(kind: &str) -> u8 {
-    match kind {
-        "app" => 0,
-        "cap" | "dep" | "prop" => 1,
-        "enum" | "entity" => 2,
-        "use" => 3,
-        "command" | "query" | "transition" | "event" => 4,
-        "component" => 5,
-        "eject" => 6,
-        _ => 7,
-    }
 }
 
 fn reorder_entity_members(input: &str) -> Result<String, Diagnostics> {
@@ -606,14 +673,14 @@ entity Task {
         let formatted = format(input).unwrap();
         assert!(
             formatted.contains(
-                "title: string @id(fld_task_title) @length(1..100) @unique @map(\"title\")"
+                "title:     string @id(fld_task_title) @length(1..100) @unique @map(\"title\")"
             ),
             "{formatted}"
         );
         assert!(formatted.contains(
-            "tenantId: uuid @id(fld_task_tenant) @scope(claim: \"tenant\") @map(\"tenant_id\")"
+            "tenantId:  uuid @id(fld_task_tenant) @scope(claim: \"tenant\") @map(\"tenant_id\")"
         ));
-        assert!(formatted.contains("version: long @version @nonnegative"));
+        assert!(formatted.contains("version:   long @version @nonnegative"));
         assert!(formatted.contains("updatedAt: instant @default(now()) @updated"));
         assert!(
             formatted.contains("dep org.example:demo @id(dep_demo) @version(\"1.0\") @scope(test)"),
@@ -690,9 +757,9 @@ entity Task {
         let formatted = format(input).unwrap();
         let use_at = formatted.find("  use repo").unwrap();
         let table_at = formatted.find("  table \"tasks\"").unwrap();
-        let id_at = formatted.find("  id: uuid").unwrap();
+        let id_at = formatted.find("  id:").unwrap();
         let comment_at = formatted.find("  // title contract").unwrap();
-        let title_at = formatted.find("  title: string").unwrap();
+        let title_at = formatted.find("  title:").unwrap();
         let index_at = formatted.find("  index [title]").unwrap();
         let query_at = formatted.find("  query Open()").unwrap();
         assert!(use_at < table_at);
@@ -700,7 +767,7 @@ entity Task {
         assert!(comment_at < title_at && title_at < id_at);
         assert!(id_at < index_at && index_at < query_at);
         assert!(formatted.contains("  use repo\n\n  table \"tasks\""));
-        assert!(formatted.contains("  id: uuid @pk\n\n  index [title]"));
+        assert!(formatted.contains("@pk\n\n  index [title]"), "{formatted}");
         assert!(formatted.contains("  index [title]\n\n  query Open()"));
         assert_eq!(format(&formatted).unwrap(), formatted);
         assert_eq!(

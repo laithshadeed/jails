@@ -7,11 +7,12 @@ app Demo @id(project_demo) {
   storage postgres
 }
 
-entity Note @id(ent_note) {
+entity Note {
   use scaffold
 
-  id: uuid @id(fld_note_id) @pk
-  title: string @id(fld_note_title) @notBlank
-  createdAt: instant @id(fld_note_created_at) @default(now())
-  index [title, created_at desc] @id(idx_note_0664c89747d0)
+  id:        uuid @pk
+  title:     string @notBlank
+  createdAt: instant @default(now())
+
+  index [title, created_at desc]
 }

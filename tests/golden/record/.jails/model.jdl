@@ -7,8 +7,8 @@ app Demo @id(project_demo) {
   storage none
 }
 
-entity Note @id(ent_note) {
-  title: string @id(fld_note_title) @notBlank
-  body: string? @id(fld_note_body)
-  at: instant @id(fld_note_at)
+entity Note {
+  title: string @notBlank
+  body:  string?
+  at:    instant
 }

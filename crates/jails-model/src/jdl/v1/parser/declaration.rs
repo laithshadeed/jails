@@ -126,7 +126,7 @@ impl Parser<'_> {
             || stable_fragment(&kind),
             |name| format!("{}_{}", stable_fragment(&kind), stable_fragment(name)),
         );
-        let (_, id) = self.declared(&["id"], || format!("cap_{label}"))?;
+        let (_, id) = self.declared(&["id"], || super::identity::capability_id(&label))?;
         self.end_line()?;
         self.capabilities.insert(
             label.clone(),
@@ -148,8 +148,9 @@ impl Parser<'_> {
         self.expect(":", "JDL0311", "a dependency coordinate needs `:`")?;
         let artifact = self.take_word("dependency artifact")?;
         let label = format!("{}_{}", stable_fragment(&group), stable_fragment(&artifact));
-        let (attributes, id) =
-            self.declared(&["id", "version", "scope"], || format!("dep_{label}"))?;
+        let (attributes, id) = self.declared(&["id", "version", "scope"], || {
+            super::identity::dependency_id(&label)
+        })?;
         let version = one_arg(&attributes, "version")?;
         let scope = match one_arg(&attributes, "scope")?
             .as_deref()
@@ -201,7 +202,7 @@ impl Parser<'_> {
             }
         };
         let label = format!("{}_{}", target.label(), stable_fragment(&key));
-        let id = one_arg(&attributes, "id")?.unwrap_or_else(|| format!("prop_{label}"));
+        let id = one_arg(&attributes, "id")?.unwrap_or_else(|| super::identity::setting_id(&label));
         self.end_line()?;
         self.settings.insert(
             label.clone(),
@@ -221,7 +222,7 @@ impl Parser<'_> {
         self.expect("enum", "JDL0400", "expected an enum declaration")?;
         let name = self.take_word("enum name")?;
         let label = stable_fragment(&name);
-        let (_, id) = self.declared(&["id"], || format!("enum_{label}"))?;
+        let (_, id) = self.declared(&["id"], || super::identity::entity_id(&label))?;
         let mut values = Vec::new();
         if self.consume("{") {
             if self.consume("}") {
@@ -280,8 +281,9 @@ impl Parser<'_> {
         self.expect("entity", "JDL0500", "expected an entity declaration")?;
         let name = self.take_word("entity name")?;
         let label = stable_fragment(&name);
-        let (attributes, id) =
-            self.declared(&["id", "retired", "package"], || format!("ent_{label}"))?;
+        let (attributes, id) = self.declared(&["id", "retired", "package"], || {
+            super::identity::entity_id(&label)
+        })?;
         // **Relative to the base, exactly as a capability's is.** The whole
         // slice goes here instead of the layer packages, and an empty
         // `@package()` means the base itself -- which is how "everything
@@ -392,7 +394,7 @@ impl Parser<'_> {
         )?;
         let field_label = stable_fragment(&name);
         let id = one_arg(&attributes, "id")?
-            .unwrap_or_else(|| format!("fld_{}_{}", entity.id, field_label));
+            .unwrap_or_else(|| super::identity::field_id(&entity.id, &field_label));
         let column = one_arg(&attributes, "map")?;
         let (min_length, max_length) = length(&attributes, self)?;
         let semantics = source::FieldSemantics {
@@ -480,14 +482,9 @@ impl Parser<'_> {
                 field.unique = true;
             }
         } else if kind != "index" {
-            let suffix = columns
-                .iter()
-                .map(|column| stable_fragment(column))
-                .collect::<Vec<_>>()
-                .join("_");
             let prefix = if kind == "pk" { "pk" } else { "uq" };
             let id = one_arg(&attributes, "id")?
-                .unwrap_or_else(|| format!("{prefix}_{}_{}", entity.id, suffix));
+                .unwrap_or_else(|| super::identity::constraint_id(prefix, &entity.id, &columns));
             let name = one_arg(&attributes, "map")?;
             entity.constraints.push(source::EntityConstraint {
                 id,
@@ -507,7 +504,7 @@ impl Parser<'_> {
                 .join("_");
             let label = suffix.clone();
             let id = one_arg(&attributes, "id")?
-                .unwrap_or_else(|| format!("idx_{}_{}", entity.id, suffix));
+                .unwrap_or_else(|| super::identity::index_id(&entity.id, &columns));
             let name = one_arg(&attributes, "map")?;
             entity
                 .indexes
@@ -539,7 +536,8 @@ impl Parser<'_> {
         // `@adopted` says the reader wrote this boundary before the model
         // knew it: `jails adopt resource` writes the line, and the compiler
         // excludes the boundary without transferring anything (§16.4).
-        let (attributes, id) = self.declared(&["id", "adopted"], || format!("eject_{label}"))?;
+        let (attributes, id) =
+            self.declared(&["id", "adopted"], || super::identity::ejection_id(&label))?;
         let adopted = flag_attribute(&attributes, "adopted")?;
         self.end_line()?;
         self.ejections.insert(

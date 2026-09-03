@@ -133,6 +133,33 @@ JDL v1 §9.7 does not close, so a `jails.toml` layer rename does not reach them;
 they are displayed as `convention.facet.*` rather than corrected, because
 moving them would move files in every project generated so far.
 
+**The same rule decides what a writer spells: `jdl::v1::identity`.** It is
+the one owner of the id a declaration has when the source leaves `@id` unsaid
+-- the parser resolves through it and the CLI frontends ask it what they would
+be writing -- and `id_attribute` emits the attribute only where the two
+differ, which is `DerivedValue::named`'s rule applied to the file rather than
+to the report. So a generated model carries no `@id` and `rename resource`
+materialises exactly one (JDL v1 §8.2, §19.2). Written twice these drifted
+immediately: the CLI spelled an enum `ent_colour` where the parser derived
+`enum_colour`, giving one declaration two artifact ids. A field's id takes its
+entity's without the `ent_` prefix, because `fld_note_title` is the key every
+project on disk carries; a relation, constraint and index keep the whole
+parent id for the same reason, and neither key may move.
+
+**Layout is decided once, in `finish_generation`.** A frontend renders a
+declaration and `edit::append_declaration` places it after the last one it is
+not required to follow (`cst::top_level_order`, the one table the formatter's
+blank lines also read); then the edited source goes through
+`jails_model::format_jdl_v1` -- which lines the type column of a run of
+members up -- before it becomes the plan's after-image. **Only over a source
+that was already canonical**, which is how JDL v1 §19.2's "byte-for-byte
+outside touched spans" survives: when the file already is what the formatter
+would produce, laying it out again rewrites nothing but the edit, and a
+reader whose model is not formatted keeps their bytes until they run `jails
+model fmt`. `model fmt` itself is syntactic -- it formats anything the parser
+accepts and reports the linker's answer afterwards, because the model most in
+need of formatting is the one being repaired.
+
 **Rename and field evolution are source edits plus one `Evolution` step, not
 lifecycle replay.** `rename resource --strategy preserve-table` keeps the
 entity ID and SQL table, pairs BASE and THEIRS by artifact ID even when paths

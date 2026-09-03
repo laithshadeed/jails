@@ -7,9 +7,10 @@ app Demo @id(project_demo) {
   storage none
 }
 
-entity Note @id(ent_note) {
+entity Note {
   use factory
-  id: uuid @id(fld_note_id)
-  title: string @id(fld_note_title) @notBlank
-  createdAt: instant @id(fld_note_created_at)
+
+  id:        uuid
+  title:     string @notBlank
+  createdAt: instant
 }

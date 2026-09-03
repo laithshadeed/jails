@@ -7,14 +7,15 @@ app Demo @id(project_demo) {
   storage postgres
 }
 
-entity Topic @id(ent_topic) {
+entity Topic {
   use scaffold
 
-  id: long @id(fld_topic_id) @pk
-  userId: long @id(fld_topic_user_id)
-  subject: string @id(fld_topic_subject) @notBlank
-  version: long @id(fld_topic_version) @version
-  transition SetTopicSubject(user_id, subject, version) @id(op_set_topic_subject) {
+  id:      long @pk
+  userId:  long
+  subject: string @notBlank
+  version: long @version
+
+  transition SetTopicSubject(user_id, subject, version) {
     select [user_id]
     update [subject]
     if-match required

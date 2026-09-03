@@ -227,6 +227,13 @@ pub(super) fn seed_model(name: &str, package: &str, java: &str) -> String {
     // class could carry.
     let mut source = seed::app_node(&camel_case(name), package, java, "plain", "maven");
     source.push('\n');
+    // **The declarations `new` wrote say so.** A reader opening
+    // `.jails/model.jdl` for the first time meets a dependency and five
+    // settings nobody typed, and without a line saying where they came from
+    // the honest reading is that they are jails' and must not be touched.
+    // They are ordinary declarations: editing or deleting one is a model
+    // change like any other.
+    source.push_str("// written by jails new; yours to edit or delete\n");
     for dependency in seed_dependencies() {
         let scope = match dependency.scope {
             jails_model::DependencyScope::Test => " @scope(test)",

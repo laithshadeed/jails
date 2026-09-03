@@ -7,26 +7,27 @@ app Demo @id(project_demo) {
   storage postgres
 }
 
-enum SenderType @id(ent_sender_type) {
+enum SenderType {
   CUSTOMER
   ADMIN
 }
 
-entity Author @id(ent_author) {
+entity Author {
   use scaffold
 
-  id: long @id(fld_author_id) @pk
-  email: string @id(fld_author_email) @notBlank @unique
+  id:    long @pk
+  email: string @notBlank @unique
 }
 
-entity Note @id(ent_note) {
+entity Note {
   use scaffold
 
-  id: long @id(fld_note_id) @pk
-  authorId: long @id(fld_note_author_id) @index
-  body: string @id(fld_note_body) @notBlank
-  senderType: SenderType @id(fld_note_sender_type)
-  command PostNote(Author.email as email, body) @id(op_post_note) {
+  id:         long @pk
+  authorId:   long @index
+  body:       string @notBlank
+  senderType: SenderType
+
+  command PostNote(Author.email as email, body) {
     resolve author_id from Author.id where Author.email = email
     set sender_type = "CUSTOMER"
     route POST "/customer_api/notes" consumes form

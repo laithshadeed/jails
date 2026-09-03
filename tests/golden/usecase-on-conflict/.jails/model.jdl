@@ -7,13 +7,14 @@ app Demo @id(project_demo) {
   storage postgres
 }
 
-entity Person @id(ent_person) {
+entity Person {
   use scaffold
 
-  id: uuid @id(fld_person_id) @pk
-  email: string @id(fld_person_email) @notBlank @unique
-  createdAt: instant @id(fld_person_created_at) @default(now())
-  command RegisterPerson(email) @id(op_register_person) {
+  id:        uuid @pk
+  email:     string @notBlank @unique
+  createdAt: instant @default(now())
+
+  command RegisterPerson(email) {
     conflict on [email]
   }
 }

@@ -7,14 +7,15 @@ app Demo @id(project_demo) {
   storage none
 }
 
-entity Payout @id(ent_payout) {
+entity Payout {
   use dto
-  id: uuid @id(fld_payout_id)
-  amount: long @id(fld_payout_amount)
+
+  id:     uuid
+  amount: long
 }
 
-component client Ledger @id(cmp_client_ledger) {
+component client Ledger {
   route GET "/ledgers"
 }
 
-component job Reconcile @id(cmp_job_reconcile) {}
+component job Reconcile {}

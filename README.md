@@ -33,10 +33,16 @@ overlapping edits refuse before anything is written.
 jails did not create reaches it through `jails model init`, and `jails adopt`
 first records the project's layout in `jails.toml`.
 
+**Editing that file by hand is the first path**, and `jails sync` compiles it:
+the CLI is sugar that writes the same declarations. A generated model carries
+no `@id` -- an identity the compiler derives from the name beside it says
+nothing -- so what `jails g scaffold` writes is what you would have written,
+and `jails model fmt` is the one command that changes its layout.
+
 ```jdl
 jdl 1
 
-app Notes @id(project_notes) {
+app Notes {
   pkg com.example.notes
   java 26
   platform spring
@@ -44,15 +50,21 @@ app Notes @id(project_notes) {
   storage postgres
 }
 
-entity Note @id(ent_note) {
+entity Note {
   use scaffold
-  id: uuid @id(fld_note_id) @pk
-  title: string @id(fld_note_title) @notBlank @length(1..200)
 
-  command CreateNote(title) @id(op_create_note) {
+  id:    uuid @pk
+  title: string @notBlank @length(1..200)
+
+  command CreateNote(title) {
     route POST "/notes"
   }
 }
+```
+
+```
+$ $EDITOR .jails/model.jdl      # add `body: string?` to Note
+$ jails sync                    # one plan, previewed, then applied
 ```
 
 The compiler entry points:
@@ -1651,10 +1663,10 @@ What it writes is the `entity` declaration beside one line that says whose
 the record is:
 
 ```jdl
-entity Message @id(ent_message) {
-  id: uuid @id(fld_message_id)
-  title: string @id(fld_message_title)
-  body: string? @id(fld_message_body)
+entity Message {
+  id:    uuid
+  title: string
+  body:  string?
 }
 
 eject Message.record @id(eject_ca48573a411aefbe) @adopted

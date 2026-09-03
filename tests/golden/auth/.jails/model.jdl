@@ -7,6 +7,6 @@ app Demo @id(project_demo) {
   storage none
 }
 
-cap security @id(cap_security)
+cap security
 
-component auth Api @id(cmp_auth_api) {}
+component auth Api {}

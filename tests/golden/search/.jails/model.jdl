@@ -7,11 +7,11 @@ app Demo @id(project_demo) {
   storage postgres
 }
 
-entity Article @id(ent_article) {
+entity Article {
   use scaffold
   use search(fields: [title, body])
 
-  id: uuid @id(fld_article_id) @pk
-  title: string @id(fld_article_title) @notBlank
-  body: string @id(fld_article_body)
+  id:    uuid @pk
+  title: string @notBlank
+  body:  string
 }

@@ -85,7 +85,7 @@ entity Task {
     );
     let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(
-        model.contains("summary: string @id(fld_ent_task_title) @map(title)"),
+        unaligned(&model).contains("summary: string @id(fld_task_title) @map(title)"),
         "{model}"
     );
     let linked = jails_model::parse_jdl(&model).unwrap();
@@ -873,7 +873,10 @@ fn jdl_field_evolution_keeps_ids_edits_and_forward_schema_history() {
         String::from_utf8_lossy(&required.stderr)
     );
     let evolved_jdl = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
-    assert!(evolved_jdl.contains("priority: long @id(fld_note_priority)"));
+    assert!(
+        unaligned(&evolved_jdl).contains("priority: long\n"),
+        "{evolved_jdl}"
+    );
 
     let dropped = jails_cmd(&root, None)
         .args([
@@ -962,10 +965,7 @@ fn canonical_composite_index_is_model_data_and_one_forward_migration() {
         "{migration}"
     );
     let source = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
-    assert!(
-        source.contains("index [title, id desc] @id(idx_note_"),
-        "{source}"
-    );
+    assert!(source.contains("index [title, id desc]"), "{source}");
     let model = jails_model::parse_jdl(&source).unwrap();
     let entity = model.entities.values().next().unwrap();
     let index = entity.indexes.values().next().unwrap();
@@ -1068,9 +1068,11 @@ fn jdl_index_removal_is_forward_only_atomic_and_preserves_reader_edits() {
     );
     assert_eq!(snapshot_tree(&root), before_wrong_confirmation);
 
+    // The index member carries no `@id` -- its identity is the column list
+    // the parser reads back -- so the line is found by what it declares.
     let directly_removed = model_source
         .split_inclusive('\n')
-        .filter(|line| !line.contains(&index_id))
+        .filter(|line| !line.trim_start().starts_with("index ["))
         .collect::<String>();
     fs::write(root.join(".jails/model.jdl"), directly_removed).unwrap();
     let before_direct_sync = snapshot_tree(&root);
@@ -1186,7 +1188,7 @@ fn canonical_storage_preserve_removes_projections_and_revive_reuses_the_table() 
     );
     let retired_source = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(
-        retired_source.contains("entity Note @id(ent_note) @retired {"),
+        retired_source.contains("entity Note @retired {"),
         "{retired_source}"
     );
     let model = jails_model::parse_jdl(&retired_source).unwrap();
@@ -1241,10 +1243,7 @@ fn canonical_storage_preserve_removes_projections_and_revive_reuses_the_table() 
         "revive must not recreate preserved storage"
     );
     let active_source = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
-    assert!(
-        active_source.contains("entity Note @id(ent_note) {"),
-        "{active_source}"
-    );
+    assert!(active_source.contains("entity Note {"), "{active_source}");
     assert!(!active_source.contains("@retired"), "{active_source}");
     let model = jails_model::parse_jdl(&active_source).unwrap();
     assert!(model.entities.values().next().unwrap().active);

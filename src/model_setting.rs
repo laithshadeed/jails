@@ -4,7 +4,6 @@ use crate::Invocation;
 use crate::model_generate::{PreparedMutation, finish_generation};
 use jails_model::{Evolution, SettingId, SettingTarget, StableId};
 use jails_support::{Failure, Result};
-use jails_support::{hex, sha256};
 
 pub(crate) fn set(key: String, value: String, tests: bool, invocation: Invocation) -> Result<()> {
     let target = target(tests);
@@ -36,9 +35,15 @@ pub(crate) fn set(key: String, value: String, tests: bool, invocation: Invocatio
             crate::model_generate_jdl::remove_setting(&current.source, &setting.label)?,
         ),
         None => {
-            let identity = format!("{}:{key}", target.label());
-            let label = format!("set_{}", &hex(&sha256(identity.as_bytes()))[..16]);
-            let id = SettingId::parse(label).map_err(Failure::Told)?;
+            // **A key is its own identity.** The hash this used to write --
+            // `set_64d0f0de270fe184` for `server.port` -- named nothing a
+            // reader could look up, and differed from what the parser derives
+            // off the same line, so the attribute could never be dropped.
+            let id = SettingId::parse(jails_model::jdl_identity::setting_id(&format!(
+                "{}_{key}",
+                target.label()
+            )))
+            .map_err(Failure::Told)?;
             (id, current.source.clone())
         }
     };
@@ -88,10 +93,15 @@ fn append_setting(
     value: &str,
     target: SettingTarget,
 ) -> Result<()> {
-    let declaration = format!(
-        "prop {key} = {} @id({}){}",
-        quote(value)?,
+    // A setting the reader already had keeps whatever id its line pinned, so
+    // the attribute reappears exactly where it still says something.
+    let pin = jails_model::jdl_identity::id_attribute(
         id.as_str(),
+        &jails_model::jdl_identity::setting_id(&format!("{}_{key}", target.label())),
+    );
+    let declaration = format!(
+        "prop {key} = {}{pin}{}",
+        quote(value)?,
         if target == SettingTarget::Test {
             " @target(test)"
         } else {

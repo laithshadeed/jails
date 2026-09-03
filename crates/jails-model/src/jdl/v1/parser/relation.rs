@@ -20,8 +20,9 @@ impl Parser<'_> {
         self.expect("to", "JDL0551", "a relation needs `to Parent`")?;
         let target = stable_fragment(&self.take_word("relation target")?);
         let label = stable_fragment(&name);
-        let (attributes, id) =
-            self.declared(&["id", "map"], || format!("rel_{}_{}", entity.id, label))?;
+        let (attributes, id) = self.declared(&["id", "map"], || {
+            super::identity::relation_id(&entity.id, &label)
+        })?;
         let sql_name = one_arg(&attributes, "map")?;
         self.expect("{", "JDL0552", "a relation needs a non-empty block")?;
         self.end_line()?;

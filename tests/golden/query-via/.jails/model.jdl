@@ -7,22 +7,23 @@ app Demo @id(project_demo) {
   storage postgres
 }
 
-entity Owner @id(ent_owner) {
+entity Owner {
   use scaffold
 
-  id: uuid @id(fld_owner_id) @pk
-  email: string @id(fld_owner_email) @notBlank @unique
-  createdAt: instant @id(fld_owner_created_at) @default(now())
+  id:        uuid @pk
+  email:     string @notBlank @unique
+  createdAt: instant @default(now())
 }
 
-entity Item @id(ent_item) {
+entity Item {
   use scaffold
 
-  id: uuid @id(fld_item_id) @pk
-  ownerId: uuid @id(fld_item_owner_id) @index
-  name: string @id(fld_item_name) @notBlank
-  createdAt: instant @id(fld_item_created_at) @default(now())
-  query ItemsByOwnerEmail(owner.email) @id(op_items_by_owner_email) {
+  id:        uuid @pk
+  ownerId:   uuid @index
+  name:      string @notBlank
+  createdAt: instant @default(now())
+
+  query ItemsByOwnerEmail(owner.email) {
     order by [created_at desc, name]
     limit 20
     join Owner as owner on owner_id -> owner.id

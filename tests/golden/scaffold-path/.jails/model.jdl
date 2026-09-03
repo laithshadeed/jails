@@ -7,9 +7,9 @@ app Demo @id(project_demo) {
   storage none
 }
 
-entity Operator @id(ent_operator) {
+entity Operator {
   use scaffold(path: "/admin_api/operators")
 
-  id: long @id(fld_operator_id) @pk
-  email: string @id(fld_operator_email) @notBlank @unique
+  id:    long @pk
+  email: string @notBlank @unique
 }

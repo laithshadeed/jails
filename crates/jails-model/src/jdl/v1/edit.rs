@@ -3,22 +3,66 @@
 use super::{DocumentCst, MemberCst, parse_cst};
 use crate::{Diagnostic, Diagnostics};
 
-/// Append one top-level declaration without re-rendering existing source.
+/// Add one top-level declaration where a reader would have written it.
+///
+/// **Time order is not model order.** Appending every declaration to the end
+/// made the file a log of the commands that produced it -- `entity`, `cap`,
+/// `prop`, `enum`, `entity` after five commands -- so the same five
+/// declarations read differently depending on which order they were asked
+/// for, and a reader who then edits by hand is editing a shuffled document.
+/// The new declaration goes after the last one it is not required to precede
+/// (`cst::top_level_order`), which is where a reader keeping the
+/// file tidy would have put it and is still one splice into their bytes:
+/// nothing already in the document moves.
 pub fn append_declaration(source: &str, declaration: &str) -> Result<String, Diagnostics> {
-    parse_cst(source)?;
+    let cst = parse_cst(source)?;
     let newline = newline_style(source);
     let declaration = normalize_newlines(declaration.trim_end_matches(['\r', '\n']), newline);
-    let mut edited = source.to_string();
-    if !edited.is_empty() && !edited.ends_with('\n') && !edited.ends_with('\r') {
+    let (group, rank) = super::cst::top_level_order(first_word(&declaration));
+    let previous = cst
+        .declarations
+        .iter()
+        .filter(|candidate| super::cst::top_level_order(&candidate.kind).1 <= rank)
+        .max_by_key(|candidate| candidate.span.end);
+    let Some(previous) = previous.filter(|candidate| candidate.span.end < source.len()) else {
+        let mut edited = source.to_string();
+        if !edited.is_empty() && !edited.ends_with('\n') && !edited.ends_with('\r') {
+            edited.push_str(newline);
+        }
+        let separator = format!("{newline}{newline}");
+        if !edited.is_empty() && !edited.ends_with(&separator) {
+            edited.push_str(newline);
+        }
+        edited.push_str(&declaration);
         edited.push_str(newline);
-    }
-    let separator = format!("{newline}{newline}");
-    if !edited.is_empty() && !edited.ends_with(&separator) {
-        edited.push_str(newline);
-    }
-    edited.push_str(&declaration);
-    edited.push_str(newline);
-    Ok(edited)
+        return Ok(edited);
+    };
+    // A declaration's span carries the newline that closes it, so the
+    // insertion starts at the first byte of the next one. Two one-line
+    // declarations of the same group -- `cap` under `cap`, `prop` under
+    // `prop` -- sit together; anything with a block in it gets a blank line,
+    // because two `entity` bodies run into each other otherwise. The
+    // formatter applies the group rule again afterwards, for the declaration
+    // that now follows this one.
+    let insertion = previous.span.end;
+    let previous_text = &source[previous.span.start..previous.span.end];
+    let separated = super::cst::top_level_order(&previous.kind).0 != group
+        || declaration.contains('\n')
+        || previous_text.trim_end().contains('\n');
+    let rendered = match separated {
+        true => format!("{newline}{declaration}{newline}"),
+        false => format!("{declaration}{newline}"),
+    };
+    cst.replace_span(super::Span::new(insertion, insertion), &rendered)
+}
+
+/// The declaration kind a rendered block opens with.
+fn first_word(declaration: &str) -> &str {
+    declaration
+        .trim_start()
+        .split(|character: char| character.is_whitespace())
+        .next()
+        .unwrap_or_default()
 }
 
 /// Set one `app { }` property, replacing its line or adding it.
@@ -476,10 +520,17 @@ fn unique_member<'a>(
         .filter(|candidate| candidate.owner == owner)
         .filter(|candidate| kinds.contains(&candidate.kind.as_str()))
         .filter(|candidate| name.is_none_or(|name| candidate.name.as_deref() == Some(name)))
+        // **A member with no `@id` is the one the caller means.** Its
+        // identity is what the parser derived from the line, and the caller
+        // resolved the id it is asking for out of that same model -- so
+        // requiring the attribute to be spelled would make every member the
+        // CLI now writes without one unremovable. Only a member pinned to a
+        // *different* id is excluded.
         .filter(|candidate| {
-            explicit_id
-                .as_ref()
-                .is_none_or(|id| cst.member_text(candidate).contains(id))
+            explicit_id.as_ref().is_none_or(|id| {
+                let text = cst.member_text(candidate);
+                text.contains(id) || !text.contains("@id(")
+            })
         })
         .collect::<Vec<_>>();
     match matches.as_slice() {

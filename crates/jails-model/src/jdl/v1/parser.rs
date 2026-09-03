@@ -15,6 +15,9 @@
 //! `relation.rs` for the rest.
 
 use super::cst::{DeclarationCst, DocumentCst, MemberCst};
+/// Reached as `super::identity` by every submodule that resolves a
+/// declaration's `@id`.
+pub(super) use super::identity;
 use super::token::{Span, Token, TokenKind, problem};
 use crate::source;
 use crate::{DependencyScope, Diagnostics, Facet, SettingTarget};
@@ -219,7 +222,7 @@ impl<'a> Parser<'a> {
             capabilities.insert(
                 kind.to_string(),
                 source::Capability {
-                    id: format!("cap_{kind}"),
+                    id: super::identity::capability_id(kind),
                     kind: kind.to_string(),
                     name: None,
                     package: None,
@@ -230,7 +233,9 @@ impl<'a> Parser<'a> {
         let source = source::Document {
             schema: "jails.model.v1".to_string(),
             project: source::Project {
-                id: app.id.unwrap_or_else(|| format!("app_{project_label}")),
+                id: app
+                    .id
+                    .unwrap_or_else(|| super::identity::app_id(&project_label)),
                 name: app.name,
                 base_package: package,
                 java_release: java,

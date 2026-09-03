@@ -10,7 +10,7 @@ use crate::Invocation;
 use crate::cli::GenerateArgs;
 use crate::model_command::parse;
 use crate::model_generate::{PreparedMutation, finish_generation};
-use jails_model::{ComponentId, Evolution, StableId, UnitId, UnitKind};
+use jails_model::{ComponentId, Evolution, UnitId, UnitKind};
 use jails_support::{Failure, Result};
 
 pub(super) fn run(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
@@ -65,21 +65,13 @@ fn run_v1(
                 .to_string(),
         ));
     }
-    let label = jails_model::field_syntax::java_to_label(&stem);
-    let component_id = ComponentId::parse(format!("cmp_{}_{}", kind.0.replace('-', "_"), label))
+    let component_id = ComponentId::parse(jails_model::jdl_identity::component_id(kind.0, &stem))
         .map_err(Failure::Told)?;
     let unit_id = kind
         .1
         .map(|_| UnitId::parse(component_id.to_string()).map_err(Failure::Told))
         .transpose()?;
-    let declaration = v1_declaration(
-        kind.0,
-        &stem,
-        &variants,
-        component_id.as_str(),
-        &args,
-        &current.model,
-    )?;
+    let declaration = v1_declaration(kind.0, &stem, &variants, &args, &current.model)?;
     let next_source = if current.model.components.contains_key(&component_id) {
         replace_v1_declaration(&current.source, &stem, &declaration)?
     } else {

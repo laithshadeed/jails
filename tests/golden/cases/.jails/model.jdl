@@ -7,6 +7,6 @@ app Demo @id(project_demo) {
   storage none
 }
 
-component cases Behaviour @id(cmp_cases_behaviour) {
+component cases Behaviour {
   source "docs/behaviour.md"
 }

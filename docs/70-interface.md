@@ -62,7 +62,7 @@ reopening a contract:
 | ~~1~~ | ~~I70.12~~ | ~~the most-seen line in the tool stops printing on every command~~ |
 | ~~2~~ | ~~I70.1, I71.13~~ | ~~the report is the delta; a manifest prints one report~~ |
 | ~~3~~ | ~~I71.35, I70.19, I70.20~~ | ~~consent is `--yes`, nothing else, and JSON has no shortcut past it~~ |
-| 4 | I70.13, I71.47, I71.16 | the model file reads like the specification's, and editing it by hand is the first path |
+| ~~4~~ | ~~I70.13, I71.47, I71.16~~ | ~~the model file reads like the specification's, and editing it by hand is the first path~~ |
 | 5 | I70.22, I71.3, I71.4, I71.5 | the lock is 1× the tree, a scaffold is a 20-line diff, a mutation at a hundred entities is under 100 ms |
 | ~~6~~ | ~~I71.40, I71.41, I71.24~~ | ~~every scanner sees every source root; `test --affected` never selects nothing and passes~~ |
 | 7 | I70.2 | one JSON encoding, carrying the same value as the human report |
@@ -70,10 +70,10 @@ reopening a contract:
 | 9 | I71.29, I71.26, I71.28 | README, the specification and the binary agree |
 | 10 | I71.14 | every mutation prints the JDL it wrote |
 
-**Worth a prototype before a decision:** `jails undo` (I71.15), `sync
---watch` (I71.16), bare `jails` as status (I71.17), an LSP for the model
-(I71.19), an MCP server (I71.20), the manifest folded into the model
-(I71.21).
+**Worth a prototype before a decision:** `jails undo` (I71.15), bare `jails`
+as status (I71.17), an LSP for the model (I71.19), an MCP server (I71.20),
+the manifest folded into the model (I71.21). `sync --watch` was prototyped
+and declined; §9 says why.
 
 ---
 
@@ -247,8 +247,8 @@ arrays (1.48×). *Done when* the ratio reads under 1.1 with the tree, under
 1.5 with the interim.
 
 **I71.45 — a merge is a merge.** *Change* the model conflicts only where
-two branches touched the same declaration (I71.47 puts new entities beside
-entities, not at the end); the manifest is one sorted line per path and
+two branches touched the same declaration (step 4 puts a new entity beside
+the entities rather than at the end, which is half of it); the manifest is one sorted line per path and
 merges by line; the base tree merges by file. After a merge, `jails sync`
 accepts a file that carries a provenance header and matches the model's
 render for its artifact, and reports which files it accepted and which it
@@ -302,42 +302,25 @@ then `jails undo` leaves `git status --short` empty.
 
 ### Today
 
-**The file the tool writes is not the file the specification shows.**
-The specification's complete example (`docs/01-jdl-v1.md` §4) carries no
-`@id`; §8 makes `@id` optional and derived. The tool writes one on every
-declaration (8 of 26 non-blank lines on the demo model), including `prop
-server.port = "8081" @id(set_64d0f0de270fe184)`, a hash for a key that is
-its own identity. A hand-appended entity with no `@id` links and generates
-in 53 ms through `jails sync`, so only the CLI frontends write them. The
-seed model carries six `prop` lines and one `dep` the reader did not write,
-with nothing saying why.
-
-**Declaration order is time order.** After `g scaffold Note`, `add json`,
-`set server.port`, `g enum Colour`, `g record Money` the file reads `app`,
-`dep`, five `prop`, `entity Note`, `cap json`, `prop server.port`, `enum
-Colour`, `entity Money`: a log, not a model.
-
-**Formatting.** `model fmt` keeps the reader's column alignment, sorts
-attributes alphabetically, does not reorder declarations, and is
-idempotent. It fails `--check` on a model no hand has touched (`g usecase`
-appends a `command` block without the blank line `fmt` wants), and it
-refuses a model that does not link, so the file a reader is fixing cannot
-be formatted. After an aligned, `@id`-free entity, `resource field add
-Task done:boolean` appends `done: boolean @id(fld_task_done)`: unaligned,
-and the only line with an `@id`.
-
-**Comments.** `//` comments survive `fmt` and a CLI write. `#` is refused
-with `[JDL0002] unexpected character` and no mention of `//`.
+**The file the tool writes is the file the specification shows** (2026-09-03,
+after step 4). A generated model carries no `@id`: the writer emits one only
+where it differs from the derivation, by the rule `AppModel.derived` uses for
+`pinned`, and `rename resource` is what materialises one. Declarations go in
+where a reader keeping the file tidy would have put them, the type column of
+a run of members is lined up, and the layout is decided once in the mutation
+pipeline -- so `model fmt --check` passes after every mutation in
+`tests/cli/model`, over a source that was already canonical, which is how JDL
+v1 §19.2's byte preservation survives. `model fmt` formats anything the
+parser accepts and reports the linker's answer afterwards.
 
 **Diagnostics.** The parser gives a position (`[JDL0114] line 36, column
 31: attribute `@uniq` is not valid here`, then the closed list). The
 linker gives a path (`[model-field-type] $.entities.tag.fields.name.type`),
 and one typo in a type produces four diagnostics, three of them
 consequences. `editor diagnostics --scope project` returns `[]` on a model
-`model check` refuses. `g record 2Fast` answers `[model-label]
-$.entities.2_fast: `2_fast` is not a model label` with no fix and a name
-the reader never typed; `g record Café` answers *`é` is not valid in a
-Java identifier; fix: name it with letters, digits and `_`*.
+`model check` refuses. A name that cannot be a Java identifier is refused
+once in the frontend, before the model: `2Fast` and `Café` get the same
+sentence and the same fix.
 
 **What the language accepts.** `@default(0)`, `@default(true)`,
 `@default(now())` work on the command line; `--timestamps` writes the two
@@ -359,43 +342,6 @@ JDL once, `model check --help` and `explain <kind>` never.
 
 ### After
 
-The model the tool writes is the model the specification shows, in the
-order a reader would keep it, and the CLI is visibly sugar over it:
-
-```jdl
-jdl 1
-
-app Notes {
-  pkg com.example.notes
-  java 26
-  platform spring
-  build maven
-  storage postgres
-}
-
-cap db
-cap api
-
-// written by jails new; yours to edit or delete
-dep org.jspecify:jspecify @version("1.0.0")
-prop server.shutdown = "graceful"
-prop spring.lifecycle.timeout-per-shutdown-phase = "30s"
-
-enum Colour {
-  RED
-  GREEN
-}
-
-entity Note {
-  use scaffold
-
-  id:    uuid    @pk
-  title: string  @notBlank
-  body:  string?
-  tags:  string          // appended by `resource field add`, aligned, no @id
-}
-```
-
 ```
 $ jails g record Money amount:long currency:Colour
   .jails/model.jdl
@@ -411,38 +357,11 @@ create  src/test/java/com/example/notes/domain/MoneyTest.java
 A typo is one diagnostic with a position (`.jails/model.jdl:14:18:
 `strin` is not a type jails knows; a type you own is capitalised`), in the
 editor as well as on the command line. `jails explain jdl` prints the
-grammar the parser accepts. `#` says *comments start with `//`*.
-Collections work on non-stored records, `--package` is `@package` in the
-specification as well as in the binary, and a relation's parent is `--to`.
+grammar the parser accepts. Collections work on non-stored records,
+`--package` is `@package` in the specification as well as in the binary, and
+a relation's parent is `--to`.
 
 ### Change
-
-**I70.13 — write `@id(…)` only when it is pinned.** *Change* the same rule
-`AppModel.derived` uses for `pinned`: materialise an `@id` only where it
-differs from the derived one, which is what §8 already says happens at
-rename. *Done when* the seed model and a scaffold carry no `@id`, `rename
-resource` materialises exactly one, and `model fmt --check` passes on
-every fixture under `tests/`.
-
-**I71.47 — the CLI writes what the reader would have written.** *Change* a
-new `cap` goes after the last `cap` (or after `app`), a `prop` after the
-last `prop`, an `enum` after the last `enum`, an entity after the last
-entity; a field appended into an entity takes the entity's column
-alignment. *Done when* the five-command file reads `app`, `cap`, `dep`,
-`prop`×6, `enum`, `entity`×2, and an aligned entity gains an aligned line.
-
-**I70.14 — what jails writes, its formatter accepts.** *Change* every JDL
-edit in `jdl/v1/edit.rs` goes through the formatter before the plan
-captures the after-image. *Done when* `model fmt --check` passes after
-every mutation in `tests/cli/model`.
-
-**I70.15 — the seed's six `prop` lines carry a reason.** *Change* one
-comment above the block, `// written by jails new; yours to edit or
-delete`. *Done when* the seed template carries it and `fmt` keeps it.
-
-**I71.51 — `fmt` is syntactic.** *Change* it formats any file the parser
-accepts and reports linker errors afterwards. *Done when* the unlinked
-example is formatted and the refusal follows.
 
 **I71.11 — linker diagnostics carry a line, and the cascade collapses.**
 *Change* the CST keeps spans (`jdl/v1/cst.rs`), so a `model-*` diagnostic
@@ -455,14 +374,6 @@ unknown suppresses the diagnostics that depend on it. *Done when* the
 check` and maps each code to the schema's diagnostic shape with the span.
 *Done when* it returns what `model check` returns, JDL and model codes
 alike, with line and column.
-
-**I71.36 — one identifier check, before the model.** *Change* the CLI
-validates a name as a Java identifier once, in the frontend, with the
-`Café` message; the linker never sees a name the CLI could have refused.
-*Done when* `2Fast` and `Café` refuse with the same sentence.
-
-**I71.49 — `#` is refused with the answer.** *Change* `JDL0002` on `#`
-adds *comments start with `//`*. *Done when* the refusal says so.
 
 **I71.26 — collections exist.** *Change* the model accepts `list<T>` and
 `map<K,V>` on non-stored records and component payloads, as the
@@ -495,13 +406,6 @@ jdl` prints the declaration families, the attributes per declaration, the
 `use` projections, the builtin types and the `cap` kinds, walked out of
 the registries `docs/10-language.md` counts. *Done when* its attribute
 count equals the parser's refusal list.
-
-**I71.16 — JDL-first is the documented first path.** *Today* editing the
-model and running `sync` works in 53 ms, and README opens with the CLI.
-*Change* README's first example is a JDL block and `jails sync`; `sync
---watch` re-syncs on every save of `model.jdl` (the whole pipeline is
-40 ms on a small project; `run --watch` already owns the file watching).
-*Done when* both exist.
 
 **I71.14 — every mutation prints the JDL it wrote.** *Change* above the
 file list, the hunk written into `.jails/model.jdl`: four to six lines
@@ -1021,8 +925,21 @@ aliases for kinds and capabilities (tab completion is how a closed set is
 typed); a daemon for the mutation path (the compiler is 14 ms at a hundred
 entities; the time is in reading and writing the tree); dropping the merge
 base (§6.1 stands); replacing JDL with the manifest or the CLI with JDL
-(I71.21 removes a third source, I71.16 orders the two that remain). A
-readable ejection path is A3.15's; `jails adopt resource` is P8.11a's.
+(I71.21 removes a third source, and README now leads with the JDL block and
+`jails sync`). A readable ejection path is A3.15's; `jails adopt resource` is
+P8.11a's.
+
+Prototyped and declined: **`sync --watch`** (was I71.16's second half). It is
+cheap and safe -- a no-op `sync` is 22-26 ms on a scaffolded project, 69 ms
+when it declares an entity, `run --watch`'s debounce is already written, and
+`sync` does not rewrite `model.jdl`, so a watch cannot retrigger itself. It
+is the *input* that makes it wrong: `run --watch` watches compiled classes,
+which an editor writes only when they are complete, while `model.jdl` is
+watched while a hand is typing in it. Every save of a half-written
+declaration is a parse refusal, and a debounce cannot tell one from a
+finished edit -- so the loop's normal output is a screen of diagnostics about
+a document nobody has finished. `jails sync` at 25 ms, run when the edit is
+done, is the better shape.
 
 Not measured: `bench` (no k6 here), Neovim and the IDEs on either layout
 (none installed), `jails new --gradle` fetching a wrapper jar, the `model

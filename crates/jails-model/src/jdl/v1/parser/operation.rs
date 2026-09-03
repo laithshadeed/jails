@@ -63,7 +63,7 @@ impl Parser<'_> {
         } else {
             &["id", "internal"][..]
         };
-        let (attributes, id) = self.declared(allowed, || format!("op_{label}"))?;
+        let (attributes, id) = self.declared(allowed, || super::identity::operation_id(&label))?;
         let internal = flag_attribute(&attributes, "internal")?;
 
         let mut command = source::CommandSemantics {

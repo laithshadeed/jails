@@ -137,7 +137,6 @@ pub(crate) fn resource(name: String, invocation: Invocation) -> Result<()> {
         &current.model,
         &crate::model_generate_jdl::EntityDeclaration {
             java_name: &name,
-            entity_label: &entity_label,
             scaffold: false,
             fields: &fields,
             path: None,

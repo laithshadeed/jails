@@ -7,25 +7,26 @@ app Demo @id(project_demo) {
   storage postgres
 }
 
-cap json @id(cap_json)
+cap json
 
-cap kafka @id(cap_kafka)
+cap kafka
 
-entity Message @id(ent_message) {
+entity Message {
   use scaffold
 
-  id: uuid @id(fld_message_id) @pk
-  body: string @id(fld_message_body) @notBlank
-  createdAt: instant @id(fld_message_created_at) @default(now())
-  event MessageReceived(id: uuid, message_id: uuid, occurred_at: instant) @id(op_message_received) {
+  id:        uuid @pk
+  body:      string @notBlank
+  createdAt: instant @default(now())
+
+  event MessageReceived(id: uuid, message_id: uuid, occurred_at: instant) {
   }
-  command ReceiveMessage(id, body) @id(op_receive_message) {
+  command ReceiveMessage(id, body) {
     emit message_received
     deliver outbox
   }
 }
 
-component http-sink Provider @id(cmp_http_sink_provider) {
+component http-sink Provider {
   on receive_message
   yields message_received
 }

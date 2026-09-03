@@ -7,24 +7,24 @@ app Demo @id(project_demo) {
   storage none
 }
 
-entity Transaction @id(ent_transaction) {
-  id: uuid @id(fld_transaction_id)
-  amount: long @id(fld_transaction_amount)
+entity Transaction {
+  id:     uuid
+  amount: long
 }
 
-entity Reward @id(ent_reward) {
-  id: uuid @id(fld_reward_id)
-  amount: long @id(fld_reward_amount)
+entity Reward {
+  id:     uuid
+  amount: long
 }
 
-component strategy RewardRule @id(cmp_strategy_reward_rule) {
+component strategy RewardRule {
   on transaction
   yields reward
-  variant Coffee @id(var_cmp_strategy_reward_rule_coffee)
-  variant Large @id(var_cmp_strategy_reward_rule_large)
+  variant Coffee
+  variant Large
 }
 
-component strategy Eligibility @id(cmp_strategy_eligibility) {
+component strategy Eligibility {
   on transaction
-  variant Domestic @id(var_cmp_strategy_eligibility_domestic)
+  variant Domestic
 }

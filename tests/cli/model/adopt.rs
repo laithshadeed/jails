@@ -60,26 +60,12 @@ fn adopt_resource_registers_a_hand_written_record_as_the_readers_own() {
     );
     let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(model.starts_with(&model_before), "{model}");
-    assert!(
-        model.contains("entity Message @id(ent_message) {"),
-        "{model}"
-    );
-    assert!(
-        model.contains("  id: uuid @id(fld_message_id)\n"),
-        "{model}"
-    );
-    assert!(
-        model.contains("  body: string? @id(fld_message_body)\n"),
-        "{model}"
-    );
-    assert!(
-        model.contains("  at: instant @id(fld_message_at)\n"),
-        "{model}"
-    );
-    assert!(
-        model.contains("  hits: int @id(fld_message_hits)\n"),
-        "{model}"
-    );
+    assert!(model.contains("entity Message {"), "{model}");
+    let flat = unaligned(&model);
+    assert!(flat.contains("  id: uuid\n"), "{model}");
+    assert!(flat.contains("  body: string?\n"), "{model}");
+    assert!(flat.contains("  at: instant\n"), "{model}");
+    assert!(flat.contains("  hits: int\n"), "{model}");
     assert!(
         model.contains("eject Message.record @id(eject_") && model.contains(") @adopted\n"),
         "{model}"
@@ -160,17 +146,11 @@ fn adopt_resource_pins_a_record_outside_the_domain_layer_and_passes_project_type
     );
     let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(
-        model.contains("entity Message @id(ent_message) @package(model) {"),
+        model.contains("entity Message @package(model) {"),
         "{model}"
     );
-    assert!(
-        model.contains("  priority: Priority @id(fld_message_priority)\n"),
-        "{model}"
-    );
-    assert!(
-        model.contains("  fallback: Priority? @id(fld_message_fallback)\n"),
-        "{model}"
-    );
+    assert!(model.contains("  priority: Priority\n"), "{model}");
+    assert!(model.contains("  fallback: Priority?\n"), "{model}");
     let lock = fs::read_to_string(root.join(".jails/compiler.lock.json")).unwrap();
     assert!(
         !lock.contains("model/Message.java"),
@@ -282,10 +262,7 @@ fn an_adopted_resource_evolves_renames_and_destroys_like_a_generated_one() {
         String::from_utf8_lossy(&added.stderr)
     );
     let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
-    assert!(
-        model.contains("  summary: string @id(fld_message_summary) @notBlank\n"),
-        "{model}"
-    );
+    assert!(model.contains("  summary: string @notBlank\n"), "{model}");
     assert_eq!(
         fs::read_to_string(root.join(MESSAGE_PATH)).unwrap(),
         MESSAGE

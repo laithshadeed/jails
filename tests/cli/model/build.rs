@@ -54,7 +54,7 @@ fn dependency_is_semantic_model_data_and_one_exact_maven_projection() {
         String::from_utf8_lossy(&added.stderr)
     );
     let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
-    assert!(model.contains("dep org.jsoup:jsoup @id(dep_"), "{model}");
+    assert!(model.contains("dep org.jsoup:jsoup "), "{model}");
     assert!(model.contains("@version(\"1.18.3\")"), "{model}");
     assert!(model.contains("@scope(runtime)"), "{model}");
     let pom = fs::read_to_string(root.join("pom.xml")).unwrap();
@@ -563,7 +563,7 @@ fn canonical_settings_preview_update_reconcile_and_unset_end_to_end() {
     );
     let first_source = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(
-        first_source.contains("prop server.port = \"8080\" @id(set_"),
+        first_source.contains("prop server.port = \"8080\"\n"),
         "{first_source}"
     );
     let first_model = jails_model::parse_jdl(&first_source).unwrap();

@@ -7,11 +7,12 @@ app Demo @id(project_demo) {
   storage none
 }
 
-cap kafka @id(cap_kafka)
+cap kafka
 
-entity Transaction @id(ent_transaction) {
-  id: uuid @id(fld_transaction_id)
-  amount: long @id(fld_transaction_amount)
-  event TransactionSettled(id: uuid) @id(op_transaction_settled) {
+entity Transaction {
+  id:     uuid
+  amount: long
+
+  event TransactionSettled(id: uuid) {
   }
 }

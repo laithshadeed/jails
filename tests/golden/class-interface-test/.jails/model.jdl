@@ -7,10 +7,10 @@ app Demo @id(project_demo) {
   storage none
 }
 
-component class RingBuffer @id(cmp_class_ring_buffer) {}
+component class RingBuffer {}
 
-component interface Clock @id(cmp_interface_clock) {}
+component interface Clock {}
 
-component test Parser @id(cmp_test_parser) {}
+component test Parser {}
 
-component integration-test Checkout @id(cmp_integration_test_checkout) {}
+component integration-test Checkout {}

@@ -13,6 +13,35 @@
 use super::token::{Span, Token};
 use crate::{Diagnostic, Diagnostics};
 
+/// Where a top-level declaration of this kind belongs in the document.
+///
+/// **One table, two questions.** The formatter asks which *group* a
+/// declaration is in, so it can put one blank line between groups and none
+/// inside one; an insertion asks the finer order, so a new `cap` lands after
+/// the last `cap` and before the `dep`s rather than at the bottom of the
+/// file. Written twice, the CLI's idea of where a declaration goes and the
+/// formatter's idea of where the blank lines go drift apart, and the file the
+/// tool writes stops being the file a reader would have written.
+///
+/// Neither answer ever *moves* a declaration the reader placed: the formatter
+/// only inserts blank lines, and the insertion only chooses a position for a
+/// line that is not there yet.
+pub(super) fn top_level_order(kind: &str) -> (u8, u8) {
+    match kind {
+        "app" => (0, 0),
+        "cap" => (1, 1),
+        "dep" => (1, 2),
+        "prop" => (1, 3),
+        "enum" => (2, 4),
+        "entity" => (2, 5),
+        "use" => (3, 6),
+        "command" | "query" | "transition" | "event" => (4, 7),
+        "component" => (5, 8),
+        "eject" => (6, 9),
+        _ => (7, 10),
+    }
+}
+
 /// One declaration boundary in a lossless JDL document.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeclarationCst {

@@ -35,6 +35,15 @@ const MODEL_PATH: &str = crate::model_command::JDL_PATH;
 /// without deciding what a canonical project does with it is a compile error
 /// rather than a silent fall-through.
 pub(crate) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
+    // **One identifier check, before the model.** Almost every kind turns its
+    // name into a Java type, and the model can only describe the projections
+    // a bad name broke -- `2Fast` came back as four linked diagnostics about
+    // a label, a type, a table and a route the reader never typed. Two kinds
+    // do not name a type: `migration` names a file, and `cases` names the
+    // document it reads its examples out of, so both take a path.
+    if !matches!(args.kind, ArtifactKind::Migration | ArtifactKind::Cases) {
+        model_generate::refuse_non_java_identifier(&args.name)?;
+    }
     match args.kind {
         ArtifactKind::Field => crate::model_resource::add_generated_field(args, invocation),
         ArtifactKind::Record
@@ -221,12 +230,11 @@ fn run_entity(mut args: GenerateArgs, invocation: Invocation) -> Result<()> {
         .map(|package| normalize_package(&current.model.project.base_package, package))
         .transpose()?;
     let declaration = match args.kind {
-        ArtifactKind::Enum => enum_declaration(&args.name, &entity_label, &fields)?,
+        ArtifactKind::Enum => enum_declaration(&args.name, &fields)?,
         ArtifactKind::Record | ArtifactKind::Value | ArtifactKind::Scaffold => entity_declaration(
             &current.model,
             &EntityDeclaration {
                 java_name: &args.name,
-                entity_label: &entity_label,
                 scaffold: args.kind == ArtifactKind::Scaffold,
                 fields: &fields,
                 path: args.path.as_deref(),

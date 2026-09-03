@@ -6,7 +6,6 @@ use crate::model_generate::{PreparedMutation, finish_generation};
 use jails_model::field_syntax::java_to_label;
 use jails_model::{Evolution, EvolutionStep, Facet, IndexId, StableId};
 use jails_support::{Failure, Result};
-use jails_support::{hex, sha256};
 use std::collections::BTreeSet;
 
 pub(crate) fn run(command: ResourceIndexCommand, invocation: Invocation) -> Result<()> {
@@ -69,11 +68,17 @@ pub(crate) fn add(
     }
     entity.refuse_retired().map_err(Failure::Told)?;
     let canonical = canonical_columns(entity, &columns)?;
-    let model_label = entity.label.clone();
     let entity_java_name = entity.names.java_type.clone();
     let signature = canonical.join(",");
-    let suffix = &hex(&sha256(signature.as_bytes()))[..12];
-    let index_id = IndexId::parse(format!("idx_{model_label}_{suffix}")).map_err(Failure::Told)?;
+    // **The columns are the identity**, which is also what the parser derives
+    // off the line, so the member goes in without an `@id` and reads as the
+    // reader would have written it. A hash of the same column list named
+    // nothing and forced the attribute onto every index.
+    let index_id = IndexId::parse(jails_model::jdl_identity::index_id(
+        entity.id.as_str(),
+        &canonical,
+    ))
+    .map_err(Failure::Told)?;
     if entity.indexes.contains_key(&index_id) {
         return Err(Failure::Told(format!(
             "index id `{index_id}` already exists on `{}`\n       fix: name a column list the entity does not index yet, or remove the index first",
@@ -82,11 +87,7 @@ pub(crate) fn add(
     }
     // v1's `field_list` reads `index [ user_id, created_at desc ]` and allows
     // only `@id` and `@map`.
-    let member = format!(
-        "  index [{}] @id({})",
-        canonical.join(", "),
-        index_id.as_str()
-    );
+    let member = format!("  index [{}]", canonical.join(", "));
     let next_source =
         crate::model_generate_jdl::index::insert(&current.source, &entity_java_name, &member)?;
     finish_generation(PreparedMutation {

@@ -136,6 +136,41 @@ pub(crate) fn reject_unsupported_options(
     Ok(())
 }
 
+/// Refuse a name no Java identifier can carry, once, before the model.
+///
+/// **One check, in the frontend, because the model has three chances to say
+/// it worse.** A stable id is a projection of the name, so `Bad!Name` used to
+/// fail there first and report that `ent_bad!_name` is not a stable id --
+/// about a value the reader never typed. `2Fast` got further still and came
+/// back as four linked diagnostics, one per projection: the label, the Java
+/// type, the SQL table and the route. Both are the same mistake and both are
+/// visible from the argument list, so the answer is one sentence with the
+/// name the reader actually wrote in it.
+///
+/// `migration` and `cases` are the exemptions: their names are paths.
+pub(crate) fn refuse_non_java_identifier(name: &str) -> Result<()> {
+    let fix = "fix: name it with letters, digits and `_`, starting with a letter";
+    if let Some(bad) = name
+        .chars()
+        .find(|character| !character.is_ascii_alphanumeric() && *character != '_')
+    {
+        return Err(Failure::Told(format!(
+            "`{bad}` is not valid in a Java identifier, and `{name}` becomes one.\n       {fix}"
+        )));
+    }
+    if let Some(bad) = name.chars().next().filter(char::is_ascii_digit) {
+        return Err(Failure::Told(format!(
+            "`{bad}` is not valid at the start of a Java identifier, and `{name}` becomes one.\n       {fix}"
+        )));
+    }
+    if name.is_empty() {
+        return Err(Failure::Told(format!(
+            "a name is required, and it becomes a Java identifier.\n       {fix}"
+        )));
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_entity_args(args: &GenerateArgs) -> Result<()> {
     let profile = entity_profile(args.kind).ok_or_else(|| {
         Failure::Told(format!(
@@ -143,21 +178,6 @@ pub(crate) fn validate_entity_args(args: &GenerateArgs) -> Result<()> {
             kind_name(args.kind)
         ))
     })?;
-    // **Checked before the identity is derived from it.** A stable id is a
-    // projection of the name, so `Bad!Name` fails there first -- and reports
-    // that `ent_bad!_name` is not a stable id, which is about a value the
-    // reader never typed. The linker says the same thing about the Java type
-    // and never gets the chance.
-    if let Some(bad) = args
-        .name
-        .chars()
-        .find(|character| !character.is_ascii_alphanumeric() && *character != '_')
-    {
-        return Err(Failure::Told(format!(
-            "`{bad}` is not valid in a Java identifier, and `{}` becomes one.\n       fix: name it with letters, digits and `_`",
-            args.name
-        )));
-    }
     reject_unsupported_options(args, profile)
 }
 

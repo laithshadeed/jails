@@ -7,12 +7,12 @@ app Demo @id(project_demo) {
   storage postgres
 }
 
-cap json @id(cap_json)
+cap json
 
-entity Widget @id(ent_widget) {
+entity Widget {
   use scaffold
   use seed
 
-  id: uuid @id(fld_widget_id) @pk
-  name: string @id(fld_widget_name) @notBlank
+  id:   uuid @pk
+  name: string @notBlank
 }

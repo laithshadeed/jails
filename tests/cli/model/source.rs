@@ -85,6 +85,98 @@ fn model_explain_shows_which_rule_produced_each_derived_name() {
     fs::remove_dir_all(root).ok();
 }
 
+/// The commands that used to make a log, and the file they make now.
+///
+/// **A model file is read far more often than it is written.** Appending
+/// every declaration to the end recorded the order somebody asked for things
+/// in -- `entity`, `cap`, `dep`, `prop`, `enum`, `entity` -- and put a hash on
+/// eight of twenty-six lines for identities the parser derives from the names
+/// beside them. Neither is information: the same five declarations mean the
+/// same model whatever order they arrived in, and an `@id` that agrees with
+/// the convention has displaced nothing (JDL v1 §8.2, and the rule
+/// `DerivedValue::named` uses for `pinned`).
+///
+/// So this asserts the shape of the whole file against what a reader
+/// keeping it tidy by hand would have written -- which is what makes editing
+/// it by hand the first path rather than a thing you do to a file the tool
+/// owns.
+#[test]
+fn a_run_of_commands_writes_the_file_a_reader_would_have_written() {
+    let root = model_project("jdl-v1-reader-order", EMPTY_MODEL);
+    write_spring_fixture(&root);
+    for command in [
+        vec!["g", "scaffold", "Note", "id:uuid@pk", "title:string!"],
+        vec!["add", "json"],
+        vec![
+            "add",
+            "dependency",
+            "org.jsoup:jsoup",
+            "--version",
+            "1.18.3",
+        ],
+        vec!["set", "server.port=8081"],
+        vec!["g", "enum", "Colour", "RED"],
+        vec!["g", "record", "Money", "amount:long"],
+    ] {
+        let output = jails_cmd(&root, None).args(&command).output().unwrap();
+        assert!(
+            output.status.success(),
+            "`jails {}` failed:\n{}",
+            command.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let source = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    let declarations = source
+        .lines()
+        .filter(|line| !line.starts_with(' ') && !line.starts_with('}'))
+        .filter(|line| !line.trim().is_empty() && !line.trim_start().starts_with("//"))
+        .map(|line| line.split_whitespace().next().unwrap_or_default())
+        .filter(|word| *word != "jdl")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        declarations,
+        ["app", "cap", "dep", "prop", "enum", "entity", "entity"],
+        "declarations arrived in the order they were asked for:\n{source}"
+    );
+    // The fixture's `app` pins an id the convention would not produce, which
+    // is what an `@id` is for; nothing these commands wrote does.
+    assert!(
+        !source.contains("@id(ent_")
+            && !source.contains("@id(fld_")
+            && !source.contains("@id(cap_")
+            && !source.contains("@id(dep_")
+            && !source.contains("@id(prop_"),
+        "nothing the commands wrote differs from the convention:\n{source}"
+    );
+    assert!(
+        source.contains("  id:    uuid @pk\n  title: string @notBlank\n"),
+        "the entity's columns line up:\n{source}"
+    );
+
+    // An aligned entity gains an aligned line: the splice knows nothing about
+    // its neighbours, and the formatter in the one mutation pipeline decides
+    // the column for the whole run at once.
+    let added = jails_cmd(&root, None)
+        .args(["resource", "field", "add", "Note", "descriptionText:string"])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+    let source = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+    assert!(
+        source.contains(
+            "  id:              uuid @pk\n  \
+             title:           string @notBlank\n  \
+             descriptionText: string\n"
+        ),
+        "the appended field took the entity's column:\n{source}"
+    );
+}
+
 #[test]
 fn model_fmt_checks_then_atomically_formats_only_the_jdl_source() {
     let root = jdl_project(
@@ -182,11 +274,21 @@ entity Task {
         String::from_utf8_lossy(&formatted.stderr)
     );
     let source = fs::read_to_string(&model_path).unwrap();
-    assert!(source.contains("updatedAt: instant @default(now()) @updated"));
-    assert!(source.contains("version: long @version @nonnegative"));
-    assert!(source.contains(
-        "tenantId: uuid @id(fld_task_tenant) @scope(claim: \"tenant\") @map(\"tenant_id\")"
-    ));
+    let flat = unaligned(&source);
+    assert!(
+        flat.contains("updatedAt: instant @default(now()) @updated"),
+        "{source}"
+    );
+    assert!(
+        flat.contains("version: long @version @nonnegative"),
+        "{source}"
+    );
+    assert!(
+        flat.contains(
+            "tenantId: uuid @id(fld_task_tenant) @scope(claim: \"tenant\") @map(\"tenant_id\")"
+        ),
+        "{source}"
+    );
 
     let model = jails_model::parse_jdl(&source).unwrap();
     let task = model
@@ -210,7 +312,13 @@ entity Task {
     assert_eq!(scope.claim, "tenant");
     assert!(scope.pinned);
 
-    let invalid = source.replace("tenantId: uuid ", "tenantId: uuid? ");
+    // Alignment-proof: the type column moves with the widest sibling name.
+    let tenant = source
+        .lines()
+        .find(|line| line.trim_start().starts_with("tenantId:"))
+        .expect("the entity declares `tenantId`")
+        .to_string();
+    let invalid = source.replace(&tenant, &tenant.replacen("uuid", "uuid?", 1));
     fs::write(&model_path, &invalid).unwrap();
     let before = fs::read(&model_path).unwrap();
     let refused = jails_cmd(&root, None)
@@ -612,6 +720,21 @@ app Notes {
                 command.join(" ")
             )
         });
+        // **What jails writes, its formatter accepts.** The layout is decided
+        // once, in the one mutation pipeline, so this holds after every
+        // command rather than after the ones somebody remembered to check --
+        // and a `fmt --check` that fails here says a frontend rendered a
+        // declaration the formatter would lay out differently.
+        let formatted = jails_cmd(&root, None)
+            .args(["model", "fmt", "--check"])
+            .output()
+            .unwrap();
+        assert!(
+            formatted.status.success(),
+            "`jails {}` left the model unformatted:\n{}\n{source}",
+            command.join(" "),
+            String::from_utf8_lossy(&formatted.stderr)
+        );
     }
 
     let source = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
@@ -622,35 +745,35 @@ app Notes {
         // on a scaffolded entity declares nothing it does not already have.
         // Recording it again would give one facet two spellings in one
         // entity, and the second is the one nothing removes.
-        "component class Clock @id(cmp_class_clock)",
-        "component interface TaskPort @id(cmp_interface_task_port)",
-        "component service Billing @id(cmp_service_billing)",
-        "component sealed Outcome @id(cmp_sealed_outcome)",
-        "variant Success @id(var_cmp_sealed_outcome_success)",
-        "component strategy Policy @id(cmp_strategy_policy)",
-        "component controller TaskApi @id(cmp_controller_task_api)",
-        "component test Smoke @id(cmp_test_smoke)",
-        "component integration-test Database @id(cmp_integration_test_database)",
-        "done: boolean? @id(fld_task_done)",
-        "cap fake @id(cap_fake)",
-        "dep org.jsoup:jsoup @id(dep_",
+        "component class Clock",
+        "component interface TaskPort",
+        "component service Billing",
+        "component sealed Outcome",
+        "variant Success",
+        "component strategy Policy",
+        "component controller TaskApi",
+        "component test Smoke",
+        "component integration-test Database",
+        "done: boolean?",
+        "cap fake",
+        "dep org.jsoup:jsoup @version(\"1.18.3\") @scope(test)",
         "@version(\"1.18.3\") @scope(test)",
-        "prop server.port = \"8080\" @id(set_",
-        "event TaskCreated(id, title) @id(op_task_created)",
-        "event TaskStaged(id: uuid, title) @id(op_task_staged)",
+        "prop server.port = \"8080\"",
+        "event TaskCreated(id, title)",
+        "event TaskStaged(id: uuid, title)",
         "deliver outbox",
         "route POST \"/tasks\"",
         "limit 50",
         "emit task_created",
         "route PATCH \"/tasks/{id}\"",
-        "component cases Acceptance @id(cmp_cases_acceptance)",
+        "component cases Acceptance",
         "source \"acceptance.md\"",
         // A kind with no compiler backend never reaches the source: a mutation
         // compiles before it writes, so refusing to emit is refusing to
         // record.
     ] {
         assert!(
-            source.contains(declaration),
+            unaligned(&source).contains(declaration),
             "missing `{declaration}`:\n{source}"
         );
     }
@@ -784,12 +907,12 @@ app Notes @id(project_notes) {
   storage postgres
 }
 
-entity Task @id(ent_task) {
-  title: string @id(fld_task_title) @notBlank
+entity Task {
+  title: string @notBlank
   done: boolean?
 }
 
-enum Status @id(ent_status) {
+enum Status {
   OPEN
   CLOSED
 }
@@ -853,7 +976,7 @@ fn canonical_sync_recompiles_model_state_without_the_legacy_store() {
     .unwrap();
     let model_path = root.join(".jails/model.jdl");
     let mut source = fs::read_to_string(&model_path).unwrap();
-    source.push_str("\ncap fake @id(cap_fake)\n");
+    source.push_str("\ncap fake\n");
     fs::write(&model_path, source).unwrap();
 
     let synced = jails_cmd(&root, None).arg("sync").output().unwrap();
