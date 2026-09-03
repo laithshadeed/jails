@@ -1873,3 +1873,12 @@ Deferred out of v1 on purpose — this is meant to stay a small tool:
   transaction that rolls back instead of starting a container per class is
   not a dependency of anything and not a default. If the experiment is run,
   the result is recorded here either way.
+- **Slices as a declaration.** A slice that owns package layout, ports,
+  migrations and a route prefix is not in this language version, and adding
+  one is a version boundary rather than a keyword: a compiler that did not
+  know the word would accept the declaration and quietly ignore every name
+  it moves. `--package` is the vertical slice today, collapsing one
+  resource's classes into a single package. `rename resource` still accepts
+  a `Billing.Task` prefix and ignores it, which is harmless because two
+  resources cannot project to one Java type; the prefix goes with the next
+  deliberate breaking change rather than on its own.
