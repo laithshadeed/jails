@@ -16,6 +16,7 @@
 mod cst;
 mod edit;
 mod format;
+pub mod grammar;
 pub mod identity;
 mod parser;
 mod token;

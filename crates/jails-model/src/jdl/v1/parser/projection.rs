@@ -71,22 +71,11 @@ impl Parser<'_> {
         let mut projections = Vec::new();
         loop {
             let kind = self.take_word("projection kind")?;
-            if !matches!(
-                kind.as_str(),
-                "value"
-                    | "repo"
-                    | "service"
-                    | "http"
-                    | "dto"
-                    | "factory"
-                    | "search"
-                    | "seed"
-                    | "scaffold"
-            ) {
+            if !crate::jdl::v1::grammar::PROJECTIONS.contains(&kind.as_str()) {
                 return Err(self.here(
                     "JDL0601",
                     format!("unknown entity projection `{kind}`"),
-                    "use value, repo, service, http, dto, factory, search, seed, or scaffold",
+                    format!("use {}", crate::jdl::v1::grammar::PROJECTIONS.join(", ")),
                 ));
             }
             let mut fields = None;

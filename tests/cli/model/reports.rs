@@ -28,6 +28,54 @@ use super::*;
 /// to contain the word. And a fresh project derives twenty-three package
 /// names against five from the entity somebody wrote, printed in id order --
 /// which buried the five under the twenty-three.
+/// **The binary explains its own language.**
+///
+/// `jails model jdl` prints the declaration families and their attributes,
+/// the field types, the `use` projections and the `cap` kinds -- every row
+/// walked out of the registries the parser refuses against, so it says what
+/// this binary accepts rather than what a document once said it accepted.
+#[test]
+fn model_jdl_prints_the_language_the_parser_enforces() {
+    let root = temp_dir("model-jdl");
+    let printed = jails_cmd(&root, None)
+        .args(["model", "jdl"])
+        .output()
+        .unwrap();
+    assert!(printed.status.success());
+    let printed = String::from_utf8_lossy(&printed.stdout);
+
+    for section in [
+        "declarations",
+        "field types",
+        "use projections",
+        "cap kinds",
+    ] {
+        assert!(
+            printed.contains(section),
+            "no `{section}` section: {printed}"
+        );
+    }
+    // A field's markers are the longest attribute list and the one that moves.
+    for marker in [
+        "@pk",
+        "@notBlank",
+        "@unique",
+        "@index",
+        "@scope",
+        "@updated",
+    ] {
+        assert!(printed.contains(marker), "missing {marker}: {printed}");
+    }
+    assert!(printed.contains("value, repo, service, http"), "{printed}");
+    assert!(printed.contains("Capitalised"), "{printed}");
+    // `db` and `h2` are `app.storage` selections, and the report says so
+    // rather than listing them as `cap` kinds a source may spell.
+    assert!(printed.contains("selections of `app.storage`"), "{printed}");
+
+    // And it needs no project: the language is the binary's, not a tree's.
+    assert!(!root.join(".jails").exists());
+}
+
 #[test]
 fn model_explain_leads_with_what_the_reader_declared() {
     let root = jdl_project("model-explain-order", NOTES_JDL);

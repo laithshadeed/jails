@@ -408,11 +408,14 @@ so hiding it there would take the correct word away from the two kinds that
 own it. `explain association` now says when a typed field is the better
 relation.
 
-**I71.50 — the binary explains its own language.** *Change* `jails explain
-jdl` prints the declaration families, the attributes per declaration, the
-`use` projections, the builtin types and the `cap` kinds, walked out of
-the registries `docs/10-language.md` counts. *Done when* its attribute
-count equals the parser's refusal list.
+**I71.50 — the binary explains its own language.** *Landed as `jails model
+jdl`*, beside the other commands that answer from the model rather than
+under `explain`, whose argument is a generator kind or a capability. The
+attribute count equals the parser's refusal list by construction: the
+twelve inline lists at the `reject_unknown_attributes` call sites moved
+into `jdl::v1::grammar`, which both halves read, and the `use` projections
+did too. The field types come from `builtin::ALL` and the `cap` kinds from
+`CapabilityKind::declarable_in_source`.
 
 
 **I71.21 — the manifest is the model (prototype).** *Today*

@@ -578,12 +578,17 @@ pub(crate) fn textwrap(body: &str) -> Vec<String> {
 }
 
 mod capability;
+mod language;
 
 /// Explain whichever half of the vocabulary the reader named.
 ///
 /// One positional argument over the union of the two closed sets, which is
 /// possible because no capability is spelled like a generator kind and
 /// `jails_model::topic` holds that true.
+pub fn explain_language() -> Result<()> {
+    language::explain()
+}
+
 pub fn explain_topic(topic: jails_model::ExplainTopic) -> Result<()> {
     match topic {
         jails_model::ExplainTopic::Kind(kind) => explain(kind),

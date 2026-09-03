@@ -50,6 +50,11 @@ pub(crate) enum ModelCommand {
     Status,
     /// Move managed output a release before this one wrote under .jails/generated into src/
     Relocate,
+    /// Print the JDL language: declarations, attributes, types, projections
+    ///
+    /// Walked out of the parser's own registries, so it says what this binary
+    /// accepts rather than what a document once said it accepted.
+    Jdl,
     /// Show every name the convention derived rather than the author writing it
     Explain {
         /// Stable id, role, package or value to filter by; omit to list every record

@@ -18,6 +18,7 @@
 //! for every declaration written without one.
 
 use super::*;
+use crate::jdl::v1::grammar;
 
 impl Parser<'_> {
     pub(super) fn parse_app(&mut self) -> Result<(), Diagnostics> {
@@ -126,7 +127,9 @@ impl Parser<'_> {
             || stable_fragment(&kind),
             |name| format!("{}_{}", stable_fragment(&kind), stable_fragment(name)),
         );
-        let (_, id) = self.declared(&["id"], || super::identity::capability_id(&label))?;
+        let (_, id) = self.declared(grammar::CAPABILITY, || {
+            super::identity::capability_id(&label)
+        })?;
         self.end_line()?;
         self.capabilities.insert(
             label.clone(),
@@ -148,7 +151,7 @@ impl Parser<'_> {
         self.expect(":", "JDL0311", "a dependency coordinate needs `:`")?;
         let artifact = self.take_word("dependency artifact")?;
         let label = format!("{}_{}", stable_fragment(&group), stable_fragment(&artifact));
-        let (attributes, id) = self.declared(&["id", "version", "scope"], || {
+        let (attributes, id) = self.declared(grammar::DEPENDENCY, || {
             super::identity::dependency_id(&label)
         })?;
         let version = one_arg(&attributes, "version")?;
@@ -189,7 +192,7 @@ impl Parser<'_> {
         self.expect("=", "JDL0321", "a property declaration needs `=`")?;
         let value = self.take_value("property value")?;
         let attributes = self.attributes()?;
-        reject_unknown_attributes(&attributes, &["id", "target"], self)?;
+        reject_unknown_attributes(&attributes, grammar::SETTING, self)?;
         let target = match one_arg(&attributes, "target")?.as_deref().unwrap_or("main") {
             "main" => SettingTarget::Main,
             "test" => SettingTarget::Test,
@@ -222,7 +225,9 @@ impl Parser<'_> {
         self.expect("enum", "JDL0400", "expected an enum declaration")?;
         let name = self.take_word("enum name")?;
         let label = stable_fragment(&name);
-        let (_, id) = self.declared(&["id"], || super::identity::entity_id(&label))?;
+        let (_, id) = self.declared(grammar::ENUM_DECLARATION, || {
+            super::identity::entity_id(&label)
+        })?;
         let mut values = Vec::new();
         if self.consume("{") {
             if self.consume("}") {
@@ -242,7 +247,7 @@ impl Parser<'_> {
                         None
                     };
                     let value_attributes = self.attributes()?;
-                    reject_unknown_attributes(&value_attributes, &["id"], self)?;
+                    reject_unknown_attributes(&value_attributes, grammar::ENUM_VALUE, self)?;
                     self.end_line()?;
                     values.push(wire.map_or(constant.clone(), |wire| format!("{constant}={wire}")));
                 }
@@ -281,9 +286,8 @@ impl Parser<'_> {
         self.expect("entity", "JDL0500", "expected an entity declaration")?;
         let name = self.take_word("entity name")?;
         let label = stable_fragment(&name);
-        let (attributes, id) = self.declared(&["id", "retired", "package"], || {
-            super::identity::entity_id(&label)
-        })?;
+        let (attributes, id) =
+            self.declared(grammar::ENTITY, || super::identity::entity_id(&label))?;
         // **Relative to the base, exactly as a capability's is.** The whole
         // slice goes here instead of the layer packages, and an empty
         // `@package()` means the base itself -- which is how "everything
@@ -373,25 +377,7 @@ impl Parser<'_> {
         let type_name = self.parse_type_ref()?;
         let required = !self.consume("?");
         let attributes = self.attributes()?;
-        reject_unknown_attributes(
-            &attributes,
-            &[
-                "id",
-                "map",
-                "pk",
-                "notBlank",
-                "unique",
-                "index",
-                "length",
-                "positive",
-                "nonnegative",
-                "scope",
-                "version",
-                "default",
-                "updated",
-            ],
-            self,
-        )?;
+        reject_unknown_attributes(&attributes, grammar::FIELD, self)?;
         let field_label = stable_fragment(&name);
         let id = one_arg(&attributes, "id")?
             .unwrap_or_else(|| super::identity::field_id(&entity.id, &field_label));
@@ -466,7 +452,7 @@ impl Parser<'_> {
             })
             .collect::<Vec<_>>();
         let attributes = self.attributes()?;
-        reject_unknown_attributes(&attributes, &["id", "map"], self)?;
+        reject_unknown_attributes(&attributes, grammar::INDEX, self)?;
         if matches!(kind, "pk" | "unique") && columns.len() == 1 && attributes.is_empty() {
             let field_name = columns[0].split_whitespace().next().unwrap_or_default();
             let field = entity.fields.get_mut(field_name).ok_or_else(|| {
@@ -537,7 +523,7 @@ impl Parser<'_> {
         // knew it: `jails adopt resource` writes the line, and the compiler
         // excludes the boundary without transferring anything (§16.4).
         let (attributes, id) =
-            self.declared(&["id", "adopted"], || super::identity::ejection_id(&label))?;
+            self.declared(grammar::EJECTION, || super::identity::ejection_id(&label))?;
         let adopted = flag_attribute(&attributes, "adopted")?;
         self.end_line()?;
         self.ejections.insert(

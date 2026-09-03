@@ -854,6 +854,11 @@ this phase, and their refusals are worded by the caller that reports them.
   failure and only the most specific is reported. Add rules only from failures
   that happened; a guessed cause costs more than no cause. The way to find
   them is to mine real logs for `Caused by:` lines, deduplicated and counted.
+- **`crates/jails-model/src/jdl/v1/grammar.rs`** -- what a JDL source may
+  say, as one table the parser refuses against and `jails model jdl` prints.
+  The twelve attribute lists were inline literals at the
+  `reject_unknown_attributes` call sites, which is fine until a command
+  explains the language and a hand-written copy beside them starts drifting.
 - **`crates/jails-report/src/explain.rs`** -- `jails explain
   <kind|capability>`: two hand-written tables, one entry per kind and
   (in `explain/capability.rs`) one per capability, with

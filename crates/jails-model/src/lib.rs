@@ -9,7 +9,7 @@ mod app;
 pub mod artifact;
 pub mod boundary;
 mod build;
-mod builtin;
+pub mod builtin;
 pub mod capability;
 mod component;
 mod constraint;
@@ -63,6 +63,7 @@ pub use id::{
     StableId, UnitId,
 };
 pub use jdl::parse as parse_jdl;
+pub use jdl::v1::grammar as jdl_grammar;
 pub use jdl::v1::identity as jdl_identity;
 pub use jdl::v1::{
     DeclarationCst, DocumentCst, MemberCst, Span as JdlSpan, Token as JdlToken,

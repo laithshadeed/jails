@@ -432,7 +432,10 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // secret it has accreted rather than by size, and a cut that
                 // leaves two halves both needing the whole picture is not a
                 // seam.
-                ceiling: 666,
+                // 666 -> 663: I71.50 moved the JDL parser's twelve inline
+                // attribute lists into `jdl::v1::grammar`, where the command
+                // that explains the language reads the same rows.
+                ceiling: 663,
                 target: 700,
                 why: "The row above can be satisfied by *moving* a monolith rather than \
                       decomposing one, so this asks the question the split is actually for: \

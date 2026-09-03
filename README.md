@@ -162,6 +162,11 @@ source: the next change can be made by hand in the file and applied with
   carry one help line each, and the reason each exists lives here rather
   than on the first screen of `--help`. The generated Javadoc carries the same reasoning for whoever reads
   the file; this is for whoever is deciding whether to generate it.
+- `jails model jdl` — the language this binary accepts: the declaration
+  families and the `@attributes` each takes, the field types and their
+  aliases, the `use` projections, and the `cap` kinds a source may spell.
+  Every row is walked out of the registries the parser refuses against, so
+  it cannot describe a language the binary does not have.
 - `jails commands [--json]` — every subcommand, generator kind, capability and
   flag jails accepts, derived from the same definition that parses the
   arguments, so it cannot drift from the binary. `--json` is what the Neovim

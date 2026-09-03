@@ -14,6 +14,7 @@
 use super::{
     Parser, flag_attribute, length, one_raw_arg, reject_unknown_attributes, stable_fragment,
 };
+use crate::jdl::v1::grammar;
 use crate::source;
 use crate::{Diagnostics, EndpointMethod, RequestFormat};
 
@@ -59,9 +60,9 @@ impl Parser<'_> {
         self.expect("(", "JDL0904", "an operation needs a parameter list")?;
         let parameters = self.parse_parameters(owner.is_none())?;
         let allowed = if kind == Kind::Event {
-            &["id"][..]
+            grammar::EVENT
         } else {
-            &["id", "internal"][..]
+            grammar::OPERATION
         };
         let (attributes, id) = self.declared(allowed, || super::identity::operation_id(&label))?;
         let internal = flag_attribute(&attributes, "internal")?;
@@ -214,11 +215,7 @@ impl Parser<'_> {
                 let type_name = self.parse_type_ref()?;
                 let required = !self.consume("?");
                 let attributes = self.attributes()?;
-                reject_unknown_attributes(
-                    &attributes,
-                    &["default", "notBlank", "length", "positive", "nonnegative"],
-                    self,
-                )?;
+                reject_unknown_attributes(&attributes, grammar::OPERATION_FIELD, self)?;
                 let (min_length, max_length) = length(&attributes, self)?;
                 parameters.push(source::OperationParameter {
                     name: first,

@@ -11,6 +11,7 @@
 //! with it.
 
 use super::{Parser, stable_fragment};
+use crate::jdl::v1::grammar;
 use crate::source;
 use crate::{ComponentKind, Diagnostics};
 
@@ -33,8 +34,9 @@ impl Parser<'_> {
         } else {
             Vec::new()
         };
-        let (_, id) =
-            self.declared(&["id"], || super::identity::component_id(&raw_kind, &label))?;
+        let (_, id) = self.declared(grammar::COMPONENT, || {
+            super::identity::component_id(&raw_kind, &label)
+        })?;
         let mut component = source::Component {
             id,
             name: name.clone(),
@@ -133,8 +135,9 @@ impl Parser<'_> {
         } else {
             Vec::new()
         };
-        let (_, id) =
-            self.declared(&["id"], || super::identity::variant_id(component_id, &name))?;
+        let (_, id) = self.declared(grammar::COMPONENT_VARIANT, || {
+            super::identity::variant_id(component_id, &name)
+        })?;
         self.end_line()?;
         Ok(source::ComponentVariant {
             id,

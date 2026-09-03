@@ -11,6 +11,7 @@
 //! link error about a model that should not have been representable.
 
 use super::*;
+use crate::jdl::v1::grammar;
 
 impl Parser<'_> {
     pub(super) fn parse_relation(&mut self, entity: &mut EntityDraft) -> Result<(), Diagnostics> {
@@ -20,7 +21,7 @@ impl Parser<'_> {
         self.expect("to", "JDL0551", "a relation needs `to Parent`")?;
         let target = stable_fragment(&self.take_word("relation target")?);
         let label = stable_fragment(&name);
-        let (attributes, id) = self.declared(&["id", "map"], || {
+        let (attributes, id) = self.declared(grammar::RELATION, || {
             super::identity::relation_id(&entity.id, &label)
         })?;
         let sql_name = one_arg(&attributes, "map")?;

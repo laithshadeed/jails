@@ -454,7 +454,12 @@ static BYTES: BuiltinSemantics = BuiltinSemantics {
 /// the same address and `the_scan_table_and_the_exhaustive_match_agree` could
 /// not check what it is for. A `static` is one instance with one address,
 /// which is what a registry of single rows actually is.
-pub(crate) const ALL: &[(BuiltinType, &BuiltinSemantics)] = &[
+/// Every builtin field type, in declaration order.
+///
+/// `pub` because `jails explain jdl` prints the language's own type list and
+/// a second copy of it beside this one is the drift the registry exists to
+/// stop.
+pub const ALL: &[(BuiltinType, &BuiltinSemantics)] = &[
     (BuiltinType::String, &STRING),
     (BuiltinType::Integer, &INTEGER),
     (BuiltinType::Long, &LONG),
