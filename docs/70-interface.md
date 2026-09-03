@@ -534,11 +534,14 @@ one of them and stays advertised: it is curl's request body, not an
 encoding.
 
 
-**I70.10 — `model explain` leads with what the reader pinned.** *Change*
-rows whose owner is in the model first, grouped by owner; empty layer
-packages under `--all`; an optional entity argument. *Done when* `jails
-model explain Note` prints exactly the rows owned by `ent_note` and its
-fields.
+**I70.10 — `model explain` leads with what the reader declared.** *Landed,
+without `--all`.* An entity name resolves through the model to the entity
+and its fields, so `jails model explain Note` prints exactly those rows,
+and every row a declaration owns sorts before the project's twenty-three
+layer packages. The `--all` half is declined: "empty layer package" needs a
+facet-to-layer map that lives in the compiler, and hiding a package row a
+reader arrived with -- they saw it in a stack trace -- is worse than
+printing it last.
 
 **I70.11 — `new` says what it wrote and what to do next.** *Landed:* the
 creation report counts the source files and then names every other file the

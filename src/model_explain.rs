@@ -23,9 +23,10 @@
 //! shown rather than quietly corrected.
 
 use crate::{Invocation, Output};
-use jails_model::{DerivedRoleKey, DerivedValue};
+use jails_model::{DerivedRoleKey, DerivedValue, StableId};
 use jails_support::{Failure, Result};
 use serde_json::json;
+use std::collections::BTreeSet;
 
 const SCHEMA: &str = "jails.model-explain.v1";
 
@@ -52,11 +53,26 @@ pub(crate) fn run(filter: Option<String>, invocation: Invocation) -> Result<()> 
     model.project.layout = facts.layout;
     model.refresh_derived();
 
-    let matched = model
+    // **An entity's name means the entity and its fields.** A reader asking
+    // about `Note` wants its Java type, its table, its route and one row per
+    // column -- not the single row whose text happens to contain the word.
+    // Resolved from the model, so the answer is the same set `destroy` and
+    // `entity status` would act on.
+    let owners = filter.as_deref().and_then(|f| entity_owners(&model, f));
+    let mut matched = model
         .derived
         .iter()
-        .filter(|(key, value)| filter.as_deref().is_none_or(|f| matches(key, value, f)))
+        .filter(|(key, value)| match (&owners, filter.as_deref()) {
+            (Some(owners), _) => owners.contains(&key.owner),
+            (None, Some(filter)) => matches(key, value, filter),
+            (None, None) => true,
+        })
         .collect::<Vec<_>>();
+    // **What the reader declared, before what the convention filled in.** A
+    // fresh project derives twenty-three package names and five names from
+    // the one entity somebody wrote, and printing them in id order buried the
+    // five under the twenty-three.
+    matched.sort_by_key(|(key, _)| (is_convention_package(&model, key), key.owner.clone()));
 
     if invocation.output != Output::Human {
         return crate::model_command::print_json(&json!({
@@ -113,6 +129,36 @@ fn owner_column(key: &DerivedRoleKey) -> String {
     } else {
         format!("{}/{}", key.owner, key.slot)
     }
+}
+
+/// The owner ids an entity name covers: the entity, and each of its fields.
+///
+/// `None` when the filter names no entity, which leaves the substring match
+/// below to answer -- a reader arriving with a package, a role or a stable id
+/// is asking a different question.
+fn entity_owners(model: &jails_model::AppModel, filter: &str) -> Option<BTreeSet<String>> {
+    let label = jails_model::field_syntax::java_to_label(filter);
+    let entity = model
+        .entities
+        .values()
+        .find(|entity| entity.label == label || entity.names.java_type == filter)?;
+    let mut owners = BTreeSet::from([entity.id.as_str().to_string()]);
+    owners.extend(
+        entity
+            .fields
+            .iter()
+            .map(|field| field.id.as_str().to_string()),
+    );
+    Some(owners)
+}
+
+/// Whether a row is one of the project's own layer packages.
+///
+/// These are the convention filling in a name nobody typed, and there are
+/// twenty-three of them on every project; a row a declaration owns is the
+/// answer to "why is my class called that".
+fn is_convention_package(model: &jails_model::AppModel, key: &DerivedRoleKey) -> bool {
+    key.owner == model.project.id.as_str()
 }
 
 /// **A substring match over every field, deliberately.** JDL v1 §18.4 says

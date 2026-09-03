@@ -21,6 +21,55 @@ use super::*;
 /// table it reads cannot drift. `model explain` carries the row, so a project
 /// that pinned a path with `use scaffold(path: …)` reads as pinned rather
 /// than as a convention that moved.
+/// **An entity's name means the entity and its fields, and what the reader
+/// declared comes first.**
+///
+/// `jails model explain Note` used to print the one row whose text happened
+/// to contain the word. And a fresh project derives twenty-three package
+/// names against five from the entity somebody wrote, printed in id order --
+/// which buried the five under the twenty-three.
+#[test]
+fn model_explain_leads_with_what_the_reader_declared() {
+    let root = jdl_project("model-explain-order", NOTES_JDL);
+    write_spring_fixture(&root);
+    let generated = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Note", "id:uuid@pk", "title:string"])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+
+    let one = jails_cmd(&root, None)
+        .args(["model", "explain", "Note"])
+        .output()
+        .unwrap();
+    let one = String::from_utf8_lossy(&one.stdout);
+    for row in ["java-type", "sql-table", "http-path"] {
+        assert!(one.contains(row), "`explain Note` is missing {row}: {one}");
+    }
+    assert!(one.contains("fld_note_title"), "{one}");
+    assert!(
+        one.lines().all(|line| line.starts_with("ent_note")
+            || line.starts_with("fld_note")
+            || line.trim().is_empty()),
+        "only the entity and its fields: {one}"
+    );
+
+    let all = jails_cmd(&root, None)
+        .args(["model", "explain"])
+        .output()
+        .unwrap();
+    let all = String::from_utf8_lossy(&all.stdout);
+    let first = all.lines().next().unwrap_or_default();
+    assert!(
+        first.starts_with("ent_note") || first.starts_with("fld_note"),
+        "the declarations come before the layer packages: {all}"
+    );
+}
+
 #[test]
 fn a_multi_word_entity_is_served_at_a_hyphenated_path() {
     let root = jdl_project("http-path-style", NOTES_JDL);
