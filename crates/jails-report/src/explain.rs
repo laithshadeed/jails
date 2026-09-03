@@ -470,6 +470,102 @@ const EXPLANATIONS: &[Explanation] = &[
 ];
 
 /// The explanation for one kind, or a refusal listing what is explained.
+/// Why a global flag exists, for the flags whose reason does not fit in a
+/// help line.
+///
+/// **The rationale left `--help` so the first screen fits on a screen.** A
+/// flag's one line says what it does; this says why it is global, or why the
+/// encoding is one value rather than two, which is the part a reader asks
+/// about once and never again.
+const FLAGS: &[(&str, &str, &str)] = &[
+    (
+        "pretend",
+        "Run, but write nothing: print what would change and stop.",
+        "Global on purpose. Rails puts `--pretend` on every generator rather than on the few \
+that seemed risky, and the value is that you never have to remember which commands support \
+it. Aliased as `--dry-run`.",
+    ),
+    (
+        "output",
+        "How a command reports: readable text, or JSON.",
+        "One projection, two encodings. A command's result is a *value* -- the same status, \
+operation list and effects whether the run previewed or committed -- so `--output json` is \
+an encoding of that value rather than a second description of the work.",
+    ),
+    (
+        "yes",
+        "Authorize a destructive step without being asked.",
+        "The one spelling of consent. A command that deletes a file, drops a column or boots \
+something outside the dev profile asks first, and this is how automation answers. Asking for \
+JSON is not an answer: the check runs before the encoding is chosen.",
+    ),
+    (
+        "plan-out",
+        "Write the exact reviewed transition to a file.",
+        "A plan is a value with a digest, so review and apply can be separated: `--plan-out` \
+writes it, `--plan-in` applies exactly that one and never replans. What is applied is what \
+was read.",
+    ),
+    (
+        "timing",
+        "Print what each phase of a mutation cost.",
+        "Separate from `--debug`, which echoes the commands jails runs. This answers where the \
+wall clock went: capture, compile, materialize, execute, and what each of them read.",
+    ),
+    (
+        "debug",
+        "Print the mvnw/mvnd/mvn/java/git/curl commands jails executes.",
+        "Every subprocess, with its arguments, before it runs. Secrets are never rendered: a \
+value marked secret prints as a placeholder.",
+    ),
+];
+
+/// `jails explain --flag <name>`: what a global flag is for.
+pub fn explain_flag(name: &str) -> Result<()> {
+    let wanted = name.trim_start_matches('-');
+    let entry = FLAGS
+        .iter()
+        .find(|(flag, _, _)| *flag == wanted)
+        .ok_or_else(|| {
+            format!(
+                "no explanation recorded for `--{wanted}`.\n       fix: name one of {}",
+                FLAGS
+                    .iter()
+                    .map(|(flag, _, _)| format!("`--{flag}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })?;
+    println!("--{}  {}", entry.0, entry.1);
+    println!();
+    for line in textwrap(entry.2) {
+        println!("  {line}");
+    }
+    Ok(())
+}
+
+/// The paragraph as lines of at most seventy-two characters.
+///
+/// Written here rather than taken as a dependency: one paragraph, one rule,
+/// and a wrapping crate would be a dependency for six strings.
+fn textwrap(body: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for word in body.split_whitespace() {
+        if !line.is_empty() && line.len() + 1 + word.len() > 72 {
+            lines.push(std::mem::take(&mut line));
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(word);
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines
+}
+
 pub fn explain(kind: ArtifactKind) -> Result<()> {
     let entry = EXPLANATIONS
         .iter()

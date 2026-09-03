@@ -66,7 +66,7 @@ reopening a contract:
 | 5 | I70.22, I71.3, I71.4, I71.5 | the lock is 1× the tree, a scaffold is a 20-line diff, a mutation at a hundred entities is under 100 ms |
 | ~~6~~ | ~~I71.40, I71.41, I71.24~~ | ~~every scanner sees every source root; `test --affected` never selects nothing and passes~~ |
 | 7 | I70.2 | one JSON encoding, carrying the same value as the human report |
-| 8 | I70.8, I70.9, I71.18 | a one-screen `--help`, global flags printed once, `g <kind> --help` about the kind |
+| 8 | ~~I70.8~~, I70.9 (one line over), I71.18 | a one-screen `--help`, global flags printed once, `g <kind> --help` about the kind |
 | 9 | I71.29, I71.26, I71.28 | README, the specification and the binary agree |
 | ~~10~~ | ~~I71.14~~ | ~~every mutation prints the JDL it wrote~~ |
 
@@ -644,19 +644,18 @@ completes kinds, capabilities, entities, fields and markers.
 `--pretend` does not apply*, before any JVM starts. *Done when* `jails
 test --pretend` returns that line in under 10 ms.
 
-**I70.8 — the top-level help is one screen.** *Change* the twenty words a
-reader needs on day one (`new`, `g`, `add`, `remove`, `set`, `destroy`,
-`rename`, `resource`, `sync`, `run`, `test`, `check`, `build`, `start`,
-`stop`, `doctor`, `why`, `explain`, `routes`, `beans`) under two headings;
-the protocol and tooling words stay, `hide`-flagged, and `jails commands`
-still lists everything. No behaviour changes. *Done when* `jails --help |
-wc -l` is under 40 and `commands --json` still reports 96 rows.
 
-**I70.9 — global flags appear once.** *Change* keep them global in
-`Invocation`; print them under one heading on `jails --help` only, one
-summary line on subcommands; the rationale paragraphs move to `jails
-explain --flag pretend`. *Done when* `jails resource --help | wc -l` is
-under 20.
+**I70.9 — global flags appear once.** *Landed:* the seven global flags
+carry one help line each, the rationale moved to `jails explain --flag
+<name>`, and one line at the foot of `jails --help` says they are global
+and where the reasons are. *Remains:* a subcommand's help still lists all
+seven, so `jails resource --help` is 21 lines against the item's 20; 15 of
+those are its own. clap hides an argument from every help or from none, so
+collapsing them to a summary line on subcommands needs either per-context
+hiding upstream or a hand-written list at the root -- and a hand-written
+list of the flags clap already knows is the second source this repository
+spends its gates preventing. Declined at one line over, deliberately.
+
 
 **I71.18 — `g <kind> --help` is about the kind.** *Change* the `explain`
 entry for the kind plus the flags that kind accepts, derived from where

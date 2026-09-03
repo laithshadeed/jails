@@ -530,7 +530,15 @@ fn main() -> std::process::ExitCode {
             debug,
         ),
         Command::Setup {} => doctor::setup(pretend),
-        Command::Explain { kind } => explain::explain(kind),
+        Command::Explain { kind, flag } => match (kind, flag) {
+            (Some(kind), _) => explain::explain(kind),
+            (None, Some(flag)) => explain::explain_flag(&flag),
+            (None, None) => Err(jails_support::Failure::Told(
+                "explain needs a generator kind or `--flag <name>`.\n       fix: run \
+                 `jails explain scaffold`, or `jails explain --flag pretend`"
+                    .to_string(),
+            )),
+        },
         Command::Commands { json } => commands::commands(Cli::command(), json),
         Command::Completion { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "jails", &mut std::io::stdout());

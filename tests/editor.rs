@@ -23,7 +23,13 @@ fn editor_file(path: &str) -> String {
         .unwrap_or_else(|error| panic!("could not read {path}: {error}"))
 }
 
-/// Canonical subcommand names and their aliases, from `jails --help`.
+/// Canonical subcommand names, from the first screen of `jails --help`.
+///
+/// **The screen is a subset now, and that is the point.** `jails --help`
+/// lists the twenty words of day one; every other command is `hide`-flagged
+/// and reachable through `jails commands`, which is what the plugin reads.
+/// So this is a sample of the vocabulary rather than all of it, and the
+/// assertion below is that the catalog contains what the screen shows.
 fn cli_subcommands() -> Vec<String> {
     let output = std::process::Command::new(common::bin())
         .arg("--help")
@@ -52,7 +58,7 @@ fn cli_subcommands() -> Vec<String> {
         found.push(name.to_string());
     }
     assert!(
-        found.len() > 20 && found.iter().any(|c| c == "generate"),
+        found.len() >= 20 && found.iter().any(|c| c == "generate"),
         "could not read the subcommands out of `jails --help`: {found:?}"
     );
     found

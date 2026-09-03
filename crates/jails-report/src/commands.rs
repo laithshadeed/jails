@@ -86,7 +86,13 @@ pub fn subcommands(command: &Command) -> Vec<Name> {
 }
 
 fn collect_subcommands(root: &Command, parent: &Command, prefix: &str, out: &mut Vec<Name>) {
-    for sub in parent.get_subcommands().filter(|sub| !sub.is_hide_set()) {
+    // **A hidden command is still a command.** `hide` keeps the twenty words
+    // of day one on the first screen of `--help`; it says nothing about what
+    // the binary accepts, and this catalog is the answer to that question --
+    // the completer's list, the editor plugin's tables, and the gates that
+    // hold every advertised path to a journey and a README entry all read it.
+    // Filtering here would make hiding a command the way to escape them.
+    for sub in parent.get_subcommands() {
         // `help` is clap's, not jails': it is on every command at every depth
         // and listing it would treble this output with one word.
         if sub.get_name() == "help" {
@@ -122,7 +128,7 @@ fn collect_subcommands(root: &Command, parent: &Command, prefix: &str, out: &mut
 /// Long flags, including the global ones, which is what a completer needs.
 pub fn options(command: &Command) -> Vec<String> {
     let mut flags = long_flags(command);
-    for sub in command.get_subcommands().filter(|sub| !sub.is_hide_set()) {
+    for sub in command.get_subcommands() {
         flags.extend(long_flags(sub));
     }
     flags.sort_unstable();

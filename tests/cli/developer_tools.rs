@@ -892,6 +892,80 @@ fn every_advertised_command_path_has_a_journey() {
     );
 }
 
+/// The first screen of `--help` is the twenty words of day one, and hiding
+/// the rest hides them from that screen only.
+///
+/// A hidden command still parses, still has a README entry and a journey, and
+/// is still in the catalog every completer and the editor plugin read --
+/// which is what stops `hide` becoming the way to escape those gates.
+#[test]
+fn the_first_screen_of_help_is_one_screen_and_hides_nothing_from_the_catalog() {
+    let root = temp_dir("help-one-screen");
+    let help = jails_cmd(&root, None).arg("--help").output().unwrap();
+    assert!(help.status.success());
+    let help = String::from_utf8_lossy(&help.stdout);
+    let lines = help.lines().count();
+    assert!(
+        lines < 40,
+        "`jails --help` is {lines} lines, and the first screen is meant to fit on a \
+         screen:\n{help}"
+    );
+    for word in [
+        "new", "generate", "add", "remove", "set", "destroy", "rename", "resource", "sync", "run",
+        "test", "check", "build", "start", "stop", "doctor", "why", "explain", "routes", "beans",
+    ] {
+        assert!(
+            help.contains(&format!("\n  {word} ")) || help.contains(&format!("\n  {word}\n")),
+            "the day-one word `{word}` is not on the first screen:\n{help}"
+        );
+    }
+
+    let catalog = jails_cmd(&root, None)
+        .args(["commands", "--json"])
+        .output()
+        .unwrap();
+    assert!(catalog.status.success());
+    let catalog: serde_json::Value = serde_json::from_slice(&catalog.stdout).unwrap();
+    let rows = catalog["subcommands"].as_array().unwrap().len();
+    assert!(
+        rows >= 96,
+        "the catalog reports {rows} commands; hiding a command must not remove it"
+    );
+
+    // A hidden command runs, and says what it is.
+    let hidden = jails_cmd(&root, None)
+        .args(["about", "--help"])
+        .output()
+        .unwrap();
+    assert!(hidden.status.success());
+    assert!(
+        String::from_utf8_lossy(&hidden.stdout).contains("Maven"),
+        "a hidden command still has its own help"
+    );
+
+    // The rationale that left the flag list is reachable, and names a fix
+    // when the flag is not one jails has.
+    let flag = jails_cmd(&root, None)
+        .args(["explain", "--flag", "pretend"])
+        .output()
+        .unwrap();
+    assert!(flag.status.success());
+    assert!(
+        String::from_utf8_lossy(&flag.stdout).contains("Global on purpose"),
+        "`explain --flag pretend` carries the rationale"
+    );
+    let unknown = jails_cmd(&root, None)
+        .args(["explain", "--flag", "nonesuch"])
+        .output()
+        .unwrap();
+    assert!(!unknown.status.success());
+    let stderr = String::from_utf8_lossy(&unknown.stderr);
+    assert!(
+        stderr.contains("fix:") && stderr.contains("--pretend"),
+        "{stderr}"
+    );
+}
+
 /// Every top-level command the binary accepts has a `jails <name>` entry in
 /// `README.md`, so a command cannot be added -- or kept -- without a page
 /// saying what it is for. The README is the spec (`CLAUDE.md`), and

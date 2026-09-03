@@ -38,6 +38,8 @@ mod tools;
 pub(crate) use tools::*;
 mod rename;
 pub(crate) use rename::*;
+mod resource;
+pub(crate) use resource::*;
 mod testing;
 pub(crate) use testing::*;
 mod command_path;
@@ -85,7 +87,15 @@ pub(crate) enum RunServicesArg {
 #[command(
     name = "jails",
     version,
-    about = "A rails-CLI-inspired tool for Spring Boot / plain Maven projects"
+    about = "A rails-CLI-inspired tool for Spring Boot / plain Maven projects",
+    // **The first screen is the twenty words of day one.** Every other
+    // command is `hide`-flagged: it parses, it is documented in README, and
+    // `jails commands` still lists it -- what it is not is on the screen a
+    // reader meets first. The pointer is one line rather than a second list,
+    // because a list here would drift from the one clap already walks.
+    after_help = "Options above are global and apply to every command; \
+`jails explain --flag <name>` says why each exists. \
+`jails commands` lists every command, kind, capability and flag."
 )]
 pub(crate) struct Cli {
     #[command(subcommand)]
@@ -106,20 +116,11 @@ pub(crate) struct Cli {
     // spelling: it is in `--help`, in `commands --json` and in the shell
     // completion, so every reader learns both. Deprecating means one release
     // where the old spelling still parses and nothing advertises it.
-    /// Run, but write nothing -- print what would change and stop.
-    ///
-    /// Global on purpose: Rails puts `--pretend` on every generator rather
-    /// than on the few that seemed risky, and the value is that you never
-    /// have to remember which commands support it.
+    /// Run, but write nothing: print what would change and stop
     #[arg(long, short = 'p', global = true, alias = "dry-run")]
     pub(crate) pretend: bool,
 
-    /// How a command reports: readable, current JSON, or frozen v1 JSON
-    ///
-    /// One projection, two encodings. A command's result is a *value* -- the
-    /// same status, operation list and effects whether the run previewed or
-    /// committed -- so `--output json` is an encoding of that value rather
-    /// than a second description of the work.
+    /// How a command reports: readable text, or JSON
     #[arg(long, global = true, value_enum, default_value_t = Output::Human)]
     pub(crate) output: Output,
 
@@ -153,145 +154,6 @@ pub(crate) enum AdoptCommand {
         /// The simple type name, e.g. `Message`
         #[arg(value_name = "NAME")]
         name: String,
-    },
-}
-
-#[derive(Subcommand)]
-pub(crate) enum ResourceCommand {
-    /// Reconcile recorded identity, generated source, and sealed migrations
-    Status {
-        /// Simple entity name or fully qualified generated Java type
-        selector: String,
-    },
-    /// Restore projections for preserved storage without another create migration
-    Revive {
-        /// Simple entity name or fully qualified generated Java type
-        selector: String,
-        /// Exact preserved SQL table name
-        #[arg(long)]
-        table: String,
-    },
-    /// Restore sealed history and reconcile owned projections
-    ///
-    /// On a canonical project this takes no arguments: managed output is
-    /// rendered from the model, so repair is ordinary
-    /// compilation with the deleted-managed-file guard waived, and there is
-    /// nothing to select or to choose a strategy between.
-    Repair {
-        /// Simple entity name or fully qualified generated Java type
-        selector: Option<String>,
-    },
-    /// Evolve one field through a new forward migration
-    Field {
-        #[command(subcommand)]
-        command: ResourceFieldCommand,
-    },
-    /// Add an index to a table that already exists
-    Index {
-        #[command(subcommand)]
-        command: ResourceIndexCommand,
-    },
-}
-
-#[derive(Subcommand)]
-pub(crate) enum ResourceIndexCommand {
-    /// Append one composite or ordered index and its migration
-    ///
-    ///   jails resource index add Message 'customer_id, created_at desc'
-    ///
-    /// The columns are the ones the table has, each optionally `asc`/`desc`
-    /// and nothing else -- arbitrary SQL is refused rather than recorded as
-    /// trusted generated SQL, the same rule `--index` follows at creation.
-    Add {
-        entity: String,
-        columns: String,
-        /// Subpackage containing the generated entity
-        #[arg(long)]
-        package: Option<String>,
-    },
-    /// Drop one previously declared composite or ordered index
-    ///
-    ///   jails resource index remove Message 'customer_id, created_at desc' \
-    ///     --confirm-index idx_message_index_ab12cd34ef56
-    Remove {
-        entity: String,
-        columns: String,
-        /// Exact physical index name that will be dropped
-        #[arg(long)]
-        confirm_index: String,
-        /// Subpackage containing the generated entity
-        #[arg(long)]
-        package: Option<String>,
-    },
-}
-
-#[derive(Subcommand)]
-pub(crate) enum ResourceFieldCommand {
-    /// Add one field and append its migration
-    Add {
-        entity: String,
-        field_spec: String,
-        /// Typed value used to backfill rows before a required field is enforced
-        #[arg(long, conflicts_with = "backfill_file")]
-        default_literal: Option<String>,
-        /// Project-relative reader-owned SQL used to backfill existing rows
-        #[arg(long, conflicts_with = "default_literal")]
-        backfill_file: Option<String>,
-        /// Subpackage containing the generated entity
-        #[arg(long)]
-        package: Option<String>,
-    },
-    /// Rename a field with an explicit physical-column policy
-    Rename {
-        entity: String,
-        field: String,
-        new_name: String,
-        #[arg(long, value_enum)]
-        column: ColumnRenamePolicy,
-        #[arg(long)]
-        package: Option<String>,
-    },
-    /// Change a field's type through a checked strategy
-    Type {
-        entity: String,
-        field: String,
-        #[arg(long)]
-        to: String,
-        #[arg(long, value_enum)]
-        strategy: TypeChangeStrategy,
-        #[arg(long)]
-        package: Option<String>,
-    },
-    /// Change whether a field accepts null values
-    Nullability {
-        entity: String,
-        field: String,
-        #[arg(
-            long,
-            conflicts_with = "required",
-            required_unless_present = "required"
-        )]
-        nullable: bool,
-        #[arg(
-            long,
-            conflicts_with = "nullable",
-            required_unless_present = "nullable"
-        )]
-        required: bool,
-        /// Project-relative SQL that removes nulls before `--required`
-        #[arg(long)]
-        backfill_file: Option<String>,
-        #[arg(long)]
-        package: Option<String>,
-    },
-    /// Drop a field after confirming the exact physical column
-    Drop {
-        entity: String,
-        field: String,
-        #[arg(long)]
-        confirm_column: String,
-        #[arg(long)]
-        package: Option<String>,
     },
 }
 
@@ -522,7 +384,7 @@ impl Invocation {
 #[derive(Subcommand)]
 pub(crate) enum Command {
     /// Describe the current Maven reactor and active module
-    #[command(visible_alias = "info")]
+    #[command(hide = true, visible_alias = "info")]
     About {
         /// Emit a stable machine-readable project description
         #[arg(long)]
@@ -531,38 +393,46 @@ pub(crate) enum Command {
     /// Create a new Spring Boot project via start.spring.io
     New(NewArgs),
     /// Create a new plain Maven CLI project
+    #[command(hide = true)]
     NewCli(NewCliArgs),
     /// Plan or apply a generic declarative application manifest
+    #[command(hide = true)]
     App {
         #[command(subcommand)]
         command: app::AppCommand,
     },
     /// Check, plan, apply, or transfer ownership in the canonical application model
+    #[command(hide = true)]
     Model {
         #[command(subcommand)]
         command: ModelCommand,
     },
     /// Versioned, read-only protocol for editor adapters
+    #[command(hide = true)]
     Editor {
         #[command(subcommand)]
         command: EditorCommand,
     },
     /// Emit and check portable HTTP contracts
+    #[command(hide = true)]
     Contract {
         #[command(subcommand)]
         command: ContractCommand,
     },
     /// Resolve a route and delegate an HTTP request to curl
+    #[command(hide = true)]
     Request {
         #[command(flatten)]
         request: HttpRequestArgs,
     },
     /// Run a trusted project-relative JShell script noninteractively
+    #[command(hide = true)]
     Runner {
         #[command(flatten)]
         runner: RunnerArgs,
     },
     /// Read bounded logs from declared Compose services
+    #[command(hide = true)]
     Logs {
         #[command(flatten)]
         logs: LogsArgs,
@@ -652,6 +522,7 @@ pub(crate) enum Command {
     /// Nothing on disk is rewritten: the permission is granted for one run
     /// through system properties, so `archunit.properties` stays strict and a
     /// *new* violation still fails the build.
+    #[command(hide = true)]
     Architecture {
         #[command(subcommand)]
         action: ArchitectureAction,
@@ -713,6 +584,7 @@ pub(crate) enum Command {
         tests: bool,
     },
     /// Take one setting `jails set` wrote back out
+    #[command(hide = true)]
     Unset {
         /// The property key
         key: String,
@@ -736,6 +608,7 @@ pub(crate) enum Command {
     /// names (or `deps/` when it does not). Instant, and works on a project
     /// that does not compile -- which is when you most need it and when a
     /// language server can least help. Lists every match rather than picking.
+    #[command(hide = true)]
     Src {
         /// The simple type name, e.g. `JdbcClient`
         #[arg(value_name = "TYPE")]
@@ -749,6 +622,7 @@ pub(crate) enum Command {
     /// jails does not parse k6's output: k6 prints p95 and p99 itself and its
     /// own thresholds decide pass or fail. What jails adds is the profile,
     /// stated before the run so the number is reproducible.
+    #[command(hide = true)]
     Bench {
         /// Concurrent virtual users
         #[arg(long, default_value_t = 10)]
@@ -770,6 +644,7 @@ pub(crate) enum Command {
     /// `jails adopt resource <Name>` is the other half: it registers a type
     /// you wrote in the model, so `resource field`, `rename resource` and
     /// `destroy` work on it, and marks its record as yours.
+    #[command(hide = true)]
     Adopt {
         #[command(subcommand)]
         command: Option<AdoptCommand>,
@@ -783,7 +658,7 @@ pub(crate) enum Command {
     /// four of the five fail naming something other than the cause. What the
     /// upgrade breaks in code you own -- Jackson 2, `javax.*` -- is reported
     /// rather than rewritten.
-    #[command(visible_alias = "upgrade")]
+    #[command(hide = true, visible_alias = "upgrade")]
     Modernize,
     /// Check everything that has to be true before the app can start
     Doctor {
@@ -808,12 +683,14 @@ pub(crate) enum Command {
         json: bool,
     },
     /// Count files and lines per layer, and the test-to-code ratio
+    #[command(hide = true)]
     Stats {
         /// Emit the per-layer counts as JSON
         #[arg(long)]
         json: bool,
     },
     /// List TODO/FIXME/HACK/XXX comments across the project
+    #[command(hide = true)]
     Notes {
         /// Only this tag (e.g. `jails notes fixme`)
         tag: Option<String>,
@@ -822,6 +699,7 @@ pub(crate) enum Command {
         json: bool,
     },
     /// Find stale APIs and architecture violations without compiling
+    #[command(hide = true)]
     Lint,
     /// List the HTTP routes this project's source declares
     Routes {
@@ -842,6 +720,7 @@ pub(crate) enum Command {
     /// Not a `doctor` check: doctor is read-only by contract, and applying
     /// migrations writes. Doctor can say whether anything will run them;
     /// this says whether they work.
+    #[command(hide = true)]
     Migrate {
         /// Apply to a scratch database and drop it. The only mode there is --
         /// jails does not run migrations against a real database, Flyway
@@ -855,6 +734,7 @@ pub(crate) enum Command {
         no_start: bool,
     },
     /// Send messages to the compose broker and inspect what is on it
+    #[command(hide = true)]
     Kafka {
         #[command(subcommand)]
         command: kafka::KafkaCommand,
@@ -863,7 +743,7 @@ pub(crate) enum Command {
         no_start: bool,
     },
     /// Open a database client (H2, `psql` against compose postgres, or sqlite3)
-    #[command(visible_alias = "dbconsole")]
+    #[command(hide = true, visible_alias = "dbconsole")]
     Db {
         #[command(subcommand)]
         command: Option<DbCommand>,
@@ -883,7 +763,7 @@ pub(crate) enum Command {
         args: Vec<String>,
     },
     /// Boot the Spring application in JShell with context helpers
-    #[command(visible_alias = "c")]
+    #[command(hide = true, visible_alias = "c")]
     Console {
         #[command(flatten)]
         console: ConsoleArgs,
@@ -1020,6 +900,7 @@ pub(crate) enum Command {
     /// It runs what is compiled and refuses when a source is newer -- the same
     /// gate as `test --fast`. It does not compile, because the editor's
     /// language server already writes `target/classes` on save.
+    #[command(hide = true)]
     Testd {
         filter: Option<String>,
         /// Run only the tests reachable from what has changed in the working
@@ -1039,17 +920,21 @@ pub(crate) enum Command {
     /// Build the project (mvn package)
     Build,
     /// Delete Maven's `target/` directory (`mvn clean`)
+    #[command(hide = true)]
     Clean,
     /// Reformat every source file in place (needs `jails add format`)
+    #[command(hide = true)]
     Fmt,
     /// Format check + compile + tests (`mvn clean verify`)
     Check,
     /// Pass uncommon arguments through to the project's Maven wrapper
+    #[command(hide = true)]
     Mvn {
         #[arg(last = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
     /// Forward arguments to this project's Gradle wrapper
+    #[command(hide = true)]
     Gradle {
         #[arg(last = true, allow_hyphen_values = true)]
         args: Vec<String>,
@@ -1091,23 +976,32 @@ pub(crate) enum Command {
     /// classpath does nothing at all -- so a generated `withReuse(true)` is
     /// ignored until this has run, and every test run pays for a fresh
     /// PostgreSQL.
+    #[command(hide = true)]
     Setup {},
     /// Explain what a generator kind is for, and the trap it invites
     ///
     /// The generated Javadoc carries this reasoning for whoever reads the file.
     /// This is for whoever is deciding whether to generate it -- and for an
     /// agent, which otherwise "fixes" the deliberate asymmetries.
-    Explain { kind: ArtifactKind },
+    Explain {
+        /// The generator kind to explain; omitted with `--flag`
+        kind: Option<ArtifactKind>,
+        /// Explain a global flag instead of a kind
+        #[arg(long, conflicts_with = "kind")]
+        flag: Option<String>,
+    },
     /// Print every subcommand, generator kind, capability and flag jails accepts
     ///
     /// Derived from the same clap definition that parses the arguments, so it
     /// cannot drift from what the binary actually takes. `--json` is what the
     /// editor plugin reads instead of keeping its own tables.
+    #[command(hide = true)]
     Commands {
         #[arg(long)]
         json: bool,
     },
     /// Print a shell-completion script: source <(jails completion bash)
+    #[command(hide = true)]
     Completion { shell: Shell },
 }
 
