@@ -55,7 +55,9 @@ tests. Reproduce every item from a clean `jails new` and state the command.
 emitters assemble Java and SQL with `format!`:
 
 ```
-grep -rc 'format!(' crates/jails-compiler/src | awk -F: '{s+=$2} END {print s}'
+all=$(grep -rho 'format!(' crates/jails-compiler/src | wc -l)
+refusals=$(grep -rhoE 'Diagnostic::new\(|refuse::' crates/jails-compiler/src | wc -l)
+echo $((all - refusals))     # 659: the Java and SQL, not the refusal prose
 ```
 
 **Exit:** the IR exists and the emitters build it instead of strings. It is a

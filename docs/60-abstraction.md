@@ -188,16 +188,22 @@ walk (`http_sink`, `durable_job`: each renders a sample argument list from
 `ApiError`, the architecture test) are one file per model rather than per
 node, which the recipe's node-per-row shape does not express.
 
-The number to read is the `format!` count:
+The number to read is the `format!` count, **less the refusals**, because a
+refusal message is prose and will always be built with `format!`:
 
 ```
-grep -rc 'format!(' crates/jails-compiler/src | awk -F: '{s+=$2} END {print s}'
+all=$(grep -rho 'format!(' crates/jails-compiler/src | wc -l)
+refusals=$(grep -rhoE 'Diagnostic::new\(|refuse::' crates/jails-compiler/src | wc -l)
+echo $((all - refusals))
 ```
 
-723 now (834 when this file was first measured, 808 at the start of the
-`Recipe` work, 762 before the fragment renderers). It falls as an adapter's
-body becomes a template plus named fragments, and the next rung is the
-repository adapters' column list and bind list.
+659 now: 865 `format!` less 206 refusal sites. The whole-crate figure was
+834 when this file was first measured, 808 at the start of the `Recipe`
+work, 762 before the fragment renderers and 723 after them; it then rose to
+865 when A3.13 gave every compiler refusal a code and a `fix:` line of its
+own, which is why the subtraction is now part of the measurement. It falls
+as an adapter's body becomes a template plus named fragments, and the next
+rung is the repository adapters' column list and bind list.
 
 **Exit:** every facet and operation emitter is a row plus named fragments;
 `FUNCTIONS` holds only SQL lowering and the proofs; the `format!` count is
