@@ -99,7 +99,12 @@ in the plan. `model eject <boundary>` -- a readable path such as
 `Note.repo.fake`, or an artifact id -- is a lock edit, not a move: the
 boundary's files stay where they are and leave the accepted projection, and
 later renders neither rewrite nor delete them. Records and ports remain
-managed ABI. Ejection never infers ownership from edited bytes.
+managed ABI. Ejection never infers ownership from edited bytes. A project a
+release before this one generated under `.jails/generated` is moved once by
+`jails model relocate` -- the captured bytes to their `src/` paths, the lock
+rewritten, the marked source-root block out of the build file, refusing by
+name if a destination exists -- and `jails_workspace::relocate` is the one
+place that old root is spelled. `jails model status` lists the lock.
 
 **Convention is recorded, not hidden: `jails model explain`.** Every name the
 compiler derives is a `DerivedValue` in `AppModel.derived`, keyed by owner and

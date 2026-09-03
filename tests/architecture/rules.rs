@@ -59,7 +59,7 @@ fn owns_terminal_output(path: &Path) -> bool {
         // whose whole contract is the four authority lines it prints. The
         // legacy half is already allowed through `jails-report`.
         || relative == "src/model_status.rs"
-        // `jails model status` is the replacement for `ls .jails/generated`:
+        // `jails model status` is the replacement for listing a generated root:
         // the lock's list of managed files, one line each, and a read-only
         // report whose whole contract is that list.
         || relative == "src/model_ownership.rs"

@@ -4,7 +4,7 @@
 //! **The lock is the list.** Managed output lives beside the reader's own
 //! sources under `src/`, and nothing about a path says whose it is; the
 //! accepted projection in `.jails/compiler.lock.json` names every managed
-//! file with the bytes it was accepted at. `ls .jails/generated` used to be
+//! file with the bytes it was accepted at. Listing the old generated root used to be
 //! the way to see what jails owns, and this is its replacement: one line per
 //! path, from the lock, with the artifact it was rendered from.
 //!

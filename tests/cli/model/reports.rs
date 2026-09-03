@@ -491,7 +491,7 @@ entity Bed {
     );
 }
 
-/// `jails model status` is the replacement for `ls .jails/generated`: the
+/// `jails model status` is the replacement for listing a generated root: the
 /// lock's list of managed files, each against its accepted image.
 #[test]
 fn model_status_lists_the_lock_and_tells_edited_from_missing() {

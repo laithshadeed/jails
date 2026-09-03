@@ -214,6 +214,13 @@ on the compiler neither rewrites nor deletes them. Records and ports remain
 managed ABI, and ejection never infers ownership from edited bytes or silently
 reclaims it.
 
+`model relocate` is the one-time move for a project generated before managed
+output lived under `src/`: every managed file the lock names moves from
+`.jails/generated` to its `src/` path with its captured bytes, the lock is
+rewritten, the marked source-root block leaves the build file, and any
+occupied destination refuses by name. It goes through the one executor like
+every other write. `model status` lists the lock's paths with their state.
+
 ## 1.7 The deletion map
 
 What the simplification pass deletes, and what replaces it. A plan is measured
