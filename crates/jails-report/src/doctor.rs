@@ -123,13 +123,34 @@ fn run_checks(project: &Project) -> Vec<Check> {
     }
     checks.push(maven_check(project));
     checks.push(jdk_check(project));
-    checks.push(git_merge_check());
+    // **The three groups that start processes, run at once.** `docker info`
+    // alone is about 165 ms on this machine and the version probes are a JVM
+    // start each; in sequence they were most of `doctor`'s wall clock, on the
+    // command a reader runs when something is already wrong. None of them
+    // needs another's answer, and joining in order keeps the report byte for
+    // byte what it was.
+    //
+    // Not cached: `doctor` is read-only by contract, and the one probe worth
+    // caching is the one that must never be -- a remembered `docker info`
+    // reports an engine that stopped ten minutes ago, which is the fact this
+    // report exists to check.
+    let (git, provider, reuse) = std::thread::scope(|scope| {
+        let git = scope.spawn(git_merge_check);
+        let provider = scope.spawn(|| compose_provider_check(project));
+        let reuse = scope.spawn(|| container_reuse_check(project));
+        (
+            git.join().ok(),
+            provider.join().ok().flatten(),
+            reuse.join().unwrap_or_default(),
+        )
+    });
+    checks.extend(git);
     checks.extend(compose_checks(project));
-    checks.extend(compose_provider_check(project));
+    checks.extend(provider);
     checks.extend(database_checks(project));
     checks.extend(in_memory_adapter_check(project));
     checks.push(testcontainers_check(project));
-    checks.extend(container_reuse_check(project));
+    checks.extend(reuse);
     checks.push(kafka_check(project));
     checks.push(jackson_check(project));
     checks.push(duplicate_key_check(project));

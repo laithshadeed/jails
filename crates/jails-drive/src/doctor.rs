@@ -37,35 +37,57 @@ pub fn doctor(json: bool, additional: Vec<Check>) -> Result<()> {
     jails_report::doctor::doctor(&project, json, checks)
 }
 
+/// The rows that ask a tool on this machine what version it is.
+///
+/// **Every one of them starts a process, and none of them needs another's
+/// answer.** Run in sequence they were most of `doctor`'s wall clock -- five
+/// or six JVM- and shell-sized starts, one after another, on the command a
+/// reader runs when something is already wrong. They are run in scoped
+/// threads and joined in order, so the report is byte for byte what it was.
+///
+/// Deliberately *not* cached under `.jails/run/`: `doctor` is read-only by
+/// contract, and a report that writes to answer faster is a different
+/// command.
 fn developer_tool_checks(project: &Project) -> Vec<Check> {
-    let mut checks = Vec::new();
+    type Probe<'a> = Box<dyn FnOnce() -> Vec<Check> + Send + 'a>;
+
+    let mut probes: Vec<Probe<'_>> = Vec::new();
     if has_http_routes(project) {
-        checks.push(probe(
-            project,
-            "curl executable",
-            Path::new("curl"),
-            &["--version"],
-            true,
-            CURL_INSTALL,
-        ));
+        probes.push(Box::new(move || {
+            vec![probe(
+                project,
+                "curl executable",
+                Path::new("curl"),
+                &["--version"],
+                true,
+                CURL_INSTALL,
+            )]
+        }));
     }
     if has_postgres(project) {
-        checks.extend(postgres_clients(project));
+        probes.push(Box::new(move || postgres_clients(project)));
     }
     if has_compose(project) {
-        checks.push(compose_probe(project));
+        probes.push(Box::new(move || vec![compose_probe(project)]));
     }
 
     let java = selected_java();
+    // Resolved on this thread, because the jshell beside it is derived from
+    // the answer and both probes are about to run at once.
     let resolved_java = resolve_executable(project, &java);
-    checks.push(probe(
-        project,
-        "java executable",
-        &java,
-        &["-version"],
-        true,
-        JDK_INSTALL,
-    ));
+    probes.push(Box::new({
+        let java = java.clone();
+        move || {
+            vec![probe(
+                project,
+                "java executable",
+                &java,
+                &["-version"],
+                true,
+                JDK_INSTALL,
+            )]
+        }
+    }));
     if is_spring(project) {
         let jshell = resolved_java
             .map(|path| {
@@ -76,22 +98,33 @@ fn developer_tool_checks(project: &Project) -> Vec<Check> {
                 })
             })
             .unwrap_or_else(|| PathBuf::from("jshell"));
-        checks.push(probe(
-            project,
-            "jshell executable",
-            &jshell,
-            &["--version"],
-            true,
-            JSHELL_GUIDE,
-        ));
+        probes.push(Box::new(move || {
+            vec![probe(
+                project,
+                "jshell executable",
+                &jshell,
+                &["--version"],
+                true,
+                JSHELL_GUIDE,
+            )]
+        }));
     }
 
     match project.build() {
-        crate::build::Build::Maven => checks.push(maven_probe(project)),
-        crate::build::Build::Gradle => checks.push(gradle_probe(project)),
+        crate::build::Build::Maven => probes.push(Box::new(move || vec![maven_probe(project)])),
+        crate::build::Build::Gradle => probes.push(Box::new(move || vec![gradle_probe(project)])),
         crate::build::Build::Bare | crate::build::Build::Foreign(_) => {}
     }
-    checks
+
+    std::thread::scope(|scope| {
+        probes
+            .into_iter()
+            .map(|probe| scope.spawn(probe))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .flat_map(|handle| handle.join().unwrap_or_default())
+            .collect()
+    })
 }
 
 fn probe(

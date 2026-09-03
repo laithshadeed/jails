@@ -815,6 +815,12 @@ this phase, and their refusals are worded by the caller that reports them.
   project that has never generated and one whose lock was deleted are the same
   capture. The refusal names both repairs rather than guessing, and `doctor`
   carries a `merge base` row for a modelled project with no lock.
+- **`doctor`'s probes run concurrently and are never cached.** The version
+  probes go through one `thread::scope` and the three process-starting groups
+  through another, joined in order so the report is unchanged: 225 ms to about
+  163 ms warm. `docker info` at ~165 ms is the floor and is exactly the probe
+  that must not be remembered -- a cached one reports an engine that stopped
+  ten minutes ago.
 - **`crates/jails-report/src/doctor/`** -- split by *who is being asked*:
   `environment.rs` asks the machine, `wiring.rs` asks the project whether a
   capability is wired up, and `doctor.rs` keeps the report and `--json`.

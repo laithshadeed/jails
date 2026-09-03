@@ -390,7 +390,12 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // and the next mutation refuses on the first managed path it
                 // renders -- which reads as a collision. The check asks the
                 // resolved `Project` for two files and re-derives nothing.
-                ceiling: 1486,
+                //
+                // 1486 -> 1496: I70.24 runs the three process-starting groups
+                // in scoped threads. Ten lines of `thread::scope` bought 25%
+                // of `doctor`'s wall clock, and none of them re-derives
+                // anything -- it is the same checks, joined in order.
+                ceiling: 1496,
                 // Withdrawn, not reached: none of the hand-written checks is a
                 // re-encoded dependency fact, so a lower target measures a
                 // saving that is not there. Ratchet against growth.

@@ -785,10 +785,14 @@ finish under 20 ms.
 one edited source and run the pipeline once. *Done when* the idempotent
 replay costs what one `model plan` costs (211 ms on the crawler).
 
-**I70.24 — `doctor` under 100 ms warm.** *Change* run the three version
-probes concurrently and cache each under `.jails/run/` keyed by the
-executable's path and mtime. *Done when* the second `doctor` in a minute
-is under 100 ms.
+**I70.24 — `doctor` warm.** *Half landed, and the other half declined.*
+The probes run concurrently -- the version probes among themselves, and
+the three process-starting groups against each other -- which takes a
+warm `doctor` on this machine from 225 ms to about 163 ms. The 100 ms
+target is not reachable: `docker info` alone is 165 ms, so it is the
+floor, and caching it is the one thing that must not happen. A remembered
+`docker info` reports an engine that stopped ten minutes ago, which is the
+fact the row exists to check.
 
 **I71.22 — the second `jails run` skips Maven (prototype).** *Change* on a
 tree whose classes are newer than its sources, `java -cp` the main class
