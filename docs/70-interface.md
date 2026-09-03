@@ -541,8 +541,10 @@ did too. The field types come from `builtin::ALL` and the `cap` kinds from
 
 **I71.21 — the manifest is the model (prototype).** *Today*
 `.jails/app.toml` is a second declarative source whose `[[generate]]` rows
-are CLI calls, replayed one pipeline each (1.9 s for a no-op replay of
-fourteen rows). Everything a manifest says, JDL says, and `app init`
+are CLI calls. They no longer cost a pipeline each: a row already in the
+model skips its own and the command runs one closing pass (I71.2), which
+took a converged replay of the crawler's twelve rows from 255 ms to 30 ms.
+What remains is that it is a second source at all. Everything a manifest says, JDL says, and `app init`
 already refuses on a modelled project. *Change* `jails new <name> --model
 crawler.jdl` is a copy and one `sync`; `examples/*/.jails/app.toml` become
 `model.jdl` files, which also gives the specification the corpus it lacks.
