@@ -99,12 +99,19 @@ fn run_case(case: &Case) -> Option<String> {
         .unwrap();
     let root = scratch.path();
     project(root);
+    // In `jails.toml`, beside tables the suite must skip rather than read:
+    // the policy is the project's, and the project's manifest is where it
+    // lives. `rm -rf .jails` does not reach it.
     write(
-        root.join(".jails/architecture.toml"),
+        root.join("jails.toml"),
         &format!(
-            "[[architecture.allow]]\n\
+            "# the project manifest\n\
+             [project]\n\
+             capabilities = [\"db\"]\n\
+             \n\
+             [[architecture.allow]]\n\
              from = \"{}\"\n\
-             to = \"shared\"\n\
+             to = \"shared\"  # the slice being reached into\n\
              packages = [\"{}\"]\n\
              reason = \"reviewed acceptance edge\"\n\
              expires = \"{}\"\n",

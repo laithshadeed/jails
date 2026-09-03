@@ -35,11 +35,23 @@ import java.util.Set;
  * Project-level ports-and-adapters fitness rules.
  *
  * <p>New projects run every rule strictly. An adopted project may commit the
- * explicit {@code .jails/architecture-baseline} store; only then are recorded
- * pre-existing violations frozen while new violations continue to fail.
+ * explicit {@code src/test/resources/archunit/frozen} store; only then are
+ * recorded pre-existing violations frozen while new violations continue to
+ * fail.
+ *
+ * <p>The reviewed exceptions are {@code [[architecture.allow]]} tables in
+ * {@code jails.toml}, the project's own manifest. Nothing here reads a
+ * dot-directory: this test is an ordinary test of an ordinary Java project.
  */
 @AnalyzeClasses(packages = "{{pkg}}")
 final class ArchitectureTest {
+    /** The project manifest. The reviewed exceptions live in it, beside the layout. */
+    private static final String POLICY = "jails.toml";
+
+    /** Matches {@code freeze.store.default.path} in {@code archunit.properties}. */
+    private static final String FREEZE_STORE = "src/test/resources/archunit/frozen";
+
+    private static final String ALLOW_TABLE = "[[architecture.allow]]";
     private static final String SLICE_ROOT = "{{domain}}";
     private static final List<Allowance> ALLOWANCES = loadAllowances();
 
@@ -51,7 +63,7 @@ final class ArchitectureTest {
     // Also true while creation is allowed: only a frozen rule writes the
     // store, so requiring it to exist first meant it could never be recorded.
     private static boolean baselineAdopted() {
-        if (Files.exists(Path.of(".jails/architecture-baseline"))) {
+        if (Files.exists(Path.of(FREEZE_STORE))) {
             return true;
         }
         return Boolean.parseBoolean(ArchConfiguration.get()
@@ -105,27 +117,29 @@ final class ArchitectureTest {
     }
 
     private static List<Allowance> loadAllowances() {
-        Path policy = Path.of(".jails/architecture.toml");
+        Path policy = Path.of(POLICY);
         if (!Files.exists(policy)) {
             return List.of();
         }
         try {
             List<Allowance> allowances = new ArrayList<>();
+            // Null between tables: jails.toml also carries [layout], [project]
+            // and [[capability]], whose keys are not this test's to read.
             Map<String, String> fields = null;
             int lineNumber = 0;
             for (String raw : Files.readAllLines(policy, StandardCharsets.UTF_8)) {
                 lineNumber++;
-                String line = raw.trim();
-                if (line.isEmpty() || line.startsWith("#")) {
+                String line = stripComment(raw).trim();
+                if (line.isEmpty()) {
                     continue;
                 }
-                if (line.equals("[[architecture.allow]]")) {
+                if (line.startsWith("[")) {
                     addAllowance(allowances, fields);
-                    fields = new LinkedHashMap<>();
+                    fields = line.equals(ALLOW_TABLE) ? new LinkedHashMap<>() : null;
                     continue;
                 }
                 if (fields == null) {
-                    throw invalid(lineNumber, "expected [[architecture.allow]]");
+                    continue;
                 }
                 int equals = line.indexOf('=');
                 if (equals < 1) {
@@ -146,8 +160,25 @@ final class ArchitectureTest {
             }
             return List.copyOf(allowances);
         } catch (IOException error) {
-            throw new IllegalArgumentException("cannot read .jails/architecture.toml", error);
+            throw new IllegalArgumentException("cannot read " + POLICY, error);
         }
+    }
+
+    /**
+     * A {@code #} outside a double-quoted string starts a comment, which is
+     * what the tool's own reader of this file does.
+     */
+    private static String stripComment(String line) {
+        boolean quoted = false;
+        for (int index = 0; index < line.length(); index++) {
+            char c = line.charAt(index);
+            if (c == '"') {
+                quoted = !quoted;
+            } else if (c == '#' && !quoted) {
+                return line.substring(0, index);
+            }
+        }
+        return line;
     }
 
     private static void addAllowance(
@@ -242,7 +273,7 @@ final class ArchitectureTest {
 
     private static IllegalArgumentException invalid(int line, String detail) {
         String at = line == 0 ? "" : " at line " + line;
-        return new IllegalArgumentException("invalid .jails/architecture.toml" + at + ": " + detail);
+        return new IllegalArgumentException("invalid " + POLICY + at + ": " + detail);
     }
 
     private record Allowance(

@@ -330,8 +330,7 @@ fn validate_identifier(text: &str, what: &str) -> Result<()> {
 ///   operation rewrite jails' own state.
 ///
 /// The exception allowlist is closed: the human app manifest, the project
-/// template override layer, reviewed architecture policy, and checked-in
-/// generated SQL/HTTP contracts.
+/// template override layer, and checked-in generated SQL/HTTP contracts.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
 pub struct ProjectPath(String);
 
@@ -343,8 +342,6 @@ pub(crate) const TEMPLATE_OVERRIDES: &str = ".jails/templates";
 pub(crate) const SQL_CONTRACTS: &str = ".jails/sql-contracts";
 /// `.jails/contracts` — checked-in generated HTTP contracts.
 pub(crate) const HTTP_CONTRACTS: &str = ".jails/contracts";
-/// `.jails/architecture.toml` — the reviewed project architecture policy.
-pub(crate) const ARCHITECTURE_POLICY: &str = ".jails/architecture.toml";
 
 impl ProjectPath {
     pub fn parse(text: &str) -> Result<Self> {
@@ -406,14 +403,13 @@ impl ProjectPath {
                     || text == SQL_CONTRACTS
                     || text.starts_with(&format!("{SQL_CONTRACTS}/"))
                     || text == HTTP_CONTRACTS
-                    || text.starts_with(&format!("{HTTP_CONTRACTS}/"))
-                    || text == ARCHITECTURE_POLICY;
+                    || text.starts_with(&format!("{HTTP_CONTRACTS}/"));
                 if !allowed {
                     return Err(format!(
                         "path `{text}` is machine state under `.jails`, which has its own typed \
-                         representations.\n       fix: only `{APP_MANIFEST}` and \
-                         `{TEMPLATE_OVERRIDES}`, `{SQL_CONTRACTS}`, `{HTTP_CONTRACTS}`, and \
-                         `{ARCHITECTURE_POLICY}` are reachable this way."
+                         representations.\n       fix: only `{APP_MANIFEST}`, \
+                         `{TEMPLATE_OVERRIDES}`, `{SQL_CONTRACTS}` and `{HTTP_CONTRACTS}` are \
+                         reachable this way."
                     )
                     .into());
                 }

@@ -8,7 +8,7 @@
 //!
 //! `g scaffold` writes `RAW_JDBC_STAYS_IN_ADAPTERS`, and on an adopted project
 //! it fails over the reader's own code. The suite calls
-//! `FreezingArchRule.freeze`, so a `.jails/architecture-baseline` records
+//! `FreezingArchRule.freeze`, so a `src/test/resources/archunit/frozen` records
 //! today's violations and the rules fail only on new ones. Creating that store
 //! is gated by two ArchUnit permissions, and this command grants them for one
 //! run rather than asking the reader to edit the properties file by hand.
@@ -32,7 +32,7 @@ const SUITE: &str = "ArchitectureTest";
 /// Where the frozen violations are recorded. Matches the
 /// `freeze.store.default.path` the generated `archunit.properties` sets, and
 /// is checked against it so the two cannot drift.
-const STORE: &str = ".jails/architecture-baseline";
+const STORE: &str = "src/test/resources/archunit/frozen";
 
 /// The two permissions, as system properties. Creation alone writes an empty
 /// index and every rule still fails: ArchUnit needs update permission to

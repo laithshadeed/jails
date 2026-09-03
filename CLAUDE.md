@@ -106,6 +106,17 @@ rewritten, the marked source-root block out of the build file, refusing by
 name if a destination exists -- and `jails_workspace::relocate` is the one
 place that old root is spelled. `jails model status` lists the lock.
 
+**Nothing generated reads `.jails`.** No generated file names the state
+directory at build or test time: the ArchUnit freeze store is
+`src/test/resources/archunit/frozen`, an ordinary checked-in test resource,
+and the reviewed exceptions are `[[architecture.allow]]` tables in
+`jails.toml`. `emit_architecture`'s
+`nothing_generated_here_reads_the_state_directory` is what holds it, and the
+measured property is that `rm -rf .jails && mvn test` on a scaffolded project
+is green with the *same test count*. The provenance header is on every managed
+file now that `ArchitectureTest.java` goes through the same shell as
+everything else -- `JavaUnit::render` writes it and nothing else does.
+
 **Convention is recorded, not hidden: `jails model explain`.** Every name the
 compiler derives is a `DerivedValue` in `AppModel.derived`, keyed by owner and
 role with the `rule_id` that produced it, so a convention that moves cannot
@@ -577,6 +588,17 @@ this phase, and their refusals are worded by the caller that reports them.
   `jails sync` applies; it is maintained by `add` and `remove`, never by hand,
   and the names stored are `CapabilityKind::label()`, never clap aliases. Writing
   back is a one-line splice that leaves comments byte for byte alone.
+  **`[[architecture.allow]]` is the fourth table and the one jails never acts
+  on**: the reviewed exceptions to the generated ArchUnit suite, read at test
+  time by `ArchitectureTest` and not by the tool. So `jails.toml` has *two*
+  readers, and the drift that invites is closed on purpose:
+  `jails_model::ARCHITECTURE_ALLOW_KEYS` is the one key list, `config.rs`
+  checks the schema (known table, known keys, none twice, none missing) and
+  refuses, and `emit_architecture`'s
+  `the_allowance_keys_match_the_tool_s_reader` fails when the template's own
+  `Set.of(...)` parts from it. The semantics -- a blanket package pattern, a
+  passed expiry, an allowance nothing uses -- stay in the suite, where the
+  refusal can name the dependency it was about.
 - **`jails adopt`** (`src/adopt.rs`) -- a closed synonym table mapping
   directory names onto the layers, written as `[layout]` rows. An
   unrecognised directory is reported, not guessed; two candidates for one layer

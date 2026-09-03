@@ -30,11 +30,6 @@ use std::process::Command;
 const ALLOWED_LEFTOVER: &[(&str, &str, &str)] = &[
     (
         "scaffold",
-        ".jails/architecture.toml",
-        "project-level architecture policy has its own durable owner; destroying one entity must not remove shared fitness configuration",
-    ),
-    (
-        "scaffold",
         "ArchitectureTest.java",
         "one project-level architecture suite is shared by every scaffold and outlives any one entity",
     ),

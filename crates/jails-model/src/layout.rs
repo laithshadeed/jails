@@ -12,6 +12,26 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// The repeated `jails.toml` table that records one reviewed exception to the
+/// generated architecture suite.
+///
+/// The policy lives in the project's own manifest rather than under `.jails`,
+/// because it is about the reader's code and is read by the reader's tests:
+/// a project whose state directory is gone must still run the same suite and
+/// reach the same verdict.
+pub const ARCHITECTURE_ALLOW_TABLE: &str = "architecture.allow";
+
+/// Its closed key set.
+///
+/// **Two crates read this file and they must know the same words.**
+/// `jails_project::config` refuses an unknown key when the *tool* reads
+/// `jails.toml`; the generated `ArchitectureTest` refuses one when the
+/// *project's tests* read it. A key one accepts and the other does not is a
+/// policy jails approves and the build it generated rejects, so both spell the
+/// list from here -- the compiler's side through a test that reads the
+/// template.
+pub const ARCHITECTURE_ALLOW_KEYS: [&str; 5] = ["from", "to", "packages", "reason", "expires"];
+
 /// The eleven layers JDL v1 §9.7 closes, as a value.
 ///
 /// A closed set, because a `jails.toml` saying `adapter = "persistence"` that

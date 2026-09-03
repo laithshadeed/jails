@@ -1194,10 +1194,6 @@ pub fn run_steps(root: &Path, scenario: &Scenario) {
 pub fn file_set(dir: &Path) -> BTreeSet<String> {
     let mut found = BTreeSet::new();
     walk(dir, dir, &mut found);
-    let architecture = dir.join(".jails/architecture.toml");
-    if architecture.is_file() {
-        found.insert(".jails/architecture.toml".to_string());
-    }
     found
 }
 

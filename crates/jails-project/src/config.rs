@@ -21,8 +21,17 @@
 //! [`crate::capability::Declaration`] is the value, and which of the two
 //! shapes a declaration lands in is its own decision rather than the caller's.
 //!
+//! `[[architecture.allow]]` is the fourth table and the only one jails itself
+//! never acts on: it is the reviewed list of exceptions to the generated
+//! ArchUnit suite, and the *generated test* is what reads it. It lives here
+//! rather than under `.jails/` because it is about the reader's own code and
+//! is read by the reader's own build -- a project whose state directory has
+//! been deleted has to run the same suite and reach the same verdict. What
+//! this module checks is the schema; the semantics are the suite's, which is
+//! where a refusal can name the dependency it was about.
+//!
 //! Still deliberately not a general config file -- no template overrides, no
-//! plugin hooks, no per-kind paths. All three tables are **closed sets**: the
+//! plugin hooks, no per-kind paths. All four tables are **closed sets**: the
 //! layout keys are exactly the eleven [`crate::layout::Layer`] packages, the
 //! capability names are derived from the `CapabilityKind` enum rather than
 //! restated, and a `[[capability]]` table's keys are exactly `kind`, `name`
@@ -39,7 +48,8 @@
 //! table of `key = "value"` pairs, which is about forty lines to read
 //! directly and does not justify pulling in a TOML parser plus its error
 //! types. The cost is that this understands a *subset* of TOML: `[layout]`,
-//! `[project]` and repeated `[[capability]]` tables, bare keys, double-quoted
+//! `[project]` and repeated `[[capability]]` and `[[architecture.allow]]`
+//! tables, bare keys, double-quoted
 //! values, single-line string arrays, `#` comments. Anything else in the file is ignored, and anything
 //! malformed *inside* a table it knows is an error -- quietly skipping a line
 //! the user clearly meant is the failure mode this whole module exists to
@@ -127,6 +137,20 @@ const CAPABILITY_TABLE: &str = "capability";
 /// layer is: a `nmae = "Order"` that parsed to nothing would leave a project
 /// whose manifest claims a capability jails never installed.
 const CAPABILITY_KEYS: [&str; 3] = ["kind", "name", "package"];
+/// The reviewed exceptions to the generated architecture suite, one repeated
+/// table each.
+///
+/// **This file is read twice and the second reader is not jails.** The
+/// generated `ArchitectureTest` reads these tables at test time, so what is
+/// checked here is the *schema* -- the table is known, every key is one of
+/// [`jails_model::ARCHITECTURE_ALLOW_KEYS`], none is set twice and none is
+/// missing -- and the semantics an ArchUnit run is the right place to report
+/// (a package pattern that is blanket or outside the slice, an expiry that has
+/// passed, an allowance nothing uses) stay in the suite, where the refusal can
+/// name the dependency it was about. Accepting an unknown key here would
+/// leave a policy jails approved and the project's own build rejects.
+const ARCHITECTURE_TABLE: &str = jails_model::ARCHITECTURE_ALLOW_TABLE;
+const ARCHITECTURE_KEYS: [&str; 5] = jails_model::ARCHITECTURE_ALLOW_KEYS;
 
 /// A project's layout overrides: default layer name -> the name to use.
 ///
@@ -220,6 +244,7 @@ impl Config {
         let mut declarations: Vec<(Declaration, usize)> = Vec::new();
         let mut table = String::new();
         let mut pending: Option<PendingCapability> = None;
+        let mut allowance: Option<PendingAllowance> = None;
 
         for (i, raw) in text.lines().enumerate() {
             let line = strip_comment(raw).trim();
@@ -234,25 +259,38 @@ impl Config {
             // ignored.
             if let Some(name) = line.strip_prefix("[[").and_then(|l| l.strip_suffix("]]")) {
                 finish_capability(&mut pending, &mut declarations)?;
+                finish_allowance(&mut allowance)?;
                 let name = name.trim();
-                if name != CAPABILITY_TABLE {
-                    return Err(format!(
-                        "line {lineno}: unknown repeated table `[[{name}]]`. The only one is \
-                         `[[{CAPABILITY_TABLE}]]`."
-                    )
-                    .into());
+                match name {
+                    CAPABILITY_TABLE => {
+                        pending = Some(PendingCapability::at(lineno));
+                    }
+                    ARCHITECTURE_TABLE => {
+                        allowance = Some(PendingAllowance::at(lineno));
+                    }
+                    _ => {
+                        return Err(format!(
+                            "line {lineno}: unknown repeated table `[[{name}]]`. The ones jails \
+                             knows are `[[{CAPABILITY_TABLE}]]` and `[[{ARCHITECTURE_TABLE}]]`."
+                        )
+                        .into());
+                    }
                 }
-                table = CAPABILITY_TABLE.to_string();
-                pending = Some(PendingCapability::at(lineno));
+                table = name.to_string();
                 continue;
             }
             if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
                 finish_capability(&mut pending, &mut declarations)?;
+                finish_allowance(&mut allowance)?;
                 table = name.trim().to_string();
                 continue;
             }
 
             if let Some(entry) = pending.as_mut() {
+                entry.key(line, lineno)?;
+                continue;
+            }
+            if let Some(entry) = allowance.as_mut() {
                 entry.key(line, lineno)?;
                 continue;
             }
@@ -310,6 +348,7 @@ impl Config {
             layout.insert(key.to_string(), value.to_string());
         }
         finish_capability(&mut pending, &mut declarations)?;
+        finish_allowance(&mut allowance)?;
 
         let mut capabilities: Vec<String> = Vec::new();
         for (at, (declaration, lineno)) in declarations.iter().enumerate() {
@@ -396,6 +435,103 @@ impl PendingCapability {
         *slot = Some(value.to_string());
         Ok(())
     }
+}
+
+/// One `[[architecture.allow]]` table part-way through being read.
+///
+/// Only the keys are kept, not the values: nothing in the tool acts on an
+/// allowance -- the generated suite does -- so holding the values here would
+/// be a second, unread copy of the policy. What this exists for is the
+/// refusal: a misspelled key in a file jails also writes to must not read as
+/// an allowance that quietly covers nothing.
+struct PendingAllowance {
+    lineno: usize,
+    seen: Vec<String>,
+}
+
+impl PendingAllowance {
+    fn at(lineno: usize) -> Self {
+        Self {
+            lineno,
+            seen: Vec::new(),
+        }
+    }
+
+    fn key(&mut self, line: &str, lineno: usize) -> Result<()> {
+        let (key, value) = line.split_once('=').ok_or_else(|| {
+            format!(
+                "line {lineno}: expected `key = value`, found `{line}`\n       fix: give \
+                     every line of a [[{ARCHITECTURE_TABLE}]] table one of {}",
+                ARCHITECTURE_KEYS.join(", ")
+            )
+        })?;
+        let key = key.trim();
+        if !ARCHITECTURE_KEYS.contains(&key) {
+            return Err(format!(
+                "line {lineno}: unknown key `{key}` in [[{ARCHITECTURE_TABLE}]].\n       fix: \
+                 use one of {}",
+                ARCHITECTURE_KEYS.join(", ")
+            )
+            .into());
+        }
+        if self.seen.iter().any(|seen| seen == key) {
+            return Err(format!(
+                "line {lineno}: `{key}` is set twice in one [[{ARCHITECTURE_TABLE}]] \
+                 table.\n       fix: delete one of them, or start a second \
+                 [[{ARCHITECTURE_TABLE}]] table"
+            )
+            .into());
+        }
+        let value = value.trim();
+        if key == "packages" {
+            let packages = parse_string_array(value).ok_or_else(|| {
+                format!(
+                    "line {lineno}: `packages` must be a list of double-quoted package \
+                     patterns.\n       fix: write `packages = \
+                     [\"com.example.app.domain.shared.money..\"]`"
+                )
+            })?;
+            if packages.is_empty() {
+                return Err(format!(
+                    "line {lineno}: `packages` must name at least one bounded \
+                     package.\n       fix: name the package this allowance reaches into, or \
+                     delete the table"
+                )
+                .into());
+            }
+        } else if unquote(value).is_none() {
+            return Err(format!(
+                "line {lineno}: `{key}` must be a double-quoted string\n       fix: write \
+                 `{key} = \"...\"`"
+            )
+            .into());
+        }
+        self.seen.push(key.to_string());
+        Ok(())
+    }
+}
+
+/// Close the allowance that was open, if one was.
+///
+/// An allowance missing a key is refused rather than defaulted: `expires` is
+/// what stops one outliving its reason, and an allowance with no `reason` is
+/// the thing this table exists to prevent.
+fn finish_allowance(pending: &mut Option<PendingAllowance>) -> Result<()> {
+    let Some(entry) = pending.take() else {
+        return Ok(());
+    };
+    for key in ARCHITECTURE_KEYS {
+        if !entry.seen.iter().any(|seen| seen == key) {
+            return Err(format!(
+                "line {}: [[{ARCHITECTURE_TABLE}]] has no `{key}`.\n       fix: every table \
+                 needs {}",
+                entry.lineno,
+                ARCHITECTURE_KEYS.join(", ")
+            )
+            .into());
+        }
+    }
+    Ok(())
 }
 
 /// Close the table that was open, if one was.
@@ -860,4 +996,101 @@ fn layout_entries_are_pinned_to_the_canonical_order_and_apply_renames() {
             .collect::<Vec<_>>()
     );
     assert!(entries.contains(&("web", "http".to_string())));
+}
+
+/// The fourth table: the reviewed exceptions the generated ArchUnit suite
+/// reads.
+///
+/// The tool never acts on one, so what these prove is that a policy jails
+/// accepts is a policy the project's own build accepts -- an unknown key here
+/// would be an allowance that reads as declared and covers nothing when
+/// `ArchitectureTest` refuses it.
+#[cfg(test)]
+mod architecture_table_tests {
+    use super::*;
+
+    const ALLOWANCE: &str = "[[architecture.allow]]\n\
+                             from = \"web\"\n\
+                             to = \"shared\"\n\
+                             packages = [\"com.example.demo.domain.shared.money..\"]\n\
+                             reason = \"reviewed acceptance edge\"\n\
+                             expires = \"2099-01-01\"\n";
+
+    /// The whole point: this file is `jails.toml`, so an allowance stands
+    /// beside the layout and the capability list without either being
+    /// disturbed.
+    #[test]
+    fn an_allowance_stands_beside_the_other_tables() {
+        let text = format!(
+            "[layout]\nweb = \"http\"\n\n{ALLOWANCE}\n[project]\ncapabilities = [\"db\"]\n"
+        );
+        let config = Config::parse(&text).unwrap();
+        assert_eq!(config.layer("web"), "http");
+        assert_eq!(config.capabilities(), ["db"]);
+    }
+
+    /// Repeated, because a project reviews more than one edge.
+    #[test]
+    fn two_allowances_are_two_tables() {
+        let text = format!("{ALLOWANCE}\n{}", ALLOWANCE.replace("\"web\"", "\"jobs\""));
+        assert!(Config::parse(&text).is_ok());
+    }
+
+    #[test]
+    fn an_unknown_key_is_reported_not_ignored() {
+        let text = ALLOWANCE.replace("reason =", "resaon =");
+        let error = Config::parse(&text).unwrap_err().to_string();
+        assert!(error.contains("unknown key `resaon`"), "{error}");
+        assert!(
+            error.contains("from, to, packages, reason, expires"),
+            "{error}"
+        );
+        assert!(error.contains("fix:"), "{error}");
+    }
+
+    /// `expires` is what stops an allowance outliving its reason, so an
+    /// allowance without one is refused rather than treated as permanent.
+    #[test]
+    fn a_missing_key_is_refused_by_name() {
+        let text = ALLOWANCE
+            .lines()
+            .filter(|line| !line.starts_with("expires"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let error = Config::parse(&text).unwrap_err().to_string();
+        assert!(error.contains("has no `expires`"), "{error}");
+    }
+
+    #[test]
+    fn a_key_set_twice_is_an_error() {
+        let text = format!("{ALLOWANCE}reason = \"and again\"\n");
+        let error = Config::parse(&text).unwrap_err().to_string();
+        assert!(error.contains("`reason` is set twice"), "{error}");
+    }
+
+    #[test]
+    fn packages_must_be_a_non_empty_array() {
+        let empty = ALLOWANCE.replace("[\"com.example.demo.domain.shared.money..\"]", "[]");
+        let error = Config::parse(&empty).unwrap_err().to_string();
+        assert!(error.contains("at least one bounded package"), "{error}");
+
+        let scalar = ALLOWANCE.replace(
+            "[\"com.example.demo.domain.shared.money..\"]",
+            "\"com.example.demo.domain.shared.money..\"",
+        );
+        let error = Config::parse(&scalar).unwrap_err().to_string();
+        assert!(error.contains("`packages` must be a list"), "{error}");
+    }
+
+    /// The refusal for a table jails does not know now names both the ones it
+    /// does, so a reader who typed `[[architecture.allowed]]` is told which
+    /// word is real.
+    #[test]
+    fn the_unknown_repeated_table_refusal_names_both_known_tables() {
+        let error = Config::parse("[[architecture.allowed]]\n")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("[[capability]]"), "{error}");
+        assert!(error.contains("[[architecture.allow]]"), "{error}");
+    }
 }

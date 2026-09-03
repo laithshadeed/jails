@@ -1211,8 +1211,42 @@ either: `add` writes one when the capability it applied needed it, `remove`
 takes the whole table back out, and both leave every other byte of the file
 alone.
 
-All three tables are closed sets. This renames layers and declares capabilities
-and nothing else — no template overrides, no per-kind paths, no plugin hooks.
+### `[[architecture.allow]]` — a reviewed exception to the fitness suite
+
+`g scaffold` writes an ArchUnit suite that fails on a class reaching across a
+layer boundary. Sometimes one is deliberate, and the way to say so is a table
+per edge:
+
+```toml
+[[architecture.allow]]
+from = "billing"
+to = "shared"
+packages = ["com.example.shop.domain.shared.money.."]
+reason = "billing reads the shared money value objects"
+expires = "2027-01-31"
+```
+
+All five keys are required. `packages` must name a bounded package inside the
+`to` slice — a blanket `com.example.shop.domain..` is refused, because an
+allowance that covers everything is the rule switched off under another name.
+`expires` is what stops one outliving its reason, and an allowance nothing uses
+fails the suite so a dependency that has since gone does not leave a permanent
+hole.
+
+**jails never acts on these; the generated test reads them.** They live in
+`jails.toml` rather than under `.jails/` because they are about your code and
+are read by your build: `rm -rf .jails` leaves a project that still runs the
+same suite and reaches the same verdict. jails checks the shape when it reads
+the file — an unknown key is an error naming the five, for the same reason a
+misspelled layer is — and the suite reports everything else, where the refusal
+can name the dependency it was about.
+
+The frozen violations `jails architecture baseline` records live in
+`src/test/resources/archunit/frozen`, an ordinary checked-in test resource.
+
+All four tables are closed sets. This renames layers, declares capabilities and
+records reviewed architecture exceptions, and nothing else — no template
+overrides, no per-kind paths, no plugin hooks.
 
 Every command takes `--debug`, which prints the `mvnw`/`mvn`/`mvnd`/`java`/`git`/`curl`
 command lines jails shells out to instead of running them silently.
@@ -1634,7 +1668,9 @@ setting up ArchUnit's freeze store, as one command.
 Nothing on disk is rewritten. The permission is granted for one run through
 system properties, so `archunit.properties` stays strict in the repository and
 a new violation still fails the build. A baseline that edited the rules would
-be indistinguishable, six months later, from never having had them.
+be indistinguishable, six months later, from never having had them. The store
+is `src/test/resources/archunit/frozen`: an ordinary test resource, committed
+with the code it describes, and nothing under `.jails/`.
 
 ### A path that addresses its filters
 
