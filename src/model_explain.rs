@@ -31,27 +31,25 @@ const SCHEMA: &str = "jails.model-explain.v1";
 
 pub(crate) fn run(filter: Option<String>, invocation: Invocation) -> Result<()> {
     let manifest = crate::model_command::resolve_manifest(None)?;
-    let (source, model) =
+    // The source itself is not needed: this command reports what the linked
+    // model derived, and the layout is the one thing outside it.
+    let (_, model) =
         crate::model_command::load_model(&invocation.root()?, &manifest, invocation.output)?;
-    // Captured rather than taken from the parsed model, because the reader's
-    // layer renames arrive with the workspace and a linked model carries the
-    // defaults. Showing `com.example.domain` to a project whose `jails.toml`
-    // says `domain = "core"` would be a report about a project nobody has.
+    // **The layout, and only the layout.** The reader's layer renames arrive
+    // with `jails.toml` and a linked model carries the defaults, so showing
+    // `com.example.domain` to a project whose file says `domain = "core"`
+    // would be a report about a project nobody has.
+    //
+    // Read through `capture::facts`, which is the same reader the capture
+    // boundary uses, rather than by capturing the workspace: this command
+    // answers from the model and needs no file in the tree. A full capture
+    // read 1,421 files to learn one table's worth of package names, which is
+    // why `jails model explain` cost 149 ms at a hundred entities.
     let root = crate::model_command::root()?;
-    let snapshot = jails_project::capture::capture(
-        &root,
-        &manifest,
-        source.as_bytes(),
-        model,
-        None,
-        &[],
-        jails_project::capture::ModelFile::Observed,
-    )
-    .map_err(|error| {
-        Failure::diagnosed(error.code, format!("could not capture workspace: {error}"))
-    })?;
-    let mut model = snapshot.model.model;
-    model.project.layout = snapshot.project.layout;
+    let facts = jails_project::capture::facts(&root)
+        .map_err(|error| Failure::diagnosed(error.code, error.to_string()))?;
+    let mut model = model;
+    model.project.layout = facts.layout;
     model.refresh_derived();
 
     let matched = model

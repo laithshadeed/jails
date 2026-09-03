@@ -776,10 +776,18 @@ project is under 50 ms.
 the edited source equals the source on disk and the lock's model digest
 matches, answer before capture. *Done when* the repeat scaffold is 5 ms.
 
-**I71.1 — `model explain` and `resource status` read the model, not the
-tree.** *Change* both answer from `AppModel` and the lock's path list and
-never call capture. *Done when* both show under 30 `openat` at a hundred entities and
-finish under 20 ms.
+**I71.1 — `model explain` reads the model, not the tree.** *Half landed.*
+`model explain` needed exactly one external fact -- `jails.toml`'s layer
+renames -- and captured the whole workspace to get it: 1,421 files read to
+learn one table's worth of package names. It asks `capture::facts` for the
+layout instead, which is the same reader the capture boundary uses, and
+costs 9 ms at a hundred entities against 149 ms.
+
+*Remains:* `entity status` is 122 ms and genuinely needs live bytes -- it
+answers *edited* against *missing* per managed file, and the migration
+history it reads is a capture-boundary rule rather than a file list. Doing
+it without a capture means re-implementing both, which is a second reader
+of two things that have one; it belongs with I70.23 rather than beside it.
 
 **I71.2 — a manifest replay is one capture.** *Change* link every row into
 one edited source and run the pipeline once. *Done when* the idempotent
