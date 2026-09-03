@@ -44,12 +44,66 @@ pub(super) fn validate(
             );
         }
 
+        validate_constructable(&operation.kind, entity, &path, linker);
         validate_inputs(&operation.kind, &fields, &path, linker);
         validate_targets(&operation.kind, &fields, &path, linker);
         if let OperationKind::Transition(transition) = &operation.kind {
             validate_precondition(transition, entity, &path, linker);
         }
     }
+}
+
+/// A command that carries nothing cannot create a row that requires
+/// something.
+///
+/// **Refused where it is declared, not where it is rendered.** The insert
+/// emitter already refuses a required field it cannot construct, and it is
+/// the exact rule -- but it runs only for an entity with storage, so
+/// `jails g usecase CreateNote --on Note` was accepted, written into the
+/// model, and refused by the first `jails add db`, several commands later,
+/// about a declaration the reader had stopped thinking about.
+///
+/// Deliberately the narrow half: a command with no inputs, no parameters and
+/// no assignments constructs nothing, whatever the compiler later resolves,
+/// so this cannot refuse a command the emitter would have accepted. A command
+/// that carries *some* fields is still the emitter's to judge, field by
+/// field, with the resolution in hand.
+fn validate_constructable(
+    kind: &OperationKind,
+    entity: &crate::Entity,
+    path: &str,
+    linker: &mut Linker,
+) {
+    let OperationKind::Command(command) = kind else {
+        return;
+    };
+    if !command.fields.is_empty()
+        || !command.semantics.parameters.is_empty()
+        || !command.semantics.assignments.is_empty()
+    {
+        return;
+    }
+    let Some(field) = entity.fields.iter().find(|field| {
+        field.required
+            && field.semantics.default.is_none()
+            && field.semantics.scope.is_none()
+            && !field.semantics.updated
+            && !field.semantics.version
+    }) else {
+        return;
+    };
+    linker.problem(
+        "model-command-constructs-nothing",
+        format!("{path}.fields"),
+        format!(
+            "this command carries no input and `{}` requires `{}`",
+            entity.label, field.label
+        ),
+        format!(
+            "carry `{}` in the command, or give the field a default",
+            field.label
+        ),
+    );
 }
 
 fn routed(kind: &OperationKind) -> bool {

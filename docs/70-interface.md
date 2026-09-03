@@ -698,11 +698,6 @@ scope bar refuses. Expose I70.8's twenty words plus `commands` and
 - **One command, two plans.** `g scaffold Task … --index 'done, created_at
   desc'` prints two `applied` lines and appends two migrations
   (`V002__create_tasks.sql`, `V003__add_idx_…`).
-- **An error surfaces later.** `g usecase CreateNote --on Note` with no
-  fields is accepted and writes `command CreateNote() {}`; `set`,
-  `rename` and every `g` keep working; the first `add db` refuses with
-  *canonical command `create_note` cannot construct required field
-  `title`*.
 - **The compiler declares what its linter forbids.** After one scaffold,
   `jails lint` reports `pom.xml:58: spring-boot-starter-web; use
   spring-boot-starter-webmvc`: `new` writes `webmvc`, the scaffold's
@@ -736,11 +731,14 @@ side-effect worth having: `--index` on a project with no database now
 refuses before anything is written, where it used to write the entity and
 refuse afterwards.
 
-**I70.18 — an error surfaces on the command that caused it.** *Change* the
-storage-independent half of the check runs at `g usecase` time, or the
-linker refuses an operation that can construct none of its entity's
-required fields under either storage. *Done when* the `g usecase` above
-refuses with that message.
+**I70.18 — an error surfaces on the command that caused it.** *Landed, as
+the narrow half.* The linker refuses a command that carries no input, no
+parameters and no assignments while its entity has a required field with no
+default -- `model-command-constructs-nothing`, at the declaration rather
+than at the first `add db`. Deliberately narrow: a command that carries
+*some* fields stays the insert emitter's to judge field by field, with the
+resolution in hand, so the linker cannot refuse something the compiler
+would have accepted.
 
 **I71.12 — the compiler and the linter agree.** *Landed.* The servlet
 starter's name is decided from the captured Boot major in one place beside

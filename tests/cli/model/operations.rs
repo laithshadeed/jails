@@ -3,6 +3,58 @@
 //!
 use super::*;
 
+/// **A refusal surfaces on the command that caused it.**
+///
+/// `g usecase CreateNote --on Note` with no fields was accepted and written
+/// into the model; `set`, `rename` and every `g` kept working; and the first
+/// `add db` refused, several commands later, about a declaration the reader
+/// had stopped thinking about. The insert emitter's rule is the exact one
+/// but runs only for an entity with storage, so the linker takes the narrow
+/// half: a command carrying nothing constructs nothing, whatever a compiler
+/// with a database would later resolve.
+#[test]
+fn a_command_that_carries_nothing_is_refused_where_it_is_declared() {
+    let root = jdl_project("command-constructs-nothing", NOTES_JDL);
+    write_spring_fixture(&root);
+    let scaffolded = jails_cmd(&root, None)
+        .args(["g", "scaffold", "Note", "id:uuid@pk", "title:string"])
+        .output()
+        .unwrap();
+    assert!(
+        scaffolded.status.success(),
+        "{}",
+        String::from_utf8_lossy(&scaffolded.stderr)
+    );
+    let before = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
+
+    let refused = jails_cmd(&root, None)
+        .args(["g", "usecase", "CreateNote", "--on", "Note"])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success(), "the command was accepted");
+    let told = String::from_utf8_lossy(&refused.stderr);
+    assert!(told.contains("model-command-constructs-nothing"), "{told}");
+    assert!(told.contains("`note` requires `title`"), "{told}");
+    assert!(told.contains("fix: carry `title` in the command"), "{told}");
+    assert_eq!(
+        fs::read_to_string(root.join(".jails/model.jdl")).unwrap(),
+        before,
+        "a refusal writes nothing"
+    );
+
+    // Carrying the field is accepted, and that is still the emitter's
+    // judgement field by field once there is a database.
+    let accepted = jails_cmd(&root, None)
+        .args(["g", "usecase", "CreateNote", "title:string", "--on", "Note"])
+        .output()
+        .unwrap();
+    assert!(
+        accepted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+}
+
 #[test]
 fn scoped_execution_context_survives_evolution_and_binds_tenant_at_runtime() {
     let root = jdl_project(
