@@ -469,10 +469,7 @@ was written*, and `remove json` over a hand edit answers *edited by you but
 removed by the generator; fix: move the custom code to reader source, keep
 the model component, or repeat with `--yes`*. `g record Bad ref:Missing`
 answers *`Missing` is neither in this model nor in your own sources; fix:
-declare it with `jails g record Missing …`*. Against that: outside a
-project the same situation is reported three ways (*this directory is not
-a Java project…*, *no pom.xml (or build.gradle, …)*, *could not read
-application model*), one with a fix line; twelve messages point at
+declare it with `jails g record Missing …`*. Against that: twelve messages point at
 `[entities]`, `[capabilities]`, `[settings]` or `[dependencies]`, tables
 of a format the tree refuses by name; `kafka lag` on a
 fresh group prints a raw `GroupIdNotFoundException` with exit 0; `doctor`
@@ -563,10 +560,6 @@ lock file removed while a holder has it open is a lock the next opener
 cannot see -- the trap `claim_fixture` documents in the harness. The report
 leaves it out instead.
 
-
-**I70.4 — one "not a project" refusal.** *Change* one message with one fix
-line, decided in `model_command::root` where the one walk is. *Done when*
-thirteen commands print byte-identical refusals outside a project.
 
 **I70.5 and I71.39 — every refusal is fact, fix, nothing written.**
 *Change* rewrite the twelve `[entities]`-style messages; every `fix:`

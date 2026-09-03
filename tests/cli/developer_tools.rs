@@ -1105,9 +1105,9 @@ fn every_kafka_subcommand_refuses_outside_a_project_rather_than_panicking() {
             "`kafka {subcommand}` succeeded in a directory with no project"
         );
         assert!(
-            stderr.contains("no pom.xml"),
-            "`kafka {subcommand}` refused without naming the missing build \
-             file: {stderr}"
+            stderr.contains("is not a project"),
+            "`kafka {subcommand}` refused without saying the directory is not \
+             a project: {stderr}"
         );
     }
 }
@@ -1122,8 +1122,8 @@ fn architecture_baseline_refuses_outside_a_project() {
         .unwrap();
     assert!(!output.status.success());
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("no pom.xml"),
-        "the refusal should name the missing build file"
+        String::from_utf8_lossy(&output.stderr).contains("is not a project"),
+        "the refusal should say the directory is not a project"
     );
 }
 

@@ -883,6 +883,15 @@ fn model_check_reports_all_semantic_failures_as_one_json_document() {
 #[test]
 fn model_check_names_the_fix_when_the_default_model_is_missing() {
     let root = temp_dir("model-missing");
+    // **A project with no model, not a directory with no project.** Those are
+    // two conditions and they have two refusals; without the build file this
+    // reads the one that says to `cd` somewhere else, which names no manifest.
+    fs::write(
+        root.join("pom.xml"),
+        "<project><groupId>dev.example</groupId><artifactId>sample</artifactId>\
+         <version>0.0.1</version><modelVersion>4.0.0</modelVersion></project>",
+    )
+    .unwrap();
     let output = jails_cmd(&root, None)
         .args(["model", "check"])
         .output()

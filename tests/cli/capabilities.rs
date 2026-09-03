@@ -86,7 +86,7 @@ fn add_errors_outside_a_project() {
         .unwrap();
     assert!(!output.status.success());
     let told = String::from_utf8_lossy(&output.stderr);
-    assert!(told.contains("not a Java project"), "{told}");
+    assert!(told.contains("is not a project"), "{told}");
     assert!(told.contains("jails new"), "{told}");
 }
 

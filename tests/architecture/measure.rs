@@ -919,7 +919,11 @@ pub(crate) const SCRATCH_RS: &str = "jails-support/src/scratch.rs";
 /// conflict refusals went with it, and the reactor walk that read every
 /// parent pom with a `?` now reads through the capture boundary, where an
 /// unreadable pom is a pom that aggregates nothing.
-pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 82;
+///
+/// 82 -> 80: I70.4 gave "you are not standing in a project" one answer,
+/// decided in `model_command::root` where the one walk is. Two of the four
+/// wordings it replaced named no next step at all.
+pub(crate) const REFUSALS_WITHOUT_A_FIX: usize = 80;
 
 /// A refusal that builds a message and does not say what to do next.
 ///

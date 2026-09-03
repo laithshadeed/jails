@@ -270,7 +270,7 @@ fn nearest_build_root(start: &Path) -> Result<PathBuf> {
         }
     }
     Err(jails_support::Failure::Told(
-        "no pom.xml or build.gradle found in this or any parent directory".to_string(),
+        jails_spec::spec::paths::not_a_project(),
     ))
 }
 

@@ -25,13 +25,23 @@ pub fn find_project_root() -> Result<PathBuf> {
             return Ok(dir);
         }
         if !dir.pop() {
-            return Err(jails_support::Failure::Told(
-                "no pom.xml (or build.gradle, settings.gradle, build.xml, BUILD.bazel) \
-                 in this or any parent directory"
-                    .to_string(),
-            ));
+            return Err(jails_support::Failure::Told(not_a_project()));
         }
     }
+}
+
+/// The one refusal for "you are not standing in a project".
+///
+/// **One condition, one sentence.** Four commands had four wordings for it:
+/// two lists of build files that differ, a paragraph about the base package,
+/// and a missing-model error that says nothing about the directory. A reader
+/// who types the wrong `cd` should learn the same thing whichever command
+/// told them, and the fix is the same one either way.
+pub fn not_a_project() -> String {
+    "this directory is not a project: jails found no build file here or in any parent \
+     directory\n       fix: run this inside a project, or create one with `jails new` \
+     or `jails new-cli`"
+        .to_string()
 }
 
 /// Read the package line off the project's `*Application.java` entry point
@@ -49,9 +59,10 @@ pub fn base_package(root: &Path) -> Result<String> {
             // in the wrong directory, and "no .java file under
             // src/main/java" reads as a project with a gap rather than as no
             // project at all -- so the reader goes looking for the file
-            // instead of for their project.
-            "this directory is not a Java project: jails reads the base package off the shallowest source under `src/main/java`, and there is none\n       fix: run this inside a project, or create one with `jails new` / `jails new-cli`"
-                .to_string()
+            // instead of for their project. Reaching here with a build file
+            // present and no source under it is the same answer to the
+            // reader, with the same fix.
+            not_a_project()
         })?;
     let contents = fs::read_to_string(&entry)
         .map_err(|e| format!("failed to read {}: {e}", entry.display()))?;

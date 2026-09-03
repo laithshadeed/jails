@@ -83,7 +83,7 @@ fn about_errors_outside_a_maven_project() {
     let root = temp_dir("about-no-project");
     let output = jails_cmd(&root, None).arg("about").output().unwrap();
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("pom.xml"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("is not a project"));
 }
 
 /// `kind` is a `clap::ValueEnum` and the `g`/`d` aliases are `visible_alias`,
@@ -1044,4 +1044,66 @@ fn src_resolves_a_type_and_lists_every_match() {
         String::from_utf8_lossy(&missing.stderr).contains("JAILS_SOURCE_PATH"),
         "the refusal names the way to widen the search"
     );
+}
+
+/// **One condition, one refusal.** Standing outside a project is the
+/// commonest way to be told no, and it used to be told four ways: two
+/// differing lists of build files, a paragraph about the base package, and a
+/// missing-model error that never mentioned the directory. The answer is
+/// decided in `model_command::root`, which is the one walk, so every command
+/// that needs a project prints the same bytes and the same fix.
+///
+/// `src` is deliberately absent: it requires no build file, so "not a
+/// project" is not the answer it owes the reader.
+#[test]
+fn every_command_that_needs_a_project_refuses_outside_one_in_the_same_words() {
+    let workdir = temp_dir("outside-a-project");
+    let commands: &[&[&str]] = &[
+        &["about"],
+        &["routes"],
+        &["beans"],
+        &["stats"],
+        &["notes"],
+        &["doctor"],
+        &["sync"],
+        &["g", "record", "Note"],
+        &["add", "db"],
+        &["remove", "db"],
+        &["model", "status"],
+        &["model", "explain"],
+        &["test"],
+        &["build"],
+        &["run"],
+        &["check"],
+        &["start"],
+        &["stop"],
+        &["adopt"],
+    ];
+    let mut seen: Vec<(String, String)> = Vec::new();
+    for command in commands {
+        let output = jails_cmd(&workdir, None).args(*command).output().unwrap();
+        assert!(
+            !output.status.success(),
+            "`jails {}` succeeded outside a project",
+            command.join(" ")
+        );
+        seen.push((
+            command.join(" "),
+            String::from_utf8_lossy(&output.stderr).to_string(),
+        ));
+    }
+    let (first, expected) = &seen[0];
+    assert_eq!(
+        expected.trim_end(),
+        "jails: this directory is not a project: jails found no build file here or in any \
+         parent directory\n       fix: run this inside a project, or create one with \
+         `jails new` or `jails new-cli`",
+        "`jails {first}` no longer prints the one refusal"
+    );
+    for (command, message) in &seen {
+        assert_eq!(
+            message, expected,
+            "`jails {command}` refuses in its own words"
+        );
+    }
 }

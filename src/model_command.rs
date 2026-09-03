@@ -40,13 +40,16 @@ pub(crate) fn project_root() -> Option<PathBuf> {
 
 /// The root every canonical command works against.
 ///
-/// Falls back to the process directory when there is no project at all, so a
-/// command run outside one refuses for its own reason rather than for this.
+/// **"You are not in a project" is answered here, once.** This is the one
+/// walk, so it is the only place that knows the answer is no, and letting
+/// each command fall through to its own next step produced four wordings for
+/// one condition: two differing lists of build files, a paragraph about the
+/// base package, and a missing-model error that never mentioned the
+/// directory. The reader learns the same thing whichever command they typed.
 pub(crate) fn root() -> Result<PathBuf> {
     match project_root() {
         Some(root) => Ok(root),
-        None => std::env::current_dir()
-            .map_err(|error| Failure::Told(format!("could not read current directory: {error}"))),
+        None => Err(Failure::Told(jails_spec::spec::paths::not_a_project())),
     }
 }
 
