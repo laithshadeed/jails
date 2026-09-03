@@ -12,6 +12,7 @@ mod execution_context;
 mod fragment;
 mod record_validation;
 mod repository;
+mod storage;
 mod time_ordered_uuid;
 
 use crate::Diagnostic;
@@ -156,15 +157,8 @@ pub(crate) fn emit(
             .values()
             .filter(|entity| entity.active && entity.facets.contains(&Facet::Repository))
         {
-            let unit = repository::lower_fake_repository(
-                model,
-                owner,
-                entity,
-                !stored && spring_boot.is_some(),
-            )?;
-            output
-                .insert(unit.path, unit.file)
-                .map_err(crate::refuse::duplicate_emission)?;
+            let node = storage::Stored::fake(owner, entity, !stored && spring_boot.is_some());
+            crate::recipe::render(model, &node, node.recipe(), snapshot, output)?;
             // A fake with no test of its own can drift from the adapter it
             // stands in for while every test using it stays green.
             if let Some(unit) =
@@ -188,10 +182,8 @@ pub(crate) fn emit(
             .values()
             .filter(|entity| entity.active && entity.facets.contains(&Facet::Repository))
         {
-            let unit = repository::lower_db_repository(model, owner, entity)?;
-            output
-                .insert(unit.path, unit.file)
-                .map_err(crate::refuse::duplicate_emission)?;
+            let node = storage::Stored::jdbc(owner, entity);
+            crate::recipe::render(model, &node, node.recipe(), snapshot, output)?;
             // The tier that answers the question the adapter exists for. See
             // `lower_db_repository_it`.
             if let Some(unit) = repository::lower_db_repository_it(model, owner, entity)? {
@@ -209,10 +201,8 @@ pub(crate) fn emit(
             .values()
             .filter(|entity| entity.active && entity.facets.contains(&Facet::Search))
         {
-            let unit = repository::lower_search_adapter(model, owner, entity)?;
-            output
-                .insert(unit.path, unit.file)
-                .map_err(crate::refuse::duplicate_emission)?;
+            let node = storage::Stored::search(owner, entity);
+            crate::recipe::render(model, &node, node.recipe(), snapshot, output)?;
         }
     }
     Ok(())
