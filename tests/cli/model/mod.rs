@@ -16,6 +16,7 @@ mod generate;
 mod merge;
 mod operations;
 mod plan;
+mod relocate;
 mod reports;
 mod resource;
 mod source;

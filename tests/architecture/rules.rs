@@ -63,6 +63,9 @@ fn owns_terminal_output(path: &Path) -> bool {
         // the lock's list of managed files, one line each, and a read-only
         // report whose whole contract is that list.
         || relative == "src/model_ownership.rs"
+        // `jails model relocate` prints the moves it made, once, the way
+        // every mutation reports the paths it wrote.
+        || relative == "src/model_relocate.rs"
         || relative == "src/parse_error.rs"
         // `app init` prints the file it seeded and what to do with it, and
         // `app plan` prints the manifest's declarations -- a plan that
@@ -412,6 +415,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails-workspace", "materialize", 6),
     ("jails-workspace", "reader_facet", 6),
     ("jails-workspace", "reconcile", 6),
+    ("jails-workspace", "relocate", 6),
     ("jails-workspace", "verify", 6),
     // jails-protocol: the validated values every closed format is built from.
     // jails-state: `.jails/` and what a directory holds. Below the Java
@@ -490,6 +494,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails", "model_setting", 9),
     ("jails", "model_status", 9),
     ("jails", "model_ownership", 9),
+    ("jails", "model_relocate", 9),
     ("jails", "model_migration", 9),
     ("jails", "canonical_support", 9),
     ("jails", "parse_error", 9),

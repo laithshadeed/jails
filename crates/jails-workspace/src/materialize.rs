@@ -319,6 +319,37 @@ fn materialize_migrations(
     Ok(())
 }
 
+/// The lock's bytes: the accepted model and projection, each sealed by its
+/// digest, and the published migrations. One encoder, so `relocate` -- which
+/// rewrites the projection's paths and nothing else -- writes the same file
+/// every plan does.
+pub(crate) fn encode_compiler_lock(
+    compiler: &str,
+    model: &jails_model::AppModel,
+    projection: &jails_contracts::RenderedTree,
+    migrations: BTreeMap<ProjectPath, ContentDigest>,
+    migration_bytes: BTreeMap<ProjectPath, Vec<u8>>,
+) -> Result<Vec<u8>, String> {
+    let model_bytes = model
+        .canonical_json()
+        .map_err(|error| format!("could not encode accepted compiler model: {error}"))?;
+    let model_digest = digest(&model_bytes)?;
+    let projection_bytes = serde_json::to_vec(projection)
+        .map_err(|error| format!("could not encode accepted compiler projection: {error}"))?;
+    let projection_digest = digest(&projection_bytes)?;
+    serde_json::to_vec_pretty(&CompilerLock {
+        schema: COMPILER_LOCK_SCHEMA,
+        compiler,
+        model_digest,
+        model,
+        projection_digest,
+        projection,
+        migrations,
+        migration_bytes,
+    })
+    .map_err(|error| format!("could not encode compiler lock: {error}"))
+}
+
 fn materialize_compiler_lock(
     snapshot: &WorkspaceSnapshot,
     draft: &PlanDraft,
@@ -328,25 +359,13 @@ fn materialize_compiler_lock(
     blobs: &mut BTreeMap<ContentDigest, Vec<u8>>,
     operations: &mut Vec<PlannedOperation>,
 ) -> Result<(), String> {
-    let model_bytes = draft
-        .next_model
-        .canonical_json()
-        .map_err(|error| format!("could not encode accepted compiler model: {error}"))?;
-    let model_digest = digest(&model_bytes)?;
-    let projection_bytes = serde_json::to_vec(&draft.generated)
-        .map_err(|error| format!("could not encode accepted compiler projection: {error}"))?;
-    let projection_digest = digest(&projection_bytes)?;
-    let lock_bytes = serde_json::to_vec_pretty(&CompilerLock {
-        schema: COMPILER_LOCK_SCHEMA,
-        compiler: compiler_version,
-        model_digest,
-        model: &draft.next_model,
-        projection_digest,
-        projection: &draft.generated,
+    let lock_bytes = encode_compiler_lock(
+        compiler_version,
+        &draft.next_model,
+        &draft.generated,
         migrations,
         migration_bytes,
-    })
-    .map_err(|error| format!("could not encode compiler lock: {error}"))?;
+    )?;
     let path = ProjectPath::parse(crate::capture::COMPILER_LOCK)?;
     let before = snapshot
         .files

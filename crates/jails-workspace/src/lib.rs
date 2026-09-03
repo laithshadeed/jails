@@ -9,6 +9,7 @@ pub mod fault;
 mod materialize;
 mod reader_facet;
 mod reconcile;
+mod relocate;
 mod verify;
 
 // The reader half lives in `jails-project`: capture, the document adapters
@@ -17,4 +18,5 @@ mod verify;
 pub use execute::{Execution, execute};
 pub(crate) use jails_project::{capture, documents, merge};
 pub use materialize::{Restore, digest, materialize};
+pub use relocate::{relocate, relocation_targets};
 pub use verify::verify_bundle;

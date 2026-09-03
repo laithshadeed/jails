@@ -39,6 +39,8 @@ pub(crate) enum ModelCommand {
     },
     /// List the files the accepted projection owns, and whether each still matches it
     Status,
+    /// Move managed output a release before this one wrote under .jails/generated into src/
+    Relocate,
     /// Show every name the convention derived rather than the author writing it
     Explain {
         /// Stable id, role, package or value to filter by; omit to list every record

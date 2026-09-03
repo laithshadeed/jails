@@ -5,7 +5,7 @@ pub(crate) use jails_model::field_syntax::{ParsedField, normalize_type, parse_fi
 mod profile;
 
 mod effects;
-mod report;
+pub(crate) mod report;
 
 pub(crate) use effects::{run_follow_up_effects, run_owed_format};
 use report::refuse_unconfirmed_deletions;

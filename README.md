@@ -63,6 +63,7 @@ jails model plan  [--manifest .jails/model.jdl] [--bundle plan.json]
 jails model apply --bundle plan.json
 jails model eject <boundary>
 jails model status
+jails model relocate
 jails model explain
 jails model fmt [--check]
 jails sync
@@ -79,7 +80,11 @@ it. `status` lists every file the accepted projection owns -- the lock's
 list, since managed files sit beside yours under `src/` -- and whether each
 is byte for byte what jails wrote, carries a hand edit the next generation
 merges over, or is missing; every managed file also carries a header line
-naming the artifact it was rendered from.
+naming the artifact it was rendered from. `relocate` is the one-time move
+for a project a release before this one generated under `.jails/generated`:
+every managed file the lock names moves to its `src/` path with its hand
+edits, the lock is rewritten, the marked source-root block leaves the build
+file, and it refuses by name if any destination already exists.
 
 **Ejection** is the escape hatch for one implementation boundary, named by a
 readable path (`Note.repo.fake`, `Note.http.api`, `Audit.implementation`)
