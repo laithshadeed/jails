@@ -1836,14 +1836,12 @@ fn prepared_diff_and_ast_show_create_replace_and_three_way_without_writing() {
     let blob = entries["src/test/java/com/example/demo/domain/NoteTest.java"]["blob"]
         .as_str()
         .expect("the merged companion is in the published tree");
-    let merged_test = merged_value["blobs"][blob].as_array().unwrap();
-    let merged_test = String::from_utf8(
-        merged_test
-            .iter()
-            .map(|byte| byte.as_u64().unwrap() as u8)
-            .collect::<Vec<_>>(),
-    )
-    .unwrap();
+    // A blob whose bytes are valid UTF-8 goes out as the text it is; see
+    // `jails_contracts::bytes_field::map`.
+    let merged_test = merged_value["blobs"][blob]
+        .as_str()
+        .expect("the merged companion is text")
+        .to_string();
     assert!(
         merged_test.contains("// reader-owned context"),
         "the merge dropped the reader's line:\n{merged_test}"

@@ -756,17 +756,30 @@ rather than as a convention that moved. No golden changed: every golden
 entity is one word, which is why the underscore survived this long.
 
 
-**I71.3 — the executor's work is proportional to the change.** *Change*
-verify preconditions by `stat` against what the last execution recorded,
-hashing only what moved; publish only entries whose digest differs from
-the lock's; hash the whole tree only under `check --frozen`. The crash
-proof in `tests/crash.rs` is untouched. *Done when* `g scaffold Thing101`
-on the hundred-entity project is under 100 ms and `execute` under 20 ms.
+**I71.3 — the executor's work is proportional to the change.** *Declined as
+specified, and the cost measured.* `execute` is 34 ms of a 138 ms
+mutation at a hundred entities, and it is spent re-reading and re-hashing
+every locked path -- which is the race guard, not waste: the preconditions
+are rechecked against the tree *as it is now* precisely because another run
+or an editor may have changed it since the capture. Verifying by `stat`
+would answer that question wrongly, because two files of equal length are
+not equal, and a wrong answer here is a wrong merge rather than a slow one.
+The pipeline's other phases came down instead: see I70.23 and I70.25.
 
-**I71.4 — the bundle carries what changed.** *Change* trees keyed by
-digest, blobs only for entries not already in the lock, the lock named
-as the bundle's base. *Done when* `--plan-out` for one record is a few
-kilobytes and the 924,449-line bundle is under 200 lines.
+**I71.4 — the bundle carries what changed.** *Part landed; the rest would
+cost portability.* Adding one record to a hundred-entity project wrote a
+64 MB, six-million-line plan file, because every blob went out as a
+pretty-printed array of integers -- one line a byte. Blobs are text now
+(`jails_contracts::bytes_field::map`): 7.6 MB and 24,735 lines, and both
+halves of the encoding could move because nothing digests the bundle's own
+JSON.
+
+*Declined:* "blobs only for entries not already in the lock, the lock named
+as the bundle's base". A plan is portable by content -- `--plan-in` applies
+one exported somewhere else, and `imported_plan_refuses_another_root`
+proves it refuses when the target does not match. A bundle that referred to
+a lock would be portable only to a project that already has that lock,
+which is most of the way to not being portable at all.
 
 **I70.23 — capture reads what the plan needs.** *Part landed, and the
 premise measured.* Reading and hashing all 1,421 files of a hundred-entity

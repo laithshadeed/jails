@@ -25,6 +25,70 @@ where
     deserializer.deserialize_any(EitherShape)
 }
 
+/// The same rule for a map of digests to bytes: the plan bundle's blobs.
+///
+/// **A pretty-printed array of integers is one line a byte.** Adding one
+/// record to a hundred-entity project wrote a 64 MB, six-million-line plan
+/// file, because every blob in the after-tree went out as
+/// `[\n  104,\n  105,\n  …\n]`. Nothing digests the bundle's own JSON --
+/// a blob is keyed by its content digest and verified against it -- so both
+/// halves are free to change here, unlike the lock, where only the file's
+/// shape could move.
+pub mod map {
+    use serde::de::{MapAccess, Visitor};
+    use serde::ser::SerializeMap;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::collections::BTreeMap;
+    use std::fmt::{Formatter, Result as FmtResult};
+    use std::marker::PhantomData;
+
+    /// Text where the bytes are valid UTF-8, an array where they are not.
+    pub fn serialize<S, K>(map: &BTreeMap<K, Vec<u8>>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+        K: Serialize + Ord,
+    {
+        let mut out = serializer.serialize_map(Some(map.len()))?;
+        for (key, bytes) in map {
+            match std::str::from_utf8(bytes) {
+                Ok(text) => out.serialize_entry(key, text)?,
+                Err(_) => out.serialize_entry(key, bytes)?,
+            }
+        }
+        out.end()
+    }
+
+    /// Either shape, so a bundle written by any release still applies.
+    pub fn deserialize<'de, D, K>(deserializer: D) -> Result<BTreeMap<K, Vec<u8>>, D::Error>
+    where
+        D: Deserializer<'de>,
+        K: Deserialize<'de> + Ord,
+    {
+        struct Entries<K>(PhantomData<K>);
+
+        impl<'de, K: Deserialize<'de> + Ord> Visitor<'de> for Entries<K> {
+            type Value = BTreeMap<K, Vec<u8>>;
+
+            fn expecting(&self, formatter: &mut Formatter<'_>) -> FmtResult {
+                formatter.write_str("a map of byte strings")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut access: A) -> Result<Self::Value, A::Error> {
+                #[derive(Deserialize)]
+                struct Entry(#[serde(deserialize_with = "super::deserialize")] Vec<u8>);
+
+                let mut out = BTreeMap::new();
+                while let Some((key, Entry(bytes))) = access.next_entry::<K, Entry>()? {
+                    out.insert(key, bytes);
+                }
+                Ok(out)
+            }
+        }
+
+        deserializer.deserialize_map(Entries(PhantomData))
+    }
+}
+
 struct EitherShape;
 
 impl<'de> Visitor<'de> for EitherShape {

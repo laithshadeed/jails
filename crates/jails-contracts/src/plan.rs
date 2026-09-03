@@ -169,5 +169,11 @@ pub struct PlanBundle {
     pub schema: String,
     pub plan: Plan,
     pub trees: BTreeMap<ContentDigest, TreeManifest>,
+    /// Every file the plan writes, keyed by its content digest.
+    ///
+    /// Written as text where the bytes are valid UTF-8: see
+    /// [`crate::bytes_field::map`]. Nothing digests the bundle's own JSON, so
+    /// unlike the lock both halves of the encoding are free to move.
+    #[serde(with = "crate::bytes_field::map")]
     pub blobs: BTreeMap<ContentDigest, Vec<u8>>,
 }
