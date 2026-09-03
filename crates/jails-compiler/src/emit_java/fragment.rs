@@ -123,12 +123,16 @@ pub(super) fn key_type(_: &AppModel, entity: &Entity) -> Result<Rendered, Diagno
 }
 
 /// A builder's state: one field per component, started at its sample.
-pub(super) fn factory_declarations(_: &AppModel, entity: &Entity) -> Result<Rendered, Diagnostic> {
+pub(super) fn factory_declarations(
+    model: &AppModel,
+    entity: &Entity,
+) -> Result<Rendered, Diagnostic> {
     let mut imports = BTreeSet::new();
     let text = entity
         .fields
         .iter()
         .map(|field| {
+            import_declared(model, &field.ty, &mut imports);
             let ty = builder_type(field, &mut imports);
             let sample = builder_sample(field, &mut imports).unwrap_or_else(|| "null".to_string());
             format!("    private {ty} {} = {sample};", field.names.java_member)
@@ -139,12 +143,13 @@ pub(super) fn factory_declarations(_: &AppModel, entity: &Entity) -> Result<Rend
 }
 
 /// A builder's fluent overrides, one per component. Spells `{{class}}`.
-pub(super) fn factory_methods(_: &AppModel, entity: &Entity) -> Result<Rendered, Diagnostic> {
+pub(super) fn factory_methods(model: &AppModel, entity: &Entity) -> Result<Rendered, Diagnostic> {
     let mut imports = BTreeSet::new();
     let text = entity
         .fields
         .iter()
         .map(|field| {
+            import_declared(model, &field.ty, &mut imports);
             let ty = builder_type(field, &mut imports);
             let name = &field.names.java_member;
             format!(
@@ -193,6 +198,47 @@ pub(super) fn factory_arguments(_: &AppModel, entity: &Entity) -> Result<Rendere
     Ok(Rendered::from(text))
 }
 
+/// Import every declared type this component names, from where the model
+/// says it lives.
+///
+/// **A project type is stored unqualified, so nothing else can add this
+/// import.** `java_type_ref` imports an External type only when the name it
+/// was given carries a package, which is true of a reader's own
+/// `com.example.Money` and never true of a `Colour` this model declares. In
+/// the record's own file that is right -- same package, no import -- and in
+/// the factory, which lives in `testkit`, it is a file that does not compile.
+/// `JavaUnit::import_from` drops an import into the unit's own package, so
+/// adding it unconditionally is correct in both places.
+pub(super) fn import_declared(
+    model: &AppModel,
+    ty: &jails_model::TypeRef,
+    imports: &mut BTreeSet<String>,
+) {
+    match ty {
+        jails_model::TypeRef::Builtin(_) => {}
+        jails_model::TypeRef::External(name) => {
+            if name.contains('.') {
+                return;
+            }
+            if let Some(declared) = model
+                .entities
+                .values()
+                .find(|entity| entity.active && &entity.names.java_type == name)
+            {
+                imports.insert(format!(
+                    "{}.{name}",
+                    super::entity_package(model, declared, jails_model::Package::Domain)
+                ));
+            }
+        }
+        jails_model::TypeRef::List(element) => import_declared(model, element, imports),
+        jails_model::TypeRef::Map(key, value) => {
+            import_declared(model, key, imports);
+            import_declared(model, value, imports);
+        }
+    }
+}
+
 fn builder_type(field: &Field, imports: &mut BTreeSet<String>) -> String {
     let java = java_type(field, imports);
     if field.required {
@@ -220,6 +266,19 @@ fn builder_sample(field: &Field, imports: &mut BTreeSet<String>) -> Option<Strin
             *builtin, imports,
         )),
         TypeRef::External(_) => None,
+        // **An empty collection, not a sampled one.** A builder's default is
+        // the value a test that does not care about this component gets, and
+        // an empty list is the one value that is right whatever the element
+        // type is -- including the project types this function already
+        // declines to invent.
+        TypeRef::List(_) => {
+            imports.insert("java.util.List".to_string());
+            Some("List.of()".to_string())
+        }
+        TypeRef::Map(..) => {
+            imports.insert("java.util.Map".to_string());
+            Some("Map.of()".to_string())
+        }
     }
 }
 

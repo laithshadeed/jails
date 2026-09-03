@@ -46,6 +46,23 @@ pub(super) fn record_checks(
             ]);
         }
     }
+    // **A defensive copy, because a record component is not private.** The
+    // caller keeps their reference to the list they passed; `List.copyOf`
+    // makes the record's own view immutable and unshared, which is what JDL
+    // v1 §9.2 promises of a required collection. It rejects a null element
+    // too, so the `requireNonNull` above and this together say the whole of
+    // "this component is there and so is everything in it".
+    match component.ty {
+        TypeRef::List(_) => {
+            imports.insert("java.util.List".to_string());
+            statements.push(format!("{name} = List.copyOf({name});"));
+        }
+        TypeRef::Map(..) => {
+            imports.insert("java.util.Map".to_string());
+            statements.push(format!("{name} = Map.copyOf({name});"));
+        }
+        TypeRef::Builtin(_) | TypeRef::External(_) => {}
+    }
     if let Some((condition, message)) = length_check(component, name) {
         statements.push(illegal_argument(&condition, &message));
     }

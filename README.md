@@ -1391,8 +1391,13 @@ and is advertised nowhere, and so do `--force` (now `--yes`), `g field` (now
 `text`, `int`/`integer`, `long`, `boolean`, `date`, `datetime`, `instant`,
 `uuid`, `currency`, `decimal`, `bytes`, `duration`, `zone-id`, `uri`, `path`,
 `double`, plus `list<T>` and `map<K,V>` whose elements resolve the same way (`list<Match>`,
-`map<string,double>`). A collection component is defensively copied and
-defaults to empty rather than null, so no consumer has to guard a bucket. A **capitalised** one is a
+`map<string,double>`). A required collection is defensively copied with
+`List.copyOf`/`Map.copyOf` and rejects null, so the caller's own reference
+cannot change what the record holds; an optional one is `Optional.empty()`
+when it is absent. A map key is a `string` or an enum, an element is not
+itself optional or a collection, and a *stored* entity refuses a collection
+by name: a column type for one would be a codec, and the specification
+forbids that silently becoming JSON. A **capitalised** one is a
 type this project owns and is used verbatim, so the generators compose:
 
 ```

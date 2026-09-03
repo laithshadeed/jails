@@ -67,7 +67,7 @@ reopening a contract:
 | ~~6~~ | ~~I71.40, I71.41, I71.24~~ | ~~every scanner sees every source root; `test --affected` never selects nothing and passes~~ |
 | ~~7~~ | ~~I70.2~~ | ~~one JSON encoding, carrying the same value as the human report~~ |
 | 8 | ~~I70.8~~, I70.9 (one line over), ~~I71.18~~ | a one-screen `--help`, global flags printed once, `g <kind> --help` about the kind |
-| 9 | ~~I71.29~~, I71.26, ~~I71.28~~ | README, the specification and the binary agree |
+| ~~9~~ | ~~I71.29~~, ~~I71.26~~, ~~I71.28~~ | ~~README, the specification and the binary agree~~ |
 | ~~10~~ | ~~I71.14~~ | ~~every mutation prints the JDL it wrote~~ |
 
 **Worth a prototype before a decision:** `jails undo` (I71.15), bare `jails`
@@ -405,13 +405,30 @@ a link to find that out; a diagnostic with no location -- a collision
 between two declarations, which is about neither line alone -- carries a
 null `primary` rather than pointing at the top of the file.
 
-**I71.26 — collections exist.** *Change* the model accepts `list<T>` and
-`map<K,V>` on non-stored records and component payloads, as the
-specification's §9 already says; a stored entity refuses them with the
-reason (no column type). Implement rather than un-advertise: three
-documents promise it and the compact syntax already parses the angle
-brackets. *Done when* `g record Bag tags:list<string>` generates and
-`g scaffold Bag tags:list<string>` refuses naming the column.
+**I71.26 — collections exist.** *Landed.* `TypeRef` has `List` and `Map`
+variants, parsed by `TypeRef::parse` -- the element is parsed rather than
+pattern-matched, so a nested collection, an optional element and a
+non-string, non-enum map key are each refused with their own sentence
+instead of the "unknown field type" a reader used to get. `g record Bag
+tags:list<string> counts:map<Colour,int>` renders `List<String>` and
+`Map<Colour, Integer>` with the boxed type arguments a generic needs, the
+`java.util` imports, and the `List.copyOf` / `Map.copyOf` defensive copy
+§9.2 promises; an optional collection is `Optional<List<T>>` with the
+usual `requireNonNullElse`. A stored entity is refused by
+`model-stored-collection`, which names the *column* that cannot exist
+rather than the type that cannot be parsed, and `emit_sql` carries the
+same refusal as a backstop.
+
+Two things fell out of it. The durable job refuses to enqueue a
+collection payload rather than sampling one, because a queue row that is
+not the payload the caller sent loses the difference silently. And `g
+factory` did not import a declared component type at all -- `private
+Colour colour = null;` in `testkit` with no import, a generated file that
+does not compile -- which collections made visible and which is fixed
+here for every element type, bare or collected. The spring toolbox
+compiles the record and the factory under real javac, which is the only
+tier that could have caught either.
+
 
 **I71.27 — the reserved-word check is about columns, on stored entities.**
 *Landed.* `SqlName` carries the noun and the guard together, so a call site

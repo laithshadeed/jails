@@ -213,6 +213,8 @@ fn sql_literal(model: &AppModel, field: &jails_model::Field) -> Option<String> {
             let constant = declared.enum_constants.first()?;
             Some(format!("'{}'", constant.java_name))
         }
+        // A relation key is a column, and a collection is never one.
+        TypeRef::List(_) | TypeRef::Map(..) => None,
     }
 }
 
@@ -220,16 +222,17 @@ fn sql_literal(model: &AppModel, field: &jails_model::Field) -> Option<String> {
 fn orphan_literal(model: &AppModel, field: &jails_model::Field) -> Result<String, Diagnostic> {
     match &field.ty {
         TypeRef::Builtin(builtin) => Ok(builtin.semantics().sql_alternate.to_string()),
-        TypeRef::External(_) => sql_literal(model, field).ok_or_else(|| {
-            Diagnostic::without_a_fix(
-                "compile-relation-key-without-literal",
-                field.id.to_string(),
-                format!(
-                    "relation key `{}` has no SQL literal jails can spell",
-                    field.label
-                ),
-            )
-        }),
+        TypeRef::External(_) | TypeRef::List(_) | TypeRef::Map(..) => sql_literal(model, field)
+            .ok_or_else(|| {
+                Diagnostic::without_a_fix(
+                    "compile-relation-key-without-literal",
+                    field.id.to_string(),
+                    format!(
+                        "relation key `{}` has no SQL literal jails can spell",
+                        field.label
+                    ),
+                )
+            }),
     }
 }
 

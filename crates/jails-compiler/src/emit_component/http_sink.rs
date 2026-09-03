@@ -251,7 +251,7 @@ pub(crate) fn sample(
                     &mut imports,
                 ));
             }
-            TypeRef::External(_) => {
+            TypeRef::External(_) | TypeRef::List(_) | TypeRef::Map(..) => {
                 disabled = true;
                 arguments.push("null".to_string());
             }

@@ -344,6 +344,22 @@ fn sample(
     // otherwise fixed -- so without these a payload carrying a `uri` compiles
     // everywhere except here, where the symbol is undefined.
     let mut imports = BTreeSet::new();
+    // **One refusal, two ways in.** A project type jails cannot sample and a
+    // collection it will not invent a payload for are the same answer to the
+    // reader -- this job cannot be enqueued because this component does not
+    // survive the round trip -- so they share a constructor rather than
+    // splitting one sentence across two codes.
+    let unsampleable = |spelling: &str| {
+        Diagnostic::new(
+            "compile-durable-job-input-unsampleable",
+            format!("$.operations.{}", command.label),
+            format!(
+                "durable job cannot enqueue `{}`: its input carries `{spelling}`, which jails cannot serialize or sample",
+                command.label
+            ),
+            "use builtin-typed or enum command inputs, or write the queue by hand",
+        )
+    };
     for parameter in &spec.semantics.parameters {
         if !parameter.required || parameter.optional_filter {
             arguments.push("java.util.Optional.empty()".to_string());
@@ -384,14 +400,7 @@ fn sample(
             // lands inside a template whose import list is fixed, and a
             // constant reference needs no import to compile.
             TypeRef::External(name) => {
-                let constants = enum_constants(model, &name).ok_or_else(|| {
-                    Diagnostic::new(
-"compile-durable-job-input-unsampleable",
-format!("$.operations.{}", command.label),
-format!("durable job cannot enqueue `{}`: its input carries `{name}`, which jails cannot serialize or sample", command.label),
-"use builtin-typed or enum command inputs, or write the queue by hand",
-)
-                })?;
+                let constants = enum_constants(model, &name).ok_or_else(|| unsampleable(&name))?;
                 let domain = model.project.package_for(Package::Domain);
                 let qualified = |constant: &str| format!("{domain}.{name}.{constant}");
                 let Some(first) = constants.first() else {
@@ -410,6 +419,14 @@ format!("durable job cannot enqueue `{}`: its input carries `{name}`, which jail
                 // `None` where the enum has one constant, so the test says why
                 // rather than inventing a value.
                 alternates.push(constants.get(1).map(|second| qualified(second)));
+            }
+            // **Refused rather than enqueued empty.** A durable job replays a
+            // command from a queue row, so every component of its input has
+            // to survive the round trip; `List.of()` would enqueue a payload
+            // that is not the one the caller sent and lose the difference
+            // silently.
+            ty @ (TypeRef::List(_) | TypeRef::Map(..)) => {
+                return Err(unsampleable(&ty.canonical_name()));
             }
         }
     }

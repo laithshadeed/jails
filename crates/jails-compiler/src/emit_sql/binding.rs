@@ -80,6 +80,10 @@ pub(crate) fn bound_value(
         // A declared enum is a `text` column. `name()` rather than
         // `toString()`, which a reader may override.
         TypeRef::External(name) if declares_enum(model, name) => format!("{accessor}.name()"),
-        TypeRef::External(_) => accessor.to_string(),
+        // A collection has no column to bind to, and `sql_type` has already
+        // refused the entity that carries one: binding the accessor through
+        // unchanged is the answer that cannot mislead, because nothing
+        // downstream of a refused plan reads it.
+        TypeRef::External(_) | TypeRef::List(_) | TypeRef::Map(..) => accessor.to_string(),
     }
 }

@@ -347,6 +347,18 @@ pub enum Facet {
 pub enum TypeRef {
     Builtin(BuiltinType),
     External(String),
+    /// `list<T>`: an ordered collection of one element type.
+    ///
+    /// **A collection is a shape, and its element is an ordinary type.** The
+    /// element resolves exactly as a bare component's does -- lowercase is
+    /// jails', capitalised is the project's -- so `list<Match>` and
+    /// `list<string>` need no second table. JDL v1 §9.2 makes them valid on
+    /// non-stored records and component payloads only: a column type for one
+    /// would be a codec, and a codec that silently became JSON is the thing
+    /// the specification forbids by name.
+    List(Box<TypeRef>),
+    /// `map<K,V>`, whose key is `string` or an enum.
+    Map(Box<TypeRef>, Box<TypeRef>),
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -374,6 +386,9 @@ impl TypeRef {
     pub(crate) fn parse(value: &str) -> Result<Self, String> {
         if let Some(builtin) = BuiltinType::from_token(value) {
             return Ok(Self::Builtin(builtin));
+        }
+        if let Some(collection) = Self::parse_collection(value)? {
+            return Ok(collection);
         }
         // **Case is the rule, and it is what makes an unknown type an
         // error.** A lowercase token names one of jails' own types, so a
@@ -433,10 +448,86 @@ impl TypeRef {
         ))
     }
 
-    pub fn canonical_name(&self) -> &str {
+    /// `list<T>` and `map<K,V>`, or `None` when this is not one.
+    ///
+    /// **The element is parsed, not pattern-matched.** An element that is
+    /// itself a collection, an optional, or a misspelling is refused here
+    /// with the reason, so a nested shape cannot reach an emitter that has
+    /// no spelling for it.
+    fn parse_collection(value: &str) -> Result<Option<Self>, String> {
+        let Some((head, rest)) = value.split_once('<') else {
+            return Ok(None);
+        };
+        let Some(inner) = rest.strip_suffix('>') else {
+            if matches!(head, "list" | "map") {
+                return Err(format!("`{value}` is missing its closing `>`"));
+            }
+            return Ok(None);
+        };
+        match head {
+            "list" => Ok(Some(Self::List(Box::new(Self::element(inner, "list")?)))),
+            "map" => {
+                let Some((key, element)) = inner.split_once(',') else {
+                    return Err(format!(
+                        "`{value}` needs both a key and a value: a map is `map<K,V>`"
+                    ));
+                };
+                let key = Self::element(key.trim(), "map")?;
+                // JDL v1 §9.2: a key is a `string` or an enum, because those
+                // are the two things every wire format and every `Map` key
+                // spells the same way. An `instant` key reads back as a
+                // different instant on the other side of a serialiser.
+                if !matches!(key, Self::Builtin(BuiltinType::String) | Self::External(_)) {
+                    return Err(format!(
+                        "`{}` cannot key a map: a key is `string` or an enum this project declares",
+                        key.canonical_name()
+                    ));
+                }
+                Ok(Some(Self::Map(
+                    Box::new(key),
+                    Box::new(Self::element(element.trim(), "map")?),
+                )))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// One element of a collection: an ordinary type, and not another
+    /// collection or an optional.
+    fn element(value: &str, outer: &str) -> Result<Self, String> {
+        if value.is_empty() {
+            return Err(format!("`{outer}` needs an element type"));
+        }
+        if value.ends_with('?') {
+            return Err(format!(
+                "`{value}` cannot be optional inside a `{outer}`: optionality applies to the collection as a whole"
+            ));
+        }
+        match Self::parse(value)? {
+            nested @ (Self::List(_) | Self::Map(..)) => Err(format!(
+                "`{}` cannot be nested inside a `{outer}`: v1 collections hold scalars, enums and declared types",
+                nested.canonical_name()
+            )),
+            element => Ok(element),
+        }
+    }
+
+    /// Whether this type is one a column can hold.
+    ///
+    /// The refusal is the caller's, because only the caller knows which
+    /// declaration is being stored and what to tell the reader to do.
+    pub fn is_scalar(&self) -> bool {
+        matches!(self, Self::Builtin(_) | Self::External(_))
+    }
+
+    pub fn canonical_name(&self) -> String {
         match self {
-            Self::Builtin(builtin) => builtin.semantics().token,
-            Self::External(name) => name,
+            Self::Builtin(builtin) => builtin.semantics().token.to_string(),
+            Self::External(name) => name.clone(),
+            Self::List(element) => format!("list<{}>", element.canonical_name()),
+            Self::Map(key, value) => {
+                format!("map<{},{}>", key.canonical_name(), value.canonical_name())
+            }
         }
     }
 }

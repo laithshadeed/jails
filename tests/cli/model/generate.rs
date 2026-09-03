@@ -1944,3 +1944,106 @@ fn an_empty_package_is_the_base_package_and_is_written_quoted() {
         String::from_utf8_lossy(&checked.stderr)
     );
 }
+
+/// **Collections exist, because three documents said they did.**
+///
+/// JDL v1 §9.2 has described `list<T>` and `map<K,V>` on non-stored records
+/// since the specification was written, the README lists them among the field
+/// types, and the compact syntax already parsed the angle brackets -- and the
+/// linker answered `list<string>` is an unknown field type. This is the
+/// feature the documents promise: the shape, its Java, its defensive copy,
+/// and the one place it is refused.
+#[test]
+fn a_non_stored_record_carries_collections_and_a_stored_one_is_refused() {
+    let root = model_project("model-collections", EMPTY_MODEL);
+    let generated = jails_cmd(&root, None)
+        .args([
+            "g",
+            "record",
+            "Bag",
+            "tags:list<string>",
+            "counts:map<string,int>",
+            "spare:list<string>?",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    let record =
+        fs::read_to_string(root.join("src/main/java/com/example/notes/domain/Bag.java")).unwrap();
+    assert!(record.contains("List<String> tags"), "{record}");
+    // Boxed, because `Map<string, int>` is not a type and `Map<String, int>`
+    // does not compile.
+    assert!(record.contains("Map<String, Integer> counts"), "{record}");
+    assert!(record.contains("Optional<List<String>> spare"), "{record}");
+    assert!(record.contains("import java.util.List;"), "{record}");
+    assert!(record.contains("import java.util.Map;"), "{record}");
+    // The defensive copy §9.2 promises, and the null rejection beside it.
+    assert!(record.contains("tags = List.copyOf(tags);"), "{record}");
+    assert!(record.contains("counts = Map.copyOf(counts);"), "{record}");
+    assert!(
+        record.contains("spare = Objects.requireNonNullElse(spare, Optional.empty());"),
+        "{record}"
+    );
+
+    // A stored entity is refused, and the refusal names the column that
+    // cannot exist rather than the type that cannot be parsed.
+    let refused = jails_cmd(&root, None)
+        .args([
+            "g",
+            "scaffold",
+            "Crate",
+            "id:uuid@pk",
+            "labels:list<string>",
+        ])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    let told = String::from_utf8_lossy(&refused.stderr);
+    assert!(told.contains("model-stored-collection"), "{told}");
+    assert!(
+        told.contains("`list<string>` has no column type, so `labels` cannot be a stored field"),
+        "{told}"
+    );
+    assert!(
+        !fs::read_to_string(root.join(".jails/model.jdl"))
+            .unwrap()
+            .contains("Crate"),
+        "the refused entity was written anyway"
+    );
+}
+
+/// The shapes v1 does not have, each refused by what is wrong with it.
+///
+/// **A collection is one level deep and its elements are not optional**, and
+/// a map key is a `string` or an enum -- §9.2's three rules. Each has its own
+/// sentence, because "unknown field type" is what the reader saw before this
+/// feature existed and it is the least useful of the four.
+#[test]
+fn the_collection_shapes_v1_does_not_have_are_refused_by_name() {
+    let root = model_project("model-collections-refused", EMPTY_MODEL);
+    for (field, expected) in [
+        ("x:list<>", "`list` needs an element type"),
+        ("x:map<string>", "needs both a key and a value"),
+        (
+            "x:map<int,string>",
+            "`int` cannot key a map: a key is `string` or an enum this project declares",
+        ),
+        ("x:list<list<string>>", "cannot be nested inside a `list`"),
+        (
+            "x:list<string?>",
+            "cannot be optional inside a `list`: optionality applies to the collection as a whole",
+        ),
+    ] {
+        let refused = jails_cmd(&root, None)
+            .args(["g", "record", "Bad", field])
+            .output()
+            .unwrap();
+        assert!(!refused.status.success(), "`{field}` was accepted");
+        let told = String::from_utf8_lossy(&refused.stderr);
+        assert!(told.contains(expected), "completing `{field}`: {told}");
+    }
+}

@@ -555,10 +555,7 @@ fn refuse_unstorable_components(
             .fields
             .iter()
             .find(|candidate| candidate.primary_key)
-            .map(|candidate| match &candidate.ty {
-                jails_model::TypeRef::Builtin(builtin) => builtin.semantics().token.to_string(),
-                jails_model::TypeRef::External(name) => name.clone(),
-            })
+            .map(|candidate| candidate.ty.canonical_name())
             .unwrap_or_else(|| "uuid".to_string());
         return Err(Failure::Told(format!(
             "`{}` names the record `{}`, which cannot be persisted as a column of `{java_name}`.\n       fix: hold its key -- `{}:{key}` -- and declare the invariant with `jails g association {}{} {}=id --on {java_name} --yields {}`",

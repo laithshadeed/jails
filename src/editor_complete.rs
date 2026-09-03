@@ -231,6 +231,9 @@ fn spelling(ty: &jails_model::TypeRef) -> String {
             .find(|(candidate, _)| candidate == builtin)
             .map_or_else(|| "?".to_string(), |(_, row)| row.token.to_string()),
         jails_model::TypeRef::External(name) => name.clone(),
+        // `canonical_name` spells a collection the way a reader types it,
+        // which is the whole of what this function is for.
+        collection => collection.canonical_name(),
     }
 }
 

@@ -165,6 +165,10 @@ fn row(model: &AppModel, entity: &Entity, first: bool) -> Option<String> {
                 // every seeded entity with an enum column ship `[]` and a
                 // `@Disabled` test.
                 TypeRef::External(name) => enum_sample(model, name)?,
+                // A seed row is a row in a table, and a stored entity cannot
+                // carry a collection: the linker refuses that where the
+                // reader can see it. No seed rather than an invented column.
+                TypeRef::List(_) | TypeRef::Map(..) => return None,
             };
             Some(format!("    \"{}\": {value}", field.names.java_member))
         })

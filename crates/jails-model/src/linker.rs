@@ -245,6 +245,24 @@ pub(crate) fn link(
                     None
                 }
             };
+            // **JDL v1 §9.2: a stored field is a scalar or an enum.** A
+            // column type for a collection would be a codec, and the one
+            // codec nobody declared is JSON -- which the specification
+            // forbids by name because it changes what the database can
+            // answer questions about. The refusal names the column, because
+            // that is the thing that cannot exist.
+            if stored && let Some(collection) = ty.as_ref().filter(|ty| !ty.is_scalar()) {
+                linker.problem(
+                    "model-stored-collection",
+                    format!("{field_path}.type"),
+                    format!(
+                        "`{}` has no column type, so `{}` cannot be a stored field",
+                        collection.canonical_name(),
+                        sql_column
+                    ),
+                    "keep the collection on a non-stored record, or store its elements in their own entity",
+                );
+            }
             if field.primary_key {
                 primary_keys += 1;
                 if !field.required {

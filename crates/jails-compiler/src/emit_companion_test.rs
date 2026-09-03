@@ -342,6 +342,39 @@ fn sample_with(
         // enum and the record were generated two commands ago, so refusing to
         // fabricate one would be the tool forgetting what it just wrote.
         TypeRef::External(external) => declared_sample(model, external, imports, seen),
+        // **One element, not none.** An empty collection would satisfy every
+        // constructor and prove nothing about the defensive copy or the
+        // element type; a one-element sample is the value that exercises
+        // both. When the element is a type jails cannot sample, so is the
+        // collection, and the caller emits the disabled test it already
+        // emits for that component.
+        TypeRef::List(element) => {
+            imports.insert("java.util.List".to_string());
+            let element = element_sample(model, element, imports, seen)?;
+            Some(format!("List.of({element})"))
+        }
+        TypeRef::Map(key, value) => {
+            imports.insert("java.util.Map".to_string());
+            let key = element_sample(model, key, imports, seen)?;
+            let value = element_sample(model, value, imports, seen)?;
+            Some(format!("Map.of({key}, {value})"))
+        }
+    }
+}
+
+/// One element of a collection, sampled the way a bare component of that type
+/// would be.
+fn element_sample(
+    model: &AppModel,
+    ty: &TypeRef,
+    imports: &mut BTreeSet<String>,
+    seen: &mut BTreeSet<String>,
+) -> Option<String> {
+    match ty {
+        TypeRef::Builtin(builtin) => Some(builtin_sample(*builtin, imports)),
+        TypeRef::External(external) => declared_sample(model, external, imports, seen),
+        // Refused by `TypeRef::parse`; there is no third shape to sample.
+        TypeRef::List(_) | TypeRef::Map(..) => None,
     }
 }
 
@@ -400,6 +433,21 @@ pub(crate) fn named_json_sample(model: &AppModel, ty: &TypeRef, name: &str) -> O
 fn json_sample_with(model: &AppModel, ty: &TypeRef, seen: &mut BTreeSet<String>) -> Option<String> {
     match ty {
         TypeRef::Builtin(builtin) => Some(builtin.semantics().json.to_string()),
+        TypeRef::List(element) => Some(format!("[{}]", json_sample_with(model, element, seen)?)),
+        // A JSON object key is a string whatever the model's key type is, so
+        // an enum key is sampled and then quoted if it was not already.
+        TypeRef::Map(key, value) => {
+            let key = json_sample_with(model, key, seen)?;
+            let key = if key.starts_with('"') {
+                key
+            } else {
+                format!("\"{}\"", key.trim_matches('"'))
+            };
+            Some(format!(
+                "{{{key}: {}}}",
+                json_sample_with(model, value, seen)?
+            ))
+        }
         TypeRef::External(external) => {
             let entity = model
                 .entities

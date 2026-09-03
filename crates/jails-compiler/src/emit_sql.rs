@@ -688,6 +688,18 @@ fn sql_type(model: &AppModel, entity: &Entity, field: &Field) -> Result<&'static
             format!("project type `{name}` has no declared SQL representation"),
             "declare a codec before storing this field",
         )),
+        // **The linker refuses this before a plan exists, and this is the
+        // backstop.** JDL v1 §9.2 allows a collection on a non-stored record
+        // only, so a stored one is refused where the reader can still see
+        // their own declaration; reaching here means a projection was added
+        // without that check, and a column type invented for it would be the
+        // silent JSON the specification forbids.
+        ty @ (TypeRef::List(_) | TypeRef::Map(..)) => Err(Diagnostic::new(
+            "compile-collection-without-sql-type",
+            format!("$.entities.{}.fields.{}", entity.label, field.label),
+            format!("`{}` has no column type", ty.canonical_name()),
+            "keep the collection on a non-stored record, or store its elements in their own entity",
+        )),
     }
 }
 
@@ -714,7 +726,7 @@ fn sql_literal(entity: &Entity, field: &Field, value: &str) -> Result<String, Di
     };
     let builtin = match &field.ty {
         TypeRef::Builtin(builtin) => *builtin,
-        TypeRef::External(_) => return Err(invalid()),
+        TypeRef::External(_) | TypeRef::List(_) | TypeRef::Map(..) => return Err(invalid()),
     };
     // Grouped by how the builtin's literal is written, which is the row's
     // `literal` -- the same question `link_default` asks. Both parsed as

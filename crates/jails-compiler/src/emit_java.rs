@@ -451,6 +451,22 @@ pub(crate) fn java_type_ref(
                 qualified.clone()
             }
         }
+        // **A type argument is always the boxed spelling**, which is what
+        // `false` says here: `List<Long>` compiles and `List<long>` does not,
+        // and the required-ness of the collection belongs to the collection
+        // rather than to its elements.
+        TypeRef::List(element) => {
+            imports.insert("java.util.List".to_string());
+            format!("List<{}>", java_type_ref(element, false, imports))
+        }
+        TypeRef::Map(key, value) => {
+            imports.insert("java.util.Map".to_string());
+            format!(
+                "Map<{}, {}>",
+                java_type_ref(key, false, imports),
+                java_type_ref(value, false, imports)
+            )
+        }
     }
 }
 

@@ -301,6 +301,23 @@ fn verified_spring_toolboxes(path: &str) -> &'static SpringToolboxes {
                     "name:string",
                     "createdAt:datetime",
                 ][..],
+                // The collection half of JDL v1 §9.2, which only real javac
+                // can answer for: `List.copyOf` in a compact constructor, a
+                // boxed type argument where the bare component would be a
+                // primitive, `java.util.List`/`Map` in the import block, and
+                // an enum keying a map. The factory is here because it is the
+                // one generated file that lands in a *different* package from
+                // the type it names, so it is where a missing import for a
+                // declared element type stops compiling.
+                &["generate", "enum", "Colour", "RED", "GREEN"][..],
+                &[
+                    "generate",
+                    "record",
+                    "Bag",
+                    "tags:list<string>",
+                    "counts:map<Colour,int>",
+                ][..],
+                &["generate", "factory", "Bag"][..],
                 &[
                     "generate",
                     "record",

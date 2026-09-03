@@ -4120,6 +4120,10 @@ fn standalone_generators_companion_tests_compile_and_pass() {
         "com/example/demo/web/HealthControllerTest.class",
         "com/example/demo/service/BillingServiceTest.class",
         "com/example/demo/domain/TagTest.class",
+        // The collection record and the factory that names its element type
+        // from another package.
+        "com/example/demo/domain/BagTest.class",
+        "com/example/demo/testkit/BagFactory.class",
         // The socket's two behaviours run here rather than in a container:
         // both are about the session registry.
         "com/example/demo/web/ChatSocketHandlerTest.class",
