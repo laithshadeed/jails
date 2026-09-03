@@ -1833,3 +1833,110 @@ entity Widget {
     let scoped = String::from_utf8_lossy(&scoped.stderr);
     assert!(scoped.contains("takes no selector"), "{scoped}");
 }
+
+/// **Two branches, one merge, and the base tree is what makes it a merge.**
+///
+/// The merge base used to be every managed file's bytes inside one JSON
+/// line, so two branches that generated different things conflicted in a
+/// file no reader can resolve. As files, each one merges on its own: `git
+/// merge` brings both sides' managed files and both sides' base files, and
+/// only the two documents both branches genuinely edited -- the model and
+/// the lock -- are left to resolve.
+///
+/// The second half is the sweep. Keeping one side's lock leaves base files
+/// that lock does not name, and a base file the lock does not name is the
+/// base of nothing; the next plan takes it away rather than leaving a copy
+/// of a file that is not managed any more.
+#[test]
+fn two_branches_merge_file_by_file_and_sync_sweeps_what_the_lock_lost() {
+    let root = model_project("model-merge-branches", EMPTY_MODEL);
+    // `-c` is git's own option and comes before the subcommand; a commit
+    // needs an identity and this fixture has none of its own.
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .args(["-c", "user.email=t@t", "-c", "user.name=t"])
+            .args(args)
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        (
+            output.status.success(),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ),
+        )
+    };
+    let commit = |message: &str| {
+        assert!(git(&["add", "-A"]).0);
+        assert!(git(&["commit", "-qm", message]).0);
+    };
+    assert!(git(&["init", "-q", "."]).0);
+    commit("base");
+    assert!(git(&["checkout", "-qb", "left"]).0);
+    assert!(
+        jails_cmd(&root, None)
+            .args(["g", "record", "Alpha", "title:string"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    commit("alpha");
+    assert!(git(&["checkout", "-q", "master"]).0 || git(&["checkout", "-q", "main"]).0);
+    assert!(git(&["checkout", "-qb", "right"]).0);
+    assert!(
+        jails_cmd(&root, None)
+            .args(["g", "record", "Beta", "title:string"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    commit("beta");
+    assert!(git(&["checkout", "-q", "left"]).0);
+
+    let (_, merged) = git(&["merge", "right"]);
+    // The model and the lock are the two documents both branches wrote to,
+    // and they are the only conflicts: every managed file and every base
+    // file merged on its own.
+    for path in [".jails/model.jdl", ".jails/compiler.lock.json"] {
+        assert!(merged.contains(path), "{merged}");
+    }
+    assert!(
+        !merged.contains("Alpha.java") && !merged.contains("Beta.java"),
+        "a managed file conflicted, so the merge base is not per file:\n{merged}"
+    );
+    assert!(
+        root.join(".jails/base/src/main/java/com/example/notes/domain/Alpha.java")
+            .is_file()
+            && root
+                .join(".jails/base/src/main/java/com/example/notes/domain/Beta.java")
+                .is_file(),
+        "the merge did not bring both sides' base files"
+    );
+
+    // Keep one side of each conflicted document, which is the documented
+    // resolution, and let `sync` reconcile.
+    assert!(git(&["checkout", "--ours", ".jails/model.jdl"]).0);
+    assert!(git(&["checkout", "--ours", ".jails/compiler.lock.json"]).0);
+    let synced = jails_cmd(&root, None).arg("sync").output().unwrap();
+    assert!(
+        synced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synced.stderr)
+    );
+    let report = String::from_utf8_lossy(&synced.stdout).to_string();
+    assert!(
+        report.contains("delete  .jails/base/src/main/java/com/example/notes/domain/Beta.java"),
+        "the base kept a file the lock no longer names:\n{report}"
+    );
+    // The reader's side is untouched: nothing under `src/` was deleted.
+    assert!(
+        root.join("src/main/java/com/example/notes/domain/Alpha.java")
+            .is_file()
+    );
+    assert!(
+        root.join("src/main/java/com/example/notes/domain/Beta.java")
+            .is_file()
+    );
+}

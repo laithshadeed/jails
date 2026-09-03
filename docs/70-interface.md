@@ -272,7 +272,18 @@ because every base file is byte-identical to the managed file it is the base
 for and git stores one object for both. The whole repository packs to 113
 KiB. `.gitattributes` marks `base/**` as `-diff` -- a diff of it is the diff
 of those files twice -- while leaving the merge alone, because a per-file
-conflict in the merge base is exactly the conflict worth seeing (I71.45).
+conflict in the merge base is exactly the conflict worth seeing.
+
+`two_branches_merge_file_by_file_and_sync_sweeps_what_the_lock_lost` is
+the journey: two branches generate different records, `git merge` brings
+both sides' managed files and both sides' base files with no conflict in
+any of them, and the only two conflicts are the documents both branches
+genuinely wrote to -- the model and the lock. Keeping one side of each and
+running `sync` then sweeps the base files that lock no longer names,
+because a base file the lock does not name is the base of nothing. That
+sweep is the one case the published tree cannot reach on its own: it
+retires what its predecessor held, and a merge leaves files neither tree
+ever mentions.
 
 Three decisions worth the words. The base is published only when it is
 stale *or absent*, and absence is read from the snapshot rather than from

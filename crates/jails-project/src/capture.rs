@@ -270,6 +270,16 @@ fn capture_model_state(
     // cannot be named in the plan, and stays behind importing a class the same
     // transition deletes.
     capture_optional_file(root, COMPILER_LOCK, &mut files, &mut preconditions)?;
+    // **The whole base directory, not only the paths the lock names.** A
+    // merge that keeps one side's lock and both sides' files leaves a base
+    // file nothing names, and a capture that only read the named ones would
+    // never see it again -- so it would sit there forever, a copy of a file
+    // that is not managed any more. Walking the directory is what lets the
+    // next plan take it away, and it is jails' own directory to walk.
+    let base_root = root.join(BASE_ROOT);
+    if base_root.is_dir() {
+        capture_tree(root, &base_root, &mut files, &mut preconditions)?;
+    }
     let accepted = accepted_compiler_state(root, &mut files, &mut preconditions)?;
     let managed = accepted
         .as_ref()

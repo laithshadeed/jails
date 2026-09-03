@@ -215,6 +215,17 @@ pub fn materialize(
     // A model that renders nothing has no base to publish, and publishing an
     // empty tree over an absent one is an operation that does nothing.
     let nothing_to_base = accepted_base.entries.is_empty() && base_before_id.is_none();
+    // Every base path either tree names: the desired one writes them, and
+    // the published operation retires what its predecessor held. What is
+    // left over is what neither knows about.
+    let mut base_paths = accepted_base
+        .entries
+        .keys()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    if let Some(previous) = &accepted_base_before {
+        base_paths.extend(previous.entries.keys().cloned());
+    }
     if let (Some(id), Some(tree)) = (&base_before_id, accepted_base_before) {
         trees.insert(id.clone(), tree);
     }
@@ -242,6 +253,25 @@ pub fn materialize(
             root: crate::capture::project_path(BASE_ROOT)?,
             before: base_before_id,
             after: base_after_id,
+        });
+    }
+    // **A base file the lock does not name is the base of nothing.** The
+    // published tree retires what its predecessor held, and that is every
+    // ordinary case; this is the one it cannot reach -- a merge that keeps
+    // one side's lock and both sides' files leaves a copy behind that no
+    // tree ever mentions again.
+    for (path, file) in &snapshot.files {
+        if !path.as_str().starts_with(&format!("{BASE_ROOT}/")) || base_paths.contains(path) {
+            continue;
+        }
+        let mode = if file.executable {
+            FileMode::Executable
+        } else {
+            FileMode::Regular
+        };
+        operations.push(PlannedOperation::RemoveFile {
+            path: path.clone(),
+            before: file_image(&file.bytes, mode, &mut blobs)?,
         });
     }
     // **Only a migration jails authored whole is sealed.** A derived one
