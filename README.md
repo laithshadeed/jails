@@ -890,12 +890,7 @@ there the unit is a whole service block rather than a setting.)
   without repeating semantic arguments, for example
   `jails generate scaffold --plan-in /tmp/reviewed-plan.json`. Import verifies
   the plan before taking the project lock, never reparses the original intent,
-  and then uses the normal journaled executor.
-- `jails history`, `jails show <transaction> [--diff] [--why]`, and
-  `jails undo <transaction>` inspect authenticated receipts and restore an
-  eligible newest file-only receipt as a new forward transaction. Undo refuses
-  migrations, rolling campaigns, external effects, and edited after-images;
-  crash recovery remains a separate automatic protocol.
+  and then goes through the one executor every other command does.
 - `jails db|dbconsole [file] [--no-start] [-- <args>...]` — `rails dbconsole`:
   `psql` against the compose postgres that `add db` started (credentials from
   `compose.yaml`). Starts postgres first unless `--no-start`. Pass a SQLite

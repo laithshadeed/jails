@@ -867,10 +867,15 @@ when* the second `jails run` on an unchanged tree answers in under 6 s.
 scans messages against `jails commands`; nothing scans README or the
 specification.
 
-**I71.29 — README is scanned like a message.** *Change* the same oracle
-reads README's backticked `jails <word>`; `history`, `show` and `undo`
-exist or leave the file (`undo` is I71.15). *Done when* the first row
-above is gone. I71.26, I71.28 and I71.33 close the rest.
+**I71.29 — README is scanned like a message.** *Landed.*
+`every_command_a_message_tells_the_reader_to_run_is_one_that_exists` reads
+the README's backticked commands too, expanding a `generate|g` heading into
+both spellings so the alias is part of the promise. `history`, `show` and
+`undo` left the file: they documented the receipts system deleted with the
+codec. Two entries are exempt by name -- "there is no `jails dev`" and the
+`g action` row under *Not yet* -- because they are the README saying a
+command does not exist, and a gate that could not tell them apart would
+push towards deleting the sentence rather than the gap.
 
 ---
 

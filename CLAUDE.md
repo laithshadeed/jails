@@ -873,7 +873,11 @@ this phase, and their refusals are worded by the caller that reports them.
   `clap::Command` that parses the arguments, to every depth. There is no
   second list. It is the oracle for
   `every_command_a_message_tells_the_reader_to_run_is_one_that_exists`, which
-  scans every backticked `jails ...` in a production message.
+  scans every backticked `jails ...` in a production message **and in
+  `README.md`**, which is the user-facing surface and the spec. A `generate|g`
+  heading is expanded into both spellings, so an alias is part of the promise;
+  two entries are exempt by name because the README names them to say they do
+  not exist.
 - **`crates/jails-report/src/source.rs`** -- `jails src <Type>`: where a type
   is. Deliberately requires no build file, lists every match rather than
   picking, and reads the package off the `package` line rather than the path.

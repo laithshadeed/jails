@@ -733,6 +733,47 @@ fn quoted_jails_commands() -> Vec<(String, String)> {
     let mut out = Vec::new();
     walk(&root.join("src"), &mut out);
     walk(&root.join("crates"), &mut out);
+    // **The README is scanned like a message, because it is one.** It is the
+    // user-facing surface and the spec (`CLAUDE.md`), so a command it
+    // describes and the binary does not have is the same failure as a fix
+    // line naming one -- and it survived longer here: `jails history`,
+    // `jails show` and `jails undo` documented a receipts system that was
+    // deleted with the codec.
+    let readme = std::fs::read_to_string(root.join("README.md")).unwrap_or_default();
+    for line in readme.lines() {
+        for segment in line.split("`jails ").skip(1) {
+            let Some(command) = segment.split('`').next() else {
+                continue;
+            };
+            if command.contains('"') || command.is_empty() {
+                continue;
+            }
+            // **Two commands the README names in order to say they do not
+            // exist.** "There is no `jails dev`" and the `g action` entry
+            // under *Not yet* are the README doing its job; a scanner that
+            // could not tell them apart would push the repository towards
+            // deleting the sentence rather than the gap.
+            const DESCRIBED_AS_ABSENT: &[&str] = &["dev", "g action"];
+            if DESCRIBED_AS_ABSENT
+                .iter()
+                .any(|absent| command == *absent || command.starts_with(&format!("{absent} ")))
+            {
+                continue;
+            }
+            // The README writes a command and its alias as one heading --
+            // `jails generate|g scaffold` -- so each spelling is checked,
+            // which is what makes the alias part of the promise too.
+            let mut words = command.split_whitespace();
+            let Some(head) = words.next() else { continue };
+            let rest: Vec<&str> = words.collect();
+            for spelling in head.split('|') {
+                out.push((
+                    "README.md".to_string(),
+                    format!("jails {}", [&[spelling][..], &rest[..]].concat().join(" ")),
+                ));
+            }
+        }
+    }
     assert!(
         out.len() > 50,
         "the message scanner found only {} commands -- it has lost track of where the \
