@@ -164,10 +164,11 @@ and 25 of 25**, held by `canonical_support::registry_classifies_every_advertised
 **The declarative ones are `Recipe` rows and `emit.rs` walks two tables.**
 `crates/jails-compiler/src/recipe.rs` is the shape -- files, dependencies,
 properties, compose services, build features, placement -- over a `Node`
-(capability, component, operation, stored entity), and `recipe::render` is
+(capability, component, operation, entity, stored entity, source unit), and
+`recipe::render` is
 the one loop; `emit.rs` holds `RECIPE_WALKS` and `FUNCTIONS`, and the second is the
-list of emitters that still build Java from the model's structure, which
-`docs/60-abstraction.md` S60.3 counts. A new kind that is substitution over a
+list of emitters that still build Java from the model's structure, each with
+the gate that keeps it there in its own module doc. A new kind that is substitution over a
 template is a row, not a module; a role appears in exactly one recipe and
 `Import::Role` resolves it by lookup. **What a template cannot say is a
 named fragment renderer**, rendered once per node and only when a selected
@@ -176,24 +177,41 @@ compact constructor, an enum's constants and wire members, a primary key's
 type, a builder's four lists), `emit_java/operation.rs` (a port's route,
 answer, context, row selector, expected version and `Input` record) and
 `emit_java/storage.rs` (a table's column list, an insert's columns, values,
-`on conflict` clause and bind chain). A fragment carries the imports its text needs and may spell `{{class}}`,
+`on conflict` clause and bind chain) and `emit_java/unit.rs` (a sealed
+hierarchy's permits clause, its nested records, its switch arms and its
+tests). A fragment carries the imports its text needs and may spell `{{class}}`,
 because fragments are substituted before the file's keys. The entity's
 one-file facets are three `Recipe<Entity>` (`emit_java/entity.rs`, one per
-compiler pass), the operation ports one `Recipe<Operation>`, and the
+compiler pass), the operation ports one `Recipe<Operation>`, the
 in-memory, JDBC and search adapters three `Recipe<Stored>`
-(`emit_java/storage.rs`); `dto`, `http`, `seed`, the units, the operation
-adapters and the proofs stay functions.
+(`emit_java/storage.rs`), and six of the eight source-unit kinds --
+`class`, `interface`, `service`, `sealed`, `test`, `integration-test` --
+one `Recipe<SourceUnit>` each (`emit_java/unit.rs`, one per kind because
+every main file's role is `main` and every companion test's is `test`);
+`dto`, `http`, `seed`, the record's companion test, `strategy`,
+`controller`, the operation adapters and the proofs stay functions.
 
-**Whether an emitter can be a row is decided by the fragment's signature.**
+**Whether an emitter can be a row is decided, and there are three gates.**
 A `Fragment::Rendered` is one named function of `(&AppModel, &Node)`,
-independent of every other fragment, so an emitter is a row when its
-structural blocks are *independent* answers about one node and a function
-when they are several outputs of one pass over the fields -- a command's
-insert columns, bind chain, answer type and collaborator all come off one
-ladder, and four fragments walking it separately would agree by luck. The
-second gate is a fact the signature does not carry: `dto`'s validation
-annotations need the captured Boot major (`jakarta` vs `javax`), which is a
-package *prefix* and so is not an `Import::Moved` row either.
+independent of every other fragment, and a recipe's `files` is a static list
+of one file each. So an emitter is a row when its structural blocks are
+*independent* per-node answers, and it stays a function when (1) its blocks
+are several readings of one pass over the fields -- a command's insert
+columns, bind chain, answer type and collaborator all come off one ladder,
+`dto`'s `toDomain` arguments and its hoisted locals off one hoist, and
+`seed`'s data file and its test's `@Disabled` off one sampling walk, and
+fragments walking those separately would agree by luck; (2) a block needs a
+fact the signature does not carry -- `dto`'s validation annotations need the
+captured Boot major (`jakarta` vs `javax`), which is a package *prefix* and
+so is not an `Import::Moved` row either, and every MockMvc dialect needs the
+same version; or (3) the files it writes are not one per row -- `strategy`
+emits one implementation and one test per variant, `emit_architecture` one
+file per model. **Widening `Fragment::Rendered` to carry project facts was
+weighed for `dto` and declined**, and the two reasons are the general
+answer: a captured fact can already ride on the *node* (`Stored` does it
+below), so gate 2 never needs a wider signature; and `dto` fails gate 1 as
+well, which no signature reaches -- so the change would widen every
+fragment and leave `dto` a function anyway.
 
 **`Stored` is why the storage adapters became rows.** Which owner an adapter
 belongs to and which one is the project's bean come from

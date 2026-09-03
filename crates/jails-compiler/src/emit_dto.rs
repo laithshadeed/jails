@@ -4,6 +4,22 @@
 //! Their artifact ids therefore differ even though field evolution recompiles
 //! them in one plan. DTOs are managed ABI: reader edits merge, but ownership
 //! cannot be transferred away from the compiler.
+//!
+//! **Not a [`crate::recipe::Recipe`], and it fails both gates at once.** The
+//! request's components carry validation annotations whose package a Boot
+//! major moved (`jakarta` against `javax`), which is a *prefix* rather than a
+//! type and so is not an `Import::Moved` row either; and `toDomain`'s argument
+//! list and the locals hoisted above it are two outputs of one pass, because
+//! `--timestamps` has to read the clock once for the whole row and the hoist
+//! rewrites the arguments it found. Two fragments would each have to run the
+//! hoist to agree about it.
+//!
+//! The first gate alone would not keep it out: a fact of the captured build
+//! can ride on the node, which is how `emit_java::storage` carries the owner
+//! and the bean `emit::jdbc_on_classpath` decides. The second one cannot be
+//! moved anywhere, which is why widening `Fragment::Rendered` to carry project
+//! facts was considered for this emitter and declined -- it would make every
+//! other fragment's signature wider and still leave this one a function.
 
 use crate::emit_companion_test::JAVA_TEST_ROOT;
 use crate::emit_java::JavaUnit;

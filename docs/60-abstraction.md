@@ -43,23 +43,33 @@ Five specific shapes, each measured:
    recognises by name and refuses to read -- which is a different question
    from a module's `build` axis, and its `Foreign(name)` reaches a refusal.
 2. **Every declarative renderer is a `Recipe`; the structural ones are
-   still functions.** `Recipe<N>` (`jails-compiler::recipe`) is files,
+   still functions, and which side an emitter falls on is decided rather
+   than pending.** `Recipe<N>` (`jails-compiler::recipe`) is files,
    dependencies, properties, compose services, build features and a
    placement rule as one `static`, over a `Node` -- a capability, a
-   component, an operation or an entity -- and `recipe::render` is the one
-   loop. The 22 capability packs, twelve component kinds, the entity's
-   one-file facets, the operation ports, the three storage adapters, the
-   Kafka slice of an event and a command's outbox are rows, and what a
-   template cannot say is a named fragment renderer
-   (`emit_java/fragment.rs`, `emit_java/operation.rs`,
-   `emit_java/storage.rs`). `emit.rs` holds two tables: four recipe walks
-   and five function passes, and the five are what still builds Java from
-   the model's *structure* with `format!` -- the multi-file facets, a
-   query's SQL, a proof's request (657 sites). **An emitter is a row when
-   its structural blocks are independent answers about one node**, because
-   that is what a `Fragment::Rendered` -- one function of the model and the
-   node -- can be; it is a function when its blocks are several outputs of
-   one pass over the fields. S60.3 has the count and what is left.
+   component, an operation, an entity, a stored entity or a source unit --
+   and `recipe::render` is the one loop. The 22 capability packs, twelve
+   component kinds, the entity's one-file facets, the operation ports, the
+   three storage adapters, six of the eight source-unit kinds, the Kafka
+   slice of an event and a command's outbox are rows, and what a template
+   cannot say is a named fragment renderer (`emit_java/fragment.rs`,
+   `operation.rs`, `storage.rs`, `unit.rs`). **A `Fragment::Rendered` is one
+   named function of `(&AppModel, &Node)`, independent of every other
+   fragment, and a recipe's `files` is a static list of one file each.** So
+   an emitter is a row when its structural blocks are independent per-node
+   answers, and it stays a function on one of three gates: its blocks are
+   several readings of one pass over the fields (`dto`'s hoist, `seed`'s
+   sampling, the record's companion test, an operation adapter's ladder); a
+   block needs a fact the signature does not carry, in practice the captured
+   Boot major (`dto`'s validation package, every MockMvc dialect); or the
+   files it writes are not one per row (`strategy`, one per variant;
+   `emit_architecture`, one per model). `emit.rs` holds the two tables and
+   each remaining module's own doc names its gate. The widening of
+   `Fragment::Rendered` to carry project facts was weighed for `dto` and
+   declined: a captured fact can already ride on the *node*, which is how
+   `Stored` carries the owner and the bean, and `dto` fails the hoist gate
+   as well -- so the change would make 25 fragments' signatures wider and
+   still leave `dto` a function.
 3. **The compiler reads the snapshot.** Every pass takes
    `&WorkspaceSnapshot`; the two predicates the compiler decides over it
    (`emit::jdbc_on_classpath`, `emit::jspecify_on_classpath`) are named
@@ -112,166 +122,6 @@ before- and after-image, and the evolution is the only input the compiler
 needs beside the model. `Evolution` is one closed enum in `jails-model`,
 passed to `compile` and read by `emit_sql::derive`.
 
-### S60.3 — `Recipe` generalises `Pack` to every kind
-
-**Landed:** `Recipe<N>` in `crates/jails-compiler/src/recipe.rs` is the
-shape, `Node` is what a capability, a component, an operation and an entity
-each implement (its id and name, the closed `Key` vocabulary its templates
-may spell, the provenance its files carry, and the package one of its
-layers is -- an entity with a pinned `pkg` answers that for every row of
-its slice), and `recipe::render` is the one loop: for each node, look its
-recipe up, substitute the node's keys and the recipe's fragments into each
-row's template, and write it through the one `JavaUnit` shell. A row is
-
-```text
-JavaFile { role, template, before_boot, imports, only_when, source_set, placement, ejectable, class, template_class }
-```
-
-with `Naming` (`Fixed`, `Suffix`, `Wrap`, `By`) for the class, `Placement`
-for the layer, `Import::{Own, Role, From, Keyed, Moved, ContainerSupport}`
-for what the template cannot say, and `Fragment::{WhenCapability, WhenBoot,
-Rendered}` for what is structural. A fragment is rendered once per node and
-only when some selected file spells its key, so a primary key's type is
-asked of an entity with a port and never of an enum; a rendered fragment
-carries the imports its text relies on, and they join only the files that
-spell its key; a fragment may spell `{{class}}`, because fragments are
-substituted before the file's keys. `Need` refuses before rendering. A
-row's `role` is a `jails_model::boundary` entry, which is what makes
-`eject Task.repo.fake` resolve to the id the row emits.
-
-**The named fragment renderers exist**, and they are the closed set this
-item asked for: `emit_java/fragment.rs` renders a record's components and
-its compact constructor (through the same `record_declarations` and
-`record_constructor` every operation `Input` goes through), an enum's
-constants and the members its wire values need, a primary key's Java type,
-and the four lists a test-data builder is made of; `emit_java/operation.rs`
-renders a port's `ROUTE` constant, answer type, execution context, row
-selector, expected version and `Input` record; `emit_java/storage.rs`
-renders a table's column list, an insert's column and value lists, its `on
-conflict` clause and its bind chain, the primary key's Java type in the
-boxed spelling a type argument needs, and the `@Component` the in-memory
-adapter carries only when nothing else implements the port. The templates
-around them are real `.java` files under `templates/spring/` (`entity_*`,
-`operation_*`, `repository_*`, `search_jdbc`, `enum_converter`).
-
-Rows today: the 22 capability packs (`Recipe<Capability>`), twelve
-component kinds (`Recipe<Component>`), the entity's one-file facets --
-record, enum, repository port, service, events port, search port -- plus
-the test-data builder and the enum's Spring converter (three
-`Recipe<Entity>`, one per compiler pass), the four operation ports and the
-event's record (`Recipe<Operation>` in `emit_java/operation.rs`), the Kafka
-slice of an `event` and a command's outbox (`Recipe<Operation>`), and the
-three storage implementations -- the in-memory repository adapter, the JDBC
-one and the JDBC search adapter (three `Recipe<Stored>` in
-`emit_java/storage.rs`, again one per compiler pass). Of the 39 generator
-kinds, 18 are wholly rows (the twelve components, `record`, `value`,
-`factory`, `enum`, `event`, `search`); five are a row for the port and a
-function for what implements it or proves it (`repo`, `usecase`, `query`,
-`transition`, and `scaffold` through its `http` facet); the rest are
-functions. `emit.rs` walks two tables -- `RECIPE_WALKS` (four) and
-`FUNCTIONS` (five) -- and a unit test pins the lengths; `emit_java::emit`
-stays in `FUNCTIONS` because it hosts the entity, port and storage recipe
-walks *and* the functions below.
-
-**What a node is, is what unblocked the adapters.** The two reasons the
-storage adapters were not rows were both facts about *a stored entity*
-rather than about an entity: which owner the adapter belongs to and which
-one is the project's bean come from `emit::jdbc_on_classpath`, a fact of
-the captured build, and a storage-scoped artifact id is
-`art_<storage>_<entity>_<role>`, which the loop's `art_<node>_<role>` does
-not spell. `Stored` carries both -- the owner the caller resolved, the id
-prefix that owner implies, and the bean decision -- and the recipe shape
-did not change at all: `Node::provenance` is the node's, so the three
-provenances the emitters wrote out by hand are one match on which adapter
-this is.
-
-**The criterion an emitter is measured against, and it is the fragment's
-signature.** A `Fragment::Rendered` is one named function of `(&AppModel,
-&Node)`, independent of every other fragment on the recipe. So an emitter
-is a row exactly when its structural blocks are *independent* answers about
-one node, and it stays a function when either of two things is true: its
-blocks are several outputs of one pass over the fields -- two fragments
-recomputing one pass is the drift the fragment renderers exist to remove,
-and it is worse than the `format!` it replaced because the duplication is
-no longer visible in one function -- or a block needs a fact the signature
-does not carry, which in practice is the captured Boot major.
-
-**What remains, and why each is still a function.**
-
-- `emit_dto` -- the `dto` facet's request, response and contract test.
-  Fails both tests at once. The request's components carry validation
-  annotations whose package a Boot major moved (`jakarta` vs `javax`),
-  which is a *prefix* rather than a type and so is not an `Import::Moved`
-  row either; and its `toDomain` argument list and the locals hoisted above
-  it are two outputs of one hoisting pass, because `--timestamps` has to
-  read the clock once for the whole row.
-- `emit_resource_http` and `emit_seed` -- the other two multi-file facets.
-- `emit_unit` -- `class`, `interface`, `service`, `controller`, `sealed`,
-  `strategy`, `test`, `integration-test`.
-- `emit_operation` -- the command, query and transition adapters, **and
-  this is what the exit means by SQL lowering.** A command's insert column
-  list, its bind chain, its answer type and the collaborator it holds are
-  four outputs of one ladder over the target's fields -- a declared
-  assignment, then a `@scope` field, then `updated`, then a minted `uuid7`,
-  then any other default -- and the order of those arms is what decides
-  where a value comes from. Splitting it into four fragments would have
-  four functions walk that ladder and agree by luck.
-- `emit_relation` -- one integration proof per relation: the catalogue
-  query that says the constraint is there and which ordered pairs it holds,
-  and the rejected insert that says the database enforces it. One file, no
-  adapters; the earlier description here of "the join table and both sides'
-  adapters" was stale.
-- `emit_http` -- the controller of every routed operation and its HTTP
-  proof. The proof drives a request through `emit_mockmvc` from a sample of
-  the operation's input, which reaches across nodes; the controller's shape
-  is conditional on the binding, the precondition and the status set at
-  once.
-- `emit_architecture` -- one file per *model*, not per node, which the
-  recipe's node-per-row shape does not express.
-
-Beside them, two component kinds stay functions inside the component
-walk (`http_sink`, `durable_job`: each renders a sample argument list from
-*another* node's fields), and three model-level shared files
-(`SchedulingConfig`, `ApiError`, the architecture test) are one file per
-model rather than per node. The repository contract and the two tests that
-call it stay functions in `emit_java/repository.rs` for the `emit_http`
-reason: each reaches across nodes, for the record arguments a proof
-constructs and for the ancestor rows a foreign key demands before a child
-can be stored.
-
-The number to read is the `format!` count, **less the refusals**, because a
-refusal message is prose and will always be built with `format!`:
-
-```
-all=$(grep -rho 'format!(' crates/jails-compiler/src | wc -l)
-refusals=$(grep -rhoE 'Diagnostic::new\(|refuse::' crates/jails-compiler/src | wc -l)
-echo $((all - refusals))
-```
-
-657 now: 857 `format!` less 200 refusal sites. The whole-crate figure was
-834 when this file was first measured, 808 at the start of the `Recipe`
-work, 762 before the fragment renderers and 723 after them; it then rose to
-865 when A3.13 gave every compiler refusal a code and a `fix:` line of its
-own, which is why the subtraction is now part of the measurement.
-
-**And it is a weak number, which the storage adapters proved.** Moving
-three whole Java classes out of Rust and into templates -- some 120 lines
-of Java that had been living inside `format!` strings with every brace
-doubled -- moved the count by two, because a class body is *one* site
-however long it is. The count still only falls, so it is worth keeping as a
-ratchet, but the thing it is a proxy for is Java assembled in Rust, and the
-proxy is loose. What the row conversion actually bought is one shell, one
-path rule, one provenance rule and one import rule for three more files.
-
-**Exit:** every emitter whose structural blocks are independent per-node
-answers is a row plus named fragments, and `FUNCTIONS` holds only the SQL
-lowering (`emit_operation`), the proofs (`emit_http`, `emit_relation`, the
-repository contract and its two tests) and the model-level files
-(`emit_architecture`). Reaching it means the four in `emit_java` -- `dto`,
-`http`, `seed` and the units -- and the first of those needs
-`Fragment::Rendered` to carry the captured Boot major, which is a change to
-the recipe shape and should be made for `dto` or not at all.
-
 ## What stays exactly as it is
 
 The executor and its crash proof; the three-way merge and the lock's
@@ -280,12 +130,10 @@ BASE/OURS/THEIRS rule; `PlanBundle`, `PlannedOperation` (six kinds is right),
 `BuiltinSemantics` as the one type table; the marked block; the templates as
 `.java` files. None of these is where the shapes multiplied.
 
-## Where each plan meets this
+## What a plan step is measured against
 
-| item | plan | step |
-|---|---|---|
-| S60.3 `Recipe` | 55 | S55.2 (the shell) and S55.5 (packs as data) are its first two rungs |
-
-A plan step that lands a deletion without moving toward one of these is
+Every numbered `S60.n` item is closed, so this file is now the five nouns and
+the four verbs and nothing pending. A plan step that lands a deletion without
+moving toward one of these is
 still worth landing; a step that adds a *new* shape -- a fourth vocabulary, a
 `_with_x` variant, a second project reader -- is not, whatever it deletes.

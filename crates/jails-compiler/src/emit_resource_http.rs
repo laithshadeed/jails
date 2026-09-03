@@ -16,6 +16,17 @@
 //! The repository port is what it delegates to, because that is the port with
 //! the whole surface: `service` is a one-method stub, and the linker already
 //! refuses `http` on an entity without `repo`.
+//!
+//! **Not a [`crate::recipe::Recipe`], and three of its four files say why.**
+//! The `.http` collection is not Java: its bytes are per-entity and its own
+//! `{{baseUrl}}` syntax is exactly what a template's substitution would eat,
+//! which is why it is built with `format!` and escaped braces. The controller
+//! needs the validation package a Boot major moved (`jakarta` against
+//! `javax`), a *prefix* rather than a type. Its test drives the route through
+//! [`crate::emit_mockmvc`], which decides the entry point, the imports and the
+//! `throws` from the captured Spring version -- a fact `(&AppModel, &Entity)`
+//! does not carry. The port alone would be a row, and one row beside three
+//! functions is a worse module than four functions.
 
 use crate::Diagnostic;
 use crate::emit_java::{

@@ -18,6 +18,17 @@
 //! be called `Json`.** `cap json name=Api` writes `ApiJson`, and a runner
 //! naming a class the project does not have is a compile error in a file the
 //! reader did not write.
+//!
+//! **Not a [`crate::recipe::Recipe`], and the data file is why.** A recipe's
+//! `resources` are `&'static` bytes at a `&'static` path; this one is a JSON
+//! document sampled from the entity's own fields, at a path the table names.
+//! And the sampling is one pass with two readings: the rows *are* the data
+//! file, and whether both of them came out is what decides the `@Disabled` on
+//! the companion test. Splitting that into a fragment for the annotation and a
+//! function for the bytes would have the two walk the fields separately and
+//! agree by luck -- the test would say the file is complete while the file was
+//! written empty. The two Java files are templates already; what a row would
+//! buy them is not worth the third artifact leaving the module.
 
 use crate::Diagnostic;
 use crate::emit_java::JavaUnit;

@@ -10,8 +10,9 @@ Item numbers are stable and never reused.
 
 **Read `docs/00-contracts.md` first.** The simplification pass's compiler
 plan (plan 55) closed every item it held and its file is gone; the git log
-of that path is its record. `docs/60-abstraction.md` S60.3 is the direction
-these paths move in now.
+of that path is its record. `docs/60-abstraction.md` item 2 is the shape
+these paths have converged on, and the rule that decides whether the next
+emitter joins it.
 
 ## What you own
 
@@ -49,41 +50,54 @@ tests. Reproduce every item from a clean `jails new` and state the command.
 
 ---
 
-## A3.14 — the typed artifact IR
+## How the Java is assembled
 
-§20.1 pass 4 specifies `JavaFile` / `JavaDecl` / `JavaExpr` / `SqlExpr`. The
-emitters assemble Java and SQL with `format!`:
+§20.1 pass 4 specifies `JavaFile` / `JavaDecl` / `JavaExpr` / `SqlExpr`. What
+stands in its place is three shapes rather than one IR, and each of the three
+is landed: one `JavaUnit` for the package line, the import block and the class
+shell; one `emit_mockmvc` for the MockMvc dialect; and `Recipe<N>`
+(`docs/60-abstraction.md`, item 2), the declarative shape every capability
+pack, twelve component kinds, the entity's one-file facets, the operation
+ports, the three storage adapters, six of the eight source-unit kinds, the
+event's Kafka slice and the outbox are rows of -- with the structural Java a
+row cannot spell (a record's components and compact constructor, an enum's
+constants, a port's `Input` record, a table's column and bind lists, a sealed
+hierarchy's permits clause) as named fragment renderers in
+`emit_java/{fragment,operation,storage,unit}.rs`.
+
+**Which emitters are still functions is decided, not pending.** A
+`Fragment::Rendered` is one named function of `(&AppModel, &Node)` and a
+recipe's `files` is a static list of one file each, so an emitter is a row
+when its structural blocks are independent per-node answers, and a function
+when its blocks are several readings of one pass over the fields, when a block
+needs a fact the signature does not carry, or when its file count is not one
+per row. `emit.rs` holds the two tables and each remaining module's own doc
+names its gate: `dto` (the hoist, and the validation package a Boot major
+moved), `http` (the `.http` collection's own `{{...}}` syntax, and the MockMvc
+dialect), `seed` (one sampling pass feeding both the data file and the
+`@Disabled`), the record's companion test (the same), `strategy` (one file per
+variant), `controller` (the dialect), the operation adapters' SQL ladder, the
+proofs that reach across nodes, and `emit_architecture` (one file per model).
+
+The number to read is the `format!` count, **less the refusals**, because a
+refusal message is prose and will always be built with `format!`:
 
 ```
 all=$(grep -rho 'format!(' crates/jails-compiler/src | wc -l)
 refusals=$(grep -rhoE 'Diagnostic::new\(|refuse::' crates/jails-compiler/src | wc -l)
-echo $((all - refusals))     # 657: the Java and SQL, not the refusal prose
+echo $((all - refusals))     # 643: the Java and SQL, not the refusal prose
 ```
 
 **Read that number as a ratchet, not as progress.** A class body is one
 `format!` site however long it is, so moving the three storage adapters --
 about 120 lines of Java that lived in Rust strings with every brace doubled
--- into real `.java` templates moved it by two. It only ever falls, which is
-worth keeping; the thing it stands for is Java assembled in Rust, and it
-stands for it loosely.
-
-**Exit:** the IR exists and the emitters build it instead of strings. It is a
-phase, not a fix. Three rungs are landed: one `JavaUnit` for the package
-line, the import block and the class shell; one `emit_mockmvc` for the MockMvc
-dialect; and `Recipe<N>` (`docs/60-abstraction.md` S60.3), the declarative
-shape every capability pack, twelve component kinds, the entity's one-file
-facets, the operation ports, the three storage adapters, the event's Kafka
-slice and the outbox are rows of, with the structural Java a row cannot spell
--- a record's components and compact constructor, an enum's constants, a
-port's `Input` record, a table's column and bind lists -- as named fragment
-renderers (`emit_java/fragment.rs`, `emit_java/operation.rs`,
-`emit_java/storage.rs`). What is still `format!` is the multi-file facets
-(`dto`, `http`, `seed`), the units, the operation adapters' SQL and the
-proofs; S60.3 names them, keeps the count, and states the criterion that
-decides which side an emitter falls on -- a `Fragment::Rendered` is one
-function of the model and the node, so an emitter is a row when its
-structural blocks are independent answers and a function when they are
-several outputs of one pass over the fields.
+-- into real `.java` templates moved it by two, and the six unit kinds moved
+it by fourteen. It only ever falls, which is worth keeping; the thing it
+stands for is Java assembled in Rust, and it stands for it loosely. What the
+row conversions actually bought is one shell, one path rule, one provenance
+rule and one import rule for each file that moved -- which is how the units'
+three companion tests, the last generated Java writing its own import block by
+hand, came to be ordered the way palantir-java-format orders one.
 
 Output names are the boundary registry's (`jails_model::boundary`): a row's
 role is a registry entry and the function emitters name their artifacts

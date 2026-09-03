@@ -15,6 +15,14 @@
 //! - a component whose type jails cannot build a sample for disables the
 //!   *class*, naming the component, because the constructor call would not
 //!   compile.
+//!
+//! **Not a [`crate::recipe::Recipe`]: the three shapes are three readings of
+//! one sampling pass.** Which shape applies, which component is passed `null`,
+//! what the other arguments are, and whether the class carries `@Disabled` all
+//! come off one walk of the fields through [`sample`] -- the recursive one,
+//! with the `seen` set that stops a self-referential record. Fragments would
+//! have three functions run that walk and agree by luck, and the failure would
+//! be a test asserting a rejection the constructor call cannot even reach.
 
 use crate::emit_java::JavaUnit;
 use crate::{Diagnostic, emit_java};
