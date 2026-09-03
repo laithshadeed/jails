@@ -503,6 +503,7 @@ const LAYERS: &[(&str, &str, usize)] = &[
     ("jails", "cli", 9),
     ("jails", "dispatch", 9),
     ("jails", "plan_command", 9),
+    ("jails", "plan_delta", 9),
     ("jails", "rename_source", 9),
     ("jails", "arguments", 9),
 ];

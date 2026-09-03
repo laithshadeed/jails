@@ -311,3 +311,97 @@ fn preview_export_and_apply_all_name_one_plan_digest() {
         "the applied plan is not the reviewed one"
     );
 }
+
+/// The report is the change, and git is the oracle.
+///
+/// **`write` used to mean *in the plan*.** The managed tree's after-image
+/// holds every path the model renders, touched or not, so `resource field
+/// add Note tags:string` reported ten files written above a list of
+/// twenty-two lines, nineteen of them over files `git status` showed
+/// unchanged. The executor already skipped a file whose bytes were already on
+/// disk, so the count under the list was right and the list was wrong.
+///
+/// So the oracle is git: after each mutation the report's file lines and
+/// `git status --porcelain -uall` name the same paths, and therefore the same
+/// number of them. `-uall` because a directory git has never seen is one
+/// `status` collapses to a single `??` line, which would compare a report of
+/// files against a listing of directories.
+#[test]
+fn every_line_of_a_mutation_report_is_a_file_git_sees_change() {
+    let root = model_project("report-is-the-change", EMPTY_MODEL);
+    write_spring_fixture(&root);
+    let repository = std::process::Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(&root)
+        .status();
+    if !repository.is_ok_and(|status| status.success()) {
+        skip("git not found on PATH");
+        return;
+    }
+
+    let commit = |message: &str| {
+        for arguments in [vec!["add", "-A"], vec!["commit", "--quiet", "-m", message]] {
+            let done = std::process::Command::new("git")
+                .args(&arguments)
+                .env("GIT_AUTHOR_NAME", "jails")
+                .env("GIT_AUTHOR_EMAIL", "jails@example.com")
+                .env("GIT_COMMITTER_NAME", "jails")
+                .env("GIT_COMMITTER_EMAIL", "jails@example.com")
+                .current_dir(&root)
+                .status()
+                .unwrap();
+            assert!(done.success(), "`git {}` failed", arguments.join(" "));
+        }
+    };
+    commit("the fixture");
+
+    // One of each shape a mutation takes: files created beside a reader file
+    // patched, files created beside a tree left alone, files rewritten with
+    // nothing created, a capability, and a deletion.
+    for mutation in [
+        vec!["g", "scaffold", "Note", "id:uuid@pk", "title:string!"],
+        vec!["g", "scaffold", "Task", "id:uuid@pk", "name:string!"],
+        vec!["resource", "field", "add", "Task", "priority:int"],
+        vec!["add", "json"],
+        vec!["g", "record", "Money", "amount:long"],
+        vec!["destroy", "record", "Money", "--force"],
+    ] {
+        let output = jails_cmd(&root, None).args(&mutation).output().unwrap();
+        assert!(
+            output.status.success(),
+            "`jails {}`: {}",
+            mutation.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report = String::from_utf8_lossy(&output.stdout).to_string();
+        let reported: std::collections::BTreeSet<String> = report
+            .lines()
+            .filter_map(|line| line.strip_prefix("  "))
+            .filter_map(|line| line.split_once(char::is_whitespace))
+            .filter(|(verb, _)| ["create", "write", "patch", "delete", "append"].contains(verb))
+            .map(|(_, path)| path.trim().to_string())
+            .collect();
+
+        let status = std::process::Command::new("git")
+            .args(["status", "--porcelain", "-uall"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        let changed: std::collections::BTreeSet<String> = String::from_utf8_lossy(&status.stdout)
+            .lines()
+            .map(|line| line[3..].trim().to_string())
+            // The executor's own advisory lock, not a project file: a `jails
+            // new` project ignores `.jails/apply.lock`, and this fixture is a
+            // bare Maven tree with no `.gitignore` at all.
+            .filter(|path| path != ".jails/apply.lock")
+            .collect();
+
+        assert_eq!(
+            reported,
+            changed,
+            "`jails {}` reported a change git does not see, or missed one:\n{report}",
+            mutation.join(" ")
+        );
+        commit(&mutation.join(" "));
+    }
+}

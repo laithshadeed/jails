@@ -358,6 +358,22 @@ pub(crate) fn replay(requested: Option<&Path>, invocation: crate::Invocation) ->
         crate::model_generate_jdl::run(row, batched.clone())?;
     }
     crate::model_generate::run_owed_format(&invocation)?;
+    // **One command, one report.** Each row is the same pipeline and printed
+    // its own header, plan digest and whole file list: a fourteen-row manifest
+    // was 887 lines, fourteen of them digests, and none of them answered what
+    // the application now has. The rows filed a line each on the way past;
+    // this is the report they add up to.
+    if invocation.output == crate::Output::Human {
+        let filed = batched.filed_report();
+        for line in &filed.lines {
+            println!("{line}");
+        }
+        // Rows, not files: which files a row wrote is on its own line above,
+        // and the manifest's own path was printed when it was read. `jails
+        // new --app` copies the manifest into the project it is staging, so
+        // naming it here would name a directory that no longer exists.
+        println!("applied {} manifest rows", filed.rows);
+    }
     report_undeclared(root, &declared, &invocation)
 }
 

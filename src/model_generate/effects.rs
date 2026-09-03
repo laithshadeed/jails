@@ -39,7 +39,7 @@ fn drop_compiled_shadows(root: &std::path::Path, bundle: &jails_contracts::PlanB
         ("main", "build/classes/java/main"),
         ("test", "build/classes/java/test"),
     ];
-    for path in crate::model_command::deleted_paths(bundle) {
+    for path in crate::plan_delta::deleted_paths(bundle) {
         let text = path.as_str();
         let Some(name) = text.strip_suffix(".java") else {
             continue;

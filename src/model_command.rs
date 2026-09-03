@@ -264,10 +264,10 @@ pub(crate) fn sync(no_start: bool, invocation: Invocation) -> Result<()> {
                 execution.files_written,
                 execution.files_deleted
             );
-            for line in preview_lines(&bundle)
-                .iter()
-                .filter(|line| line.trim_start().starts_with("delete"))
-            {
+            // Every path it changes, the same list every other mutation
+            // prints: a convergence that names only its deletions answers
+            // half the question a reader runs `sync` to ask.
+            for line in crate::plan_delta::preview_lines(&bundle) {
                 println!("{line}");
             }
         }
@@ -469,110 +469,6 @@ fn check(root: &Path, manifest: &Path, frozen: bool, output: Output) -> Result<(
     Ok(())
 }
 
-/// Every path this bundle removes, managed tree entries included.
-///
-/// Shared with [`preview_lines`] so the sweep of compiled shadows cannot
-/// disagree with the deletions the reader was shown.
-pub(crate) fn deleted_paths(
-    bundle: &jails_contracts::PlanBundle,
-) -> Vec<jails_contracts::ProjectPath> {
-    use jails_contracts::PlannedOperation as Op;
-    let mut paths = Vec::new();
-    for operation in &bundle.plan.operations {
-        match operation {
-            Op::PublishMergedTree { before, after, .. } => {
-                let entries = |digest: &jails_contracts::ContentDigest| {
-                    bundle
-                        .trees
-                        .get(digest)
-                        .map(|tree| tree.entries.keys().cloned().collect())
-                        .unwrap_or_default()
-                };
-                let was: std::collections::BTreeSet<_> =
-                    before.as_ref().map(entries).unwrap_or_default();
-                let now: std::collections::BTreeSet<_> = entries(after);
-                paths.extend(was.difference(&now).cloned());
-            }
-            Op::RemoveReaderFile { path, .. } => paths.push(path.clone()),
-            _ => {}
-        }
-    }
-    paths
-}
-
-/// What this plan would do, one line per path, in the order it would do it.
-///
-/// **A dry run that prints a count is not a dry run.** The question a reader
-/// asks it is which of *their* files it is about to rewrite, and a digest and
-/// an operation count answer neither. Verbs are the executor's own
-/// distinctions rather than prose: a managed tree publishes, a reader file is
-/// patched or removed, a migration is appended and can never be rewritten.
-///
-/// The managed tree expands to its files. It is one operation carrying a
-/// whole after-image, so reporting it as `publish src` hides
-/// exactly the thing that changed, and the tree manifest is already in the
-/// bundle -- no filesystem read, and nothing here can disagree with what
-/// apply will write.
-pub(crate) fn preview_lines(bundle: &jails_contracts::PlanBundle) -> Vec<String> {
-    use jails_contracts::PlannedOperation as Op;
-    let mut lines = Vec::new();
-    for operation in &bundle.plan.operations {
-        match operation {
-            Op::PublishMergedTree {
-                root,
-                before,
-                after,
-            } => {
-                let was = before
-                    .as_ref()
-                    .and_then(|digest| bundle.trees.get(digest))
-                    .map(|tree| {
-                        tree.entries
-                            .keys()
-                            .collect::<std::collections::BTreeSet<_>>()
-                    })
-                    .unwrap_or_default();
-                let now = bundle
-                    .trees
-                    .get(after)
-                    .map(|tree| {
-                        tree.entries
-                            .keys()
-                            .collect::<std::collections::BTreeSet<_>>()
-                    })
-                    .unwrap_or_default();
-                // Tree entries are already project-relative, so the root is
-                // the operation's subject rather than a prefix to prepend.
-                let _ = root;
-                for path in now.union(&was) {
-                    let verb = match (was.contains(*path), now.contains(*path)) {
-                        (false, _) => "create",
-                        (true, true) => "write",
-                        (true, false) => "delete",
-                    };
-                    lines.push(format!("  {verb:<8}{}", path.as_str()));
-                }
-            }
-            Op::ReplaceModelFile { path, before, .. }
-            | Op::ReplaceStateFile { path, before, .. } => {
-                let verb = if before.is_some() { "write" } else { "create" };
-                lines.push(format!("  {verb:<8}{}", path.as_str()));
-            }
-            Op::PatchReaderFile { path, before, .. } => {
-                let verb = if before.is_some() { "patch" } else { "create" };
-                lines.push(format!("  {verb:<8}{}", path.as_str()));
-            }
-            Op::RemoveReaderFile { path, .. } => {
-                lines.push(format!("  {:<8}{}", "delete", path.as_str()));
-            }
-            Op::AppendMigration { path, .. } => {
-                lines.push(format!("  {:<8}{}", "append", path.as_str()));
-            }
-        }
-    }
-    lines
-}
-
 fn plan(root: &Path, manifest: &Path, bundle_path: Option<&Path>, output: Output) -> Result<()> {
     let (source, model) = load_model(root, manifest, output)?;
     let bundle = compile(
@@ -589,14 +485,15 @@ fn plan(root: &Path, manifest: &Path, bundle_path: Option<&Path>, output: Output
         jails_support::apply::put_outside_project_private_atomic(path, &encoded)?;
     }
     if output == Output::Human {
+        let delta = crate::plan_delta::preview(&bundle);
         println!(
-            "plan {}: {} operations, {} managed files{}",
+            "plan {}: {} operations, {}{}",
             bundle.plan.digest.as_str(),
             bundle.plan.operations.len(),
-            bundle.plan.summary.managed_files,
+            delta.summary(),
             bundle_path.map_or_else(String::new, |path| format!(", bundle {}", path.display()))
         );
-        for line in preview_lines(&bundle) {
+        for line in &delta.lines {
             println!("{line}");
         }
     } else {

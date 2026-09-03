@@ -43,7 +43,7 @@ pub(super) fn refuse_unconfirmed_deletions(
     if !removal || invocation.force || invocation.output != Output::Human {
         return None;
     }
-    let deletions = crate::model_command::preview_lines(bundle)
+    let deletions = crate::plan_delta::preview_lines(bundle)
         .into_iter()
         .filter(|line| line.trim_start().starts_with("delete"))
         .collect::<Vec<_>>();
@@ -139,13 +139,17 @@ pub(crate) fn report_plan(
     invocation: &Invocation,
 ) -> Result<()> {
     if invocation.output == Output::Human {
+        // The same counts the applied report prints, off the same walk: a
+        // preview whose summary is shaped differently from the receipt is a
+        // second description of one transition.
+        let delta = crate::plan_delta::preview(bundle);
         println!(
-            "plan {}: {} operations, {} managed files",
+            "plan {}: {} operations, {}",
             bundle.plan.digest.as_str(),
             bundle.plan.operations.len(),
-            bundle.plan.summary.managed_files
+            delta.summary()
         );
-        for line in crate::model_command::preview_lines(bundle) {
+        for line in &delta.lines {
             println!("{line}");
         }
         report_review(bundle, invocation);

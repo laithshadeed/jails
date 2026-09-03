@@ -1,0 +1,200 @@
+//! What a plan changes, as the reader sees it.
+//!
+//! **One walk of the operation list, and two readings of it.** Which paths a
+//! transition touches is asked by the preview, by the report after the fact,
+//! by the deletion prompt and by the sweep of compiled shadows, and every one
+//! of them has to get the same answer -- a `--pretend` that lists a file the
+//! run then leaves alone is a second description of one transition. So the
+//! walk is here, once, and the callers take the lines, the counts, or the
+//! deletions out of the same value.
+//!
+//! Nothing here reads the filesystem: the plan carries both trees and every
+//! before-image, so what changed is decided from the bundle alone.
+
+/// Every path this bundle removes, managed tree entries included.
+///
+/// Shared with [`preview_lines`] so the sweep of compiled shadows cannot
+/// disagree with the deletions the reader was shown.
+pub(crate) fn deleted_paths(
+    bundle: &jails_contracts::PlanBundle,
+) -> Vec<jails_contracts::ProjectPath> {
+    use jails_contracts::PlannedOperation as Op;
+    let mut paths = Vec::new();
+    for operation in &bundle.plan.operations {
+        match operation {
+            Op::PublishMergedTree { before, after, .. } => {
+                let entries = |digest: &jails_contracts::ContentDigest| {
+                    bundle
+                        .trees
+                        .get(digest)
+                        .map(|tree| tree.entries.keys().cloned().collect())
+                        .unwrap_or_default()
+                };
+                let was: std::collections::BTreeSet<_> =
+                    before.as_ref().map(entries).unwrap_or_default();
+                let now: std::collections::BTreeSet<_> = entries(after);
+                paths.extend(was.difference(&now).cloned());
+            }
+            Op::RemoveReaderFile { path, .. } => paths.push(path.clone()),
+            _ => {}
+        }
+    }
+    paths
+}
+
+/// What a plan changes, as the reader's report and its counts.
+///
+/// **A file list is the change, not the tree.** Every path the managed tree
+/// holds is in the plan's after-image whether or not this transition touches
+/// it, so a `write` line per entry described a `resource field add` as
+/// twenty-two files where `git status` showed three. `write` meant *in the
+/// plan*; the reader read it as *rewritten*. The executor already skips an
+/// entry whose bytes are already on disk, so the count under the list was
+/// right and the list was wrong.
+///
+/// So a line is printed only where the before and after images differ, and
+/// what the rest amount to is one number. The summary is counted off the
+/// lines rather than beside them, which is what makes the count and the list
+/// the same answer by construction.
+pub(crate) struct Delta {
+    /// One line per path this transition changes, in the order it does it.
+    pub(crate) lines: Vec<String>,
+    /// Managed paths the plan carries and this transition leaves alone.
+    pub(crate) unchanged: usize,
+}
+
+impl Delta {
+    /// The one-line count under (or instead of) the list.
+    pub(crate) fn summary(&self) -> String {
+        let mut counts: Vec<(&str, usize)> = Vec::new();
+        for (verb, noun) in [
+            ("create", "created"),
+            ("write", "written"),
+            ("patch", "patched"),
+            ("append", "appended"),
+            ("delete", "deleted"),
+        ] {
+            let found = self
+                .lines
+                .iter()
+                .filter(|line| line.trim_start().starts_with(verb))
+                .count();
+            if found > 0 {
+                counts.push((noun, found));
+            }
+        }
+        if self.unchanged > 0 {
+            counts.push(("unchanged", self.unchanged));
+        }
+        if counts.is_empty() {
+            return "nothing to do".to_string();
+        }
+        counts
+            .into_iter()
+            .map(|(noun, count)| format!("{count} {noun}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+/// What this plan would do, one line per path it changes.
+///
+/// **A dry run that prints a count is not a dry run.** The question a reader
+/// asks it is which of *their* files it is about to rewrite, and a digest and
+/// an operation count answer neither. Verbs are the executor's own
+/// distinctions rather than prose: a managed tree publishes, a reader file is
+/// patched or removed, a migration is appended and can never be rewritten.
+///
+/// The managed tree expands to its files. It is one operation carrying a
+/// whole after-image, so reporting it as `publish src` hides
+/// exactly the thing that changed, and the tree manifest is already in the
+/// bundle -- no filesystem read, and nothing here can disagree with what
+/// apply will write.
+pub(crate) fn preview_lines(bundle: &jails_contracts::PlanBundle) -> Vec<String> {
+    preview(bundle).lines
+}
+
+/// Which verb a single-file operation gets, or `None` when it changes nothing.
+fn verb_for(
+    before: Option<&jails_contracts::FileImageRef>,
+    after: &jails_contracts::FileImageRef,
+    existing: &'static str,
+) -> Option<&'static str> {
+    match before {
+        None => Some("create"),
+        Some(image) if image.blob == after.blob && image.mode == after.mode => None,
+        Some(_) => Some(existing),
+    }
+}
+
+/// The same walk, keeping what it left out.
+pub(crate) fn preview(bundle: &jails_contracts::PlanBundle) -> Delta {
+    use jails_contracts::PlannedOperation as Op;
+    let mut lines = Vec::new();
+    let mut unchanged = 0_usize;
+    for operation in &bundle.plan.operations {
+        match operation {
+            Op::PublishMergedTree {
+                root,
+                before,
+                after,
+            } => {
+                let entries = |digest: Option<&jails_contracts::ContentDigest>| {
+                    digest
+                        .and_then(|digest| bundle.trees.get(digest))
+                        .map(|tree| tree.entries.clone())
+                        .unwrap_or_default()
+                };
+                let was = entries(before.as_ref());
+                let now = entries(Some(after));
+                // Tree entries are already project-relative, so the root is
+                // the operation's subject rather than a prefix to prepend.
+                let _ = root;
+                for path in was
+                    .keys()
+                    .chain(now.keys())
+                    .collect::<std::collections::BTreeSet<_>>()
+                {
+                    let verb = match (was.get(path), now.get(path)) {
+                        (None, _) => "create",
+                        (Some(old), Some(new)) if old.blob == new.blob && old.mode == new.mode => {
+                            unchanged += 1;
+                            continue;
+                        }
+                        (Some(_), Some(_)) => "write",
+                        (Some(_), None) => "delete",
+                    };
+                    lines.push(format!("  {verb:<8}{}", path.as_str()));
+                }
+            }
+            Op::ReplaceModelFile {
+                path,
+                before,
+                after,
+            }
+            | Op::ReplaceStateFile {
+                path,
+                before,
+                after,
+            } => match verb_for(before.as_ref(), after, "write") {
+                None => unchanged += 1,
+                Some(verb) => lines.push(format!("  {verb:<8}{}", path.as_str())),
+            },
+            Op::PatchReaderFile {
+                path,
+                before,
+                after,
+            } => match verb_for(before.as_ref(), after, "patch") {
+                None => unchanged += 1,
+                Some(verb) => lines.push(format!("  {verb:<8}{}", path.as_str())),
+            },
+            Op::RemoveReaderFile { path, .. } => {
+                lines.push(format!("  {:<8}{}", "delete", path.as_str()));
+            }
+            Op::AppendMigration { path, .. } => {
+                lines.push(format!("  {:<8}{}", "append", path.as_str()));
+            }
+        }
+    }
+    Delta { lines, unchanged }
+}

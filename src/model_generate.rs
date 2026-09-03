@@ -62,12 +62,16 @@ pub(crate) struct PreparedMutation {
 /// Report a declaration that was already there.
 ///
 /// Every canonical frontend is idempotent, and the ordinary path says so with
-/// `0 files written`. A frontend that can tell *before* preparing a patch --
+/// `nothing to do`. A frontend that can tell *before* preparing a patch --
 /// `g association`, where re-issuing `AddRelation` fails on the id rather than
 /// reconciling -- returns early instead, and says the same thing from here so
-/// the sentence lives with the rest of this module's output.
-pub(crate) fn report_already_declared(name: &str) {
-    println!("{name} is already declared (0 files written)");
+/// the sentence lives with the rest of this module's output, in a report or
+/// filed as one row of a replay.
+pub(crate) fn report_already_declared(name: &str, invocation: &Invocation) {
+    let line = format!("  {name:<22}  nothing to do");
+    if !invocation.file_row(line) {
+        println!("{name}: nothing to do, the project already matches the model");
+    }
 }
 
 /// Where the wall clock went, under `--debug`.
@@ -265,42 +269,58 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
         );
     }
     if invocation.output == Output::Human {
-        for line in &stranded {
-            eprintln!("{line}");
-        }
+        let delta = crate::plan_delta::preview(&bundle);
         // **"Nothing happened" and "everything happened and changed nothing"
         // are different answers**, and only the second has files to name. A
         // second `jails add csv` is the first, and a reader who cannot tell
         // them apart cannot tell a no-op from a command that silently did not
         // run.
-        if execution.files_written == 0 && execution.files_deleted == 0 {
-            println!("{name}: nothing to do, the project already matches the model");
+        let idle = execution.files_written == 0 && execution.files_deleted == 0;
+        // **A row of a replay files a line; a command prints a report.** Every
+        // row is the same pipeline, so this is the one place that difference
+        // is spelled, and neither half can grow a report the other lacks.
+        if invocation.batch_report.is_some() {
+            let filed = match idle {
+                true => format!("  {name:<22}  nothing to do"),
+                false => format!("  {name:<22}  {}", delta.summary()),
+            };
+            invocation.file_row(filed);
+            for line in stranded.into_iter().chain(notes) {
+                invocation.file_note(line);
+            }
         } else {
-            println!(
-                "applied model patch for {}: {} ({} files written)",
-                name,
-                execution.plan_digest.as_str(),
-                execution.files_written
-            );
-            // **Every path, because a count is not an answer.** `g field
-            // Order memo:string?` rewrites the query, the transition and the
-            // use case that construct `Order`, and reporting "17 files
-            // written" leaves a reader who wanted to know whether their
-            // companions moved with no way to find out but `git status`. The
-            // same lines `--pretend` prints, so the preview and the report
-            // cannot describe the transition differently.
-            //
-            // A deleted file is the one that most needs saying -- it leaves
-            // nothing behind, and with `--force` it may have carried an
-            // afternoon of edits -- and a migration is the other: it is
-            // append-only, so the moment to read it is before it reaches a
-            // database.
-            for line in crate::model_command::preview_lines(&bundle) {
+            for line in &stranded {
+                eprintln!("{line}");
+            }
+            if idle {
+                println!("{name}: nothing to do, the project already matches the model");
+            } else {
+                // **The count is the length of the list.** Both come off the
+                // same walk, so a summary that says three and a list that
+                // names twenty-two is not a shape this can take. The plan
+                // digest is in `--output json`, where a reader who wants to
+                // quote one is already looking.
+                println!("applied {name}: {}", delta.summary());
+                // **Every path it changes, because a count is not an answer.**
+                // `g field Order memo:string?` rewrites the query, the
+                // transition and the use case that construct `Order`, and a
+                // bare count leaves a reader who wanted to know whether their
+                // companions moved with nothing but `git status`. The same
+                // lines `--pretend` prints, so the preview and the report
+                // cannot describe the transition differently.
+                //
+                // A deleted file is the one that most needs saying -- it
+                // leaves nothing behind, and with `--force` it may have
+                // carried an afternoon of edits -- and a migration is the
+                // other: it is append-only, so the moment to read it is
+                // before it reaches a database.
+                for line in &delta.lines {
+                    println!("{line}");
+                }
+            }
+            for line in &notes {
                 println!("{line}");
             }
-        }
-        for line in &notes {
-            println!("{line}");
         }
     } else {
         println!(

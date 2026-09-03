@@ -79,7 +79,7 @@ pub(super) fn run(args: GenerateArgs, invocation: Invocation) -> Result<()> {
         .values()
         .any(|relation| relation.label == label && relation.child == child.id)
     {
-        crate::model_generate::report_already_declared(&args.name);
+        crate::model_generate::report_already_declared(&args.name, &invocation);
         return Ok(());
     }
     let next_source = jails_model::insert_jdl_entity_member(

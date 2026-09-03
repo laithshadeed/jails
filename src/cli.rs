@@ -313,6 +313,17 @@ impl From<TypeChangeStrategy> for jails_spec::spec::policy::TypeChangeStrategy {
     }
 }
 
+/// What the mutations of one replay filed instead of each printing a report.
+///
+/// The rows are counted rather than derived from the line count, because a
+/// mutation may file a note beside its summary and a total that counted those
+/// would disagree with the list a reader can see.
+#[derive(Clone, Default)]
+pub(crate) struct BatchReport {
+    pub(crate) lines: Vec<String>,
+    pub(crate) rows: usize,
+}
+
 /// Everything a mutation needs that is not the mutation.
 ///
 /// A parameter object rather than global presentation and execution flags
@@ -343,6 +354,19 @@ pub(crate) struct Invocation {
     /// row rewrites. The rows still declare the effect on their plans; the
     /// replay runs it once after the last of them, over everything at once.
     pub(crate) batch_effects: bool,
+    /// Where a row of a replay files its report, instead of printing one.
+    ///
+    /// **One command is one report.** Fifteen rows each printing a header, a
+    /// digest and a file list is 887 lines for `jails new --app`, and the
+    /// reader wanted to know what the application now has. A row files one
+    /// summary line here and the replay prints them together with its own
+    /// `applied` line under them.
+    ///
+    /// Shared by cloning the `Arc`: `batching()` opens it, every row's
+    /// invocation is a clone, and the replay reads the same vector back. A
+    /// process-wide collector would answer the same question and would be a
+    /// second owner of it.
+    pub(crate) batch_report: Option<std::sync::Arc<std::sync::Mutex<BatchReport>>>,
     pub(crate) output: Output,
     pub(crate) diff: bool,
     pub(crate) ast: bool,
@@ -382,8 +406,49 @@ impl Invocation {
     pub(crate) fn batching(self) -> Self {
         Self {
             batch_effects: true,
+            batch_report: Some(std::sync::Arc::new(std::sync::Mutex::new(
+                BatchReport::default(),
+            ))),
             ..self
         }
+    }
+
+    /// File one mutation's summary line, or answer that this is not a batch.
+    pub(crate) fn file_row(&self, line: String) -> bool {
+        self.file(line, true)
+    }
+
+    /// File a remark a mutation made, which is not a row of its own.
+    pub(crate) fn file_note(&self, line: String) -> bool {
+        self.file(line, false)
+    }
+
+    fn file(&self, line: String, row: bool) -> bool {
+        let Some(collected) = &self.batch_report else {
+            return false;
+        };
+        // A poisoned lock here means a row panicked mid-report, which `main`
+        // is already reporting; taking the value back is strictly better than
+        // a second panic naming neither.
+        let mut collected = collected
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        collected.lines.push(line);
+        collected.rows += usize::from(row);
+        true
+    }
+
+    /// What the rows filed, in the order they ran.
+    pub(crate) fn filed_report(&self) -> BatchReport {
+        self.batch_report
+            .as_ref()
+            .map(|collected| {
+                collected
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone()
+            })
+            .unwrap_or_default()
     }
 
     pub(crate) fn without_starting(self, no_start: bool) -> Self {
@@ -423,6 +488,7 @@ impl Invocation {
             pretend: false,
             debug,
             batch_effects: false,
+            batch_report: None,
             output: Output::Human,
             diff: false,
             ast: false,

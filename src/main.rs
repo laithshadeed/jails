@@ -47,6 +47,7 @@ mod modernize;
 mod new;
 mod parse_error;
 mod plan_command;
+mod plan_delta;
 mod rename_source;
 mod template_macro;
 mod tool_command;
@@ -93,6 +94,7 @@ fn main() -> std::process::ExitCode {
         // what is running alone.
         no_start: true,
         batch_effects: false,
+        batch_report: None,
     };
     let failure_output = invocation.output;
     let failure_path = invocation.command_path.clone();

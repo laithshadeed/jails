@@ -1115,12 +1115,17 @@ fields = ["OPEN", "CLOSED"]
         .output()
         .unwrap();
     let again = String::from_utf8_lossy(&again.stdout).to_string();
+    // One report for the whole replay: a row files its line, and the summary
+    // under them is the command's own. Each row still says it declared
+    // nothing, which is what convergence looks like from a manifest.
     assert!(
-        again
-            .matches("nothing to do, the project already matches the model")
-            .count()
-            >= 3,
+        again.matches("  nothing to do").count() >= 3,
         "a second replay declares nothing new:\n{again}"
+    );
+    assert_eq!(
+        again.matches("applied").count(),
+        1,
+        "one command is one report:\n{again}"
     );
 
     // `plan` is the same replay, pretending.

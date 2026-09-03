@@ -23,7 +23,7 @@ reader would see it; the items say what to **change** to get there and how
 to tell it is **done**. Where a change could go two ways, the item says
 which way and why. An item reads:
 
-> **I70.12 — say a warning once.** *Today* … *Change* … *Done when* …
+> **I70.n — the change, as an imperative.** *Today* … *Change* … *Done when* …
 
 All numbers: 2026-09-02, `cargo build --release` of this tree
 (`target/release/jails`, 12.6 MB), Linux, 4 cores, scratch projects from
@@ -61,7 +61,7 @@ reopening a contract:
 | # | items | what a reader gets |
 |---|---|---|
 | ~~1~~ | ~~I70.12~~ | ~~the most-seen line in the tool stops printing on every command~~ |
-| 2 | I70.1, I71.13 | the report is the delta; a manifest prints one report |
+| ~~2~~ | ~~I70.1, I71.13~~ | ~~the report is the delta; a manifest prints one report~~ |
 | 3 | I71.35, I70.19, I70.20 | consent is `--yes`, nothing else, and JSON has no shortcut past it |
 | 4 | I70.13, I71.47, I71.16 | the model file reads like the specification's, and editing it by hand is the first path |
 | 5 | I70.22, I71.3, I71.4, I71.5 | the lock is 1× the tree, a scaffold is a 20-line diff, a mutation at a hundred entities is under 100 ms |
@@ -569,12 +569,7 @@ over stdio gives every editor completion of the closed sets, hover from
 
 ### Today
 
-**The file list is not the change.** After `resource field add Note
-tags:string` the report says `10 files written` and lists 22 lines, 19 of
-them `write` over files git shows unchanged (two new files, the model and
-the lock). `write` means *in the plan*. The web-crawler manifest prints 887
-lines, one `applied model patch … sha256:…` per row; fourteen lines carry a
-digest. A repeat `g scaffold Note` prints `Note: nothing to do`, where the
+**A repeat `g scaffold Note`** prints `Note: nothing to do`, where the
 entity name reads as a label.
 
 **Three encodings of "what happened".** `--output json` on `g record`
@@ -661,17 +656,6 @@ jails g scaffold …`. `model explain Note` prints the five rows about
 `authenticated prepared transaction` appear nowhere.
 
 ### Change
-
-**I70.1 — print the delta, not the tree.** *Change* `create`, `delete`,
-`patch` and *changed* `write` lines only, one `unchanged <n>` line for the
-rest, and the count is the length of the list. *Done when* `git status
---short | wc -l` equals the report's line count on every mutation in
-`tests/cli/model`.
-
-**I71.13 — one command, one report.** *Change* a manifest or a
-multi-capability `add` prints one summary with files grouped by row; the
-digest moves to `--output json`. *Done when* `jails new --app` prints one
-`applied` line and under 150 lines in all.
 
 **I70.2 — one JSON, carrying the human report's value.** *Change*
 `--output json` is the same report as human output (status, file list with

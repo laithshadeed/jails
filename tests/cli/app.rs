@@ -1231,3 +1231,66 @@ fn ledger_cli_manifest_builds_without_spring() {
 
     assert!(root.join("target/classes").is_dir());
 }
+
+/// One command is one report, however many rows it replays.
+///
+/// **A replay is many mutations in one process, and it used to print like
+/// many commands.** Each row printed its own header, its own plan digest and
+/// its whole file list: the web-crawler manifest was 887 lines of them, and
+/// none of the fourteen digests answered the question a reader runs `new
+/// --app` to ask. A row files one summary line now and the replay prints them
+/// together, so the report is as long as the manifest rather than as long as
+/// the tree.
+///
+/// The ceiling is generous on purpose -- it is a shape test, not a golden --
+/// and a manifest of a dozen rows landing anywhere near it means the per-row
+/// report has come back.
+#[test]
+fn a_manifest_replay_prints_one_report_however_many_rows_it_has() {
+    let workspace = temp_dir("app-one-report");
+    fs::create_dir_all(&workspace).unwrap();
+    let manifest = workspace.join("app.toml");
+    let mut rows = String::from("schema = 1\ncapabilities = [\"json\"]\n");
+    for name in ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot"] {
+        rows.push_str(&format!(
+            "\n[[generate]]\nkind = \"record\"\nname = \"{name}\"\nfields = [\"id:uuid@pk\", \"label:string!\"]\n"
+        ));
+    }
+    fs::write(&manifest, rows).unwrap();
+
+    let created = std::process::Command::new(env!("CARGO_BIN_EXE_jails"))
+        .current_dir(&workspace)
+        .args(["new-cli", "demo", "--no-git", "--app"])
+        .arg(&manifest)
+        .output()
+        .unwrap();
+    assert!(
+        created.status.success(),
+        "{}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let report = String::from_utf8_lossy(&created.stdout).to_string();
+    assert_eq!(
+        report.matches("applied").count(),
+        1,
+        "one command, one `applied` line:\n{report}"
+    );
+    assert!(
+        report.lines().count() < 150,
+        "a replay of seven rows printed {} lines:\n{report}",
+        report.lines().count()
+    );
+    // Grouped by row, one line each, and the totals under them.
+    for name in ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot"] {
+        assert!(
+            report
+                .lines()
+                .any(|line| line.starts_with(&format!("  {name} "))),
+            "no line for `{name}`:\n{report}"
+        );
+    }
+    assert!(report.contains("applied 7 manifest rows"), "{report}");
+    // A digest belongs to the plan, and `--output json` is where a reader who
+    // wants one is already looking.
+    assert!(!report.contains("sha256:"), "{report}");
+}
