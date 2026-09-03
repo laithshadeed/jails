@@ -361,10 +361,23 @@ impl About {
     }
 
     fn print_human(&self) {
-        println!("Reactor: {}", self.reactor_label);
-        println!("  root: {}", self.reactor_root.display());
-        println!("Module: {}", self.module_label);
-        println!("  root: {}", self.module_root.display());
+        // **One module is a project, not a reactor with one module in it.**
+        // Nearly every project jails is pointed at is single-module, and
+        // reading `Reactor: demo / Module: demo` twice over teaches a reader
+        // Maven's vocabulary to describe the thing they already named. The
+        // reactor rows appear when there is something to distinguish.
+        match self.modules.is_empty() && self.reactor_root == self.module_root {
+            true => {
+                println!("Project: {}", self.module_label);
+                println!("  root: {}", self.module_root.display());
+            }
+            false => {
+                println!("Reactor: {}", self.reactor_label);
+                println!("  root: {}", self.reactor_root.display());
+                println!("Module: {}", self.module_label);
+                println!("  root: {}", self.module_root.display());
+            }
+        }
         println!(
             "Java: {}",
             self.java_release
@@ -394,13 +407,13 @@ impl About {
             println!("Modules: not read (Gradle multi-project is `settings.gradle` includes)");
             return;
         }
-        println!("Modules ({}):", self.modules.len());
+        // Nothing to say about modules a single-module project does not have.
         if self.modules.is_empty() {
-            println!("  (none)");
-        } else {
-            for (label, path) in &self.modules {
-                println!("  {label}  {path}");
-            }
+            return;
+        }
+        println!("Modules ({}):", self.modules.len());
+        for (label, path) in &self.modules {
+            println!("  {label}  {path}");
         }
     }
 

@@ -578,8 +578,11 @@ pub(super) fn create(request: &super::Request<'_>, deps: &str, boot: &str) -> Re
     }
     let applied = super::seed(&publication, request.app, request.no_start, request.debug)?;
 
+    let staged = publication.staged_files();
     publication.publish()?;
     println!("Created ./{name} (Gradle {gradle}, Spring Boot {boot}, Java {java}, deps: {deps})");
+    super::seed::report_unasked_files(&staged);
+    println!("next: cd {name} && jails run");
     super::reported(applied)
 }
 

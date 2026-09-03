@@ -131,8 +131,11 @@ pub fn new_cli(request: &Request<'_>) -> Result<()> {
     }
     let applied = seed(&publication, app, request.no_start, debug)?;
 
+    let staged = publication.staged_files();
     publication.publish()?;
     println!("Created ./{name} (package: {package}, Java {java})");
+    crate::new::seed::report_unasked_files(&staged);
+    println!("next: cd {name} && jails run");
     reported(applied)
 }
 

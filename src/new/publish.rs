@@ -128,6 +128,37 @@ impl Publication {
         scratch.close()?;
         Ok(destination)
     }
+
+    /// Every file this publication holds, project-relative and sorted.
+    ///
+    /// **What `new` wrote, read off the staged tree rather than listed by
+    /// hand.** A creation that says only `Created ./demo` leaves the reader
+    /// to discover an `AGENTS.md`, a `mise.toml` and a `.jails/` they did not
+    /// ask for by running `ls`; a hand-written list of them would be a second
+    /// source that drifts the first time a seed gains a file.
+    pub(crate) fn staged_files(&self) -> Vec<String> {
+        let mut found = Vec::new();
+        let mut pending = vec![self.staging.clone()];
+        while let Some(directory) = pending.pop() {
+            let Ok(entries) = std::fs::read_dir(&directory) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                match entry.file_type().map(|kind| kind.is_dir()) {
+                    Ok(true) => pending.push(path),
+                    Ok(false) => {
+                        if let Ok(relative) = path.strip_prefix(&self.staging) {
+                            found.push(relative.to_string_lossy().replace('\\', "/"));
+                        }
+                    }
+                    Err(_) => {}
+                }
+            }
+        }
+        found.sort();
+        found
+    }
 }
 
 /// The one spelling of this refusal, so the pre-lock check and the recheck

@@ -54,6 +54,39 @@ pub fn seed_manifest(
 /// is a post-*commit* effect; it must not be able to unmake the commit, still
 /// less the project the commit is in, or the reader is left with no project
 /// and no way to tell which of the two happened.
+/// The files a reader did not ask for, named once at creation.
+///
+/// **`Created ./demo` and nothing else leaves a reader to find the rest with
+/// `ls`.** A new project holds an `AGENTS.md`, a `mise.toml` and a `.jails/`
+/// that nothing in the command mentioned, and the moment to say so is the
+/// moment they appear. `src/` and the build file are what the reader asked
+/// for by running `new`, so they are counted rather than listed: naming
+/// forty files teaches nothing.
+pub(super) fn report_unasked_files(staged: &[String]) {
+    let asked = |path: &str| {
+        path.starts_with("src/")
+            || matches!(path, "pom.xml" | "build.gradle" | "build.gradle.kts")
+            || path.starts_with("gradle/")
+            || path.starts_with("mvnw")
+            || path.starts_with("gradlew")
+    };
+    let source = staged
+        .iter()
+        .filter(|path| path.starts_with("src/"))
+        .count();
+    if source > 0 {
+        println!("  {source} source file(s) under src/");
+    }
+    // The executor's own scratch, which `.jails/.gitignore` names for the
+    // same reason: it is state, not a file the reader has anything to do
+    // with. It is not removed here -- a lock file removed while a holder has
+    // it open is a lock the next opener cannot see.
+    let scratch = |path: &str| path == ".jails/apply.lock" || path.starts_with(".jails/run/");
+    for path in staged.iter().filter(|path| !asked(path) && !scratch(path)) {
+        println!("  {path}");
+    }
+}
+
 pub(super) fn reported(applied: crate::app::Applied) -> Result<()> {
     match applied {
         crate::app::Applied::Clean => Ok(()),

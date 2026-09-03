@@ -134,9 +134,11 @@ refuses before writes.
 
 ## Commands
 
-- `jails about [--json]` (alias: `jails info`) — describes the current Maven
-  context: the top-level reactor, active module, Java release, Spring Boot
-  presence, Maven wrapper/command, and recursively declared modules. It works
+- `jails about [--json]` (alias: `jails info`) — describes the project: its
+  name and root, the Java release, Spring Boot presence and the Maven
+  wrapper or command, in five lines. A multi-module build gains the reactor,
+  the active module and the modules it declares; a single-module project is
+  called a project rather than a reactor with one module in it. It works
   from any directory below a module. `--output json` emits the versioned
   contract used by editor integrations and other tools.
 `--output json` is available on every command and carries the same value the
@@ -986,9 +988,11 @@ there the unit is a whole service block rather than a setting.)
   already-running app — no manual restarts. In an editor with a Java language
   server you do not need it; see [the save-and-reload loop](#the-save-and-reload-loop).
 - `jails testd [filter] [--stop] [--status]` — the same tests against a
-  **resident JVM**, started on demand and reused. Measured here: 0.06–0.10 s
-  for one test method against 0.62 s for `test --fast` or `mvnd`, and 0.27 s
-  against 0.96 s for a 151-class suite. The reason is not the launcher — it is
+  **resident JVM**, started on demand and reused. Measured on a scaffolded
+  single-entity Spring project on sixteen cores, warm daemon: 0.06–0.10 s to
+  run one `NoteTest` method against 0.62 s for `test --fast` or `mvnd`, and
+  0.27 s against 0.96 s for the 151-class suite of the `minicom` example
+  under `examples/`. The reason is not the launcher — it is
   that the *first* JUnit session in a JVM costs 464 ms where warm ones cost
   20 ms, and a cold `java` pays that every single run.
 

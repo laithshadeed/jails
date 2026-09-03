@@ -553,15 +553,16 @@ packages under `--all`; an optional entity argument. *Done when* `jails
 model explain Note` prints exactly the rows owned by `ent_note` and its
 fields.
 
-**I70.11 — `new` says what it wrote and what to do next.** *Change* one
-line for the project, one per file the reader did not name, one `next:`
-line; `apply.lock` removed at the end of a successful `new`. *Done when*
-the creation report names every file outside `src/` and `pom.xml`.
+**I70.11 — `new` says what it wrote and what to do next.** *Landed:* the
+creation report counts the source files and then names every other file the
+reader did not ask for -- `AGENTS.md`, `mise.toml`, `.jails/model.jdl`, the
+lock, the ignore file -- read off the staged tree rather than a hand-written
+list, plus one `next:` line. *Declined:* removing `.jails/apply.lock` at the
+end. It is the executor's advisory lock, `.jails/.gitignore` names it, and a
+lock file removed while a holder has it open is a lock the next opener
+cannot see -- the trap `claim_fixture` documents in the harness. The report
+leaves it out instead.
 
-**I70.21 — `about` speaks the project's language.** *Change* print
-`Reactor` and `Modules` rows only when there is more than one module, and
-say *project* otherwise. *Done when* the single-module `about` fits in
-five lines.
 
 **I70.4 — one "not a project" refusal.** *Change* one message with one fix
 line, decided in `model_command::root` where the one walk is. *Done when*
@@ -779,78 +780,6 @@ second `DerivedValue` role so `model explain` shows it; an existing
 project keeps its paths through `use scaffold(path: …)`, which `rename`
 already writes. *Done when*
 `jails routes` on the crawler prints no path with `_`.
-
-**I71.33 — README's measurements name their subject.** *Change* the testd
-and `--fast` paragraphs say which project and which tests their numbers
-were taken on. *Done when*
-README line 936 names the project.
-
----
-
-## 7. Speed
-
-### Today
-
-**One entity.** Process floor 5 ms (`--version`, `model check`, `routes`,
-`beans`, `stats`, every refusal outside a project). `new` 12 ms, `model
-explain` 12, `model plan` 29, `g scaffold` 38 (20 files), the same again
-26 (a full recompile to learn there is nothing to do), `g record` 41,
-`resource field add` 47, `add db --no-start` 68, `add api` 102, twelve
-capabilities in one `add` 69, `--plan-out` for one record 579 ms and a
-9.6 MB file, `--plan-in` 53. No mutation starts a subprocess (`strace`:
-one `execve`). `doctor` 540 ms release, 1,040 debug, all in `java`,
-`jshell` and `mvn -version`.
-
-**Scale.** Thirty scaffolds in a loop, then a hundred:
-
-| command | 1 | 30 | 100 |
-|---|---:|---:|---:|
-| `g scaffold` | 38 ms | 510 ms | 1,664 ms |
-| `model plan` | 29 ms | 417 ms | 2,106 ms |
-| `model check --frozen` | 24 ms | 228 ms | -- |
-| `model explain` | 12 ms | -- | 420 ms |
-| `resource status <Entity>` | 14 ms | -- | 283 ms |
-| `model check` | 5 ms | 6 ms | 9 ms |
-| `model fmt --check` | -- | -- | 15 ms |
-| `routes` | 5 ms | 13 ms | 23 ms |
-| `editor symbols routes` | 5 ms | -- | 22 ms |
-| `doctor` | 540 ms | -- | 825 ms |
-| `compiler.lock.json` | 428 KB | 6.5 MB | 21.2 MB |
-| managed files | 19 | 423 | 1,403 |
-
-Linear, about 16 ms per scaffolded entity; the model side (`model
-check`, `fmt --check`) stays under 20 ms at any size.
-
-**Where the time goes.** `--debug` already prints a stopwatch, under a
-help line about echoing Maven commands:
-
-| entities | capture | compile | materialize | execute |
-|---:|---:|---:|---:|---:|
-| 1 (`g record`) | 5.8 ms | 0.5 ms | 11.0 ms | 22.3 ms |
-| 100 (`g scaffold`) | 307 ms | 14.5 ms | 630 ms | 798 ms |
-
-The pure compiler is one per cent. Capture reads every managed file (477
-`openat` at thirty, 1,457 at a hundred); materialize copies every file's
-bytes into the bundle's `blobs` (924,449 lines of JSON for one record on
-one entity); execute re-hashes every precondition in
-`verify_preconditions`, stats and hashes every after-tree entry in
-`publish_merged_tree`, then writes the 21 MB lock. `model explain` opens
-1,457 files at a hundred entities although every row is a function of the
-model. A no-op `app apply` of the fourteen-row crawler manifest costs
-1.9 s: fourteen full pipelines.
-
-**The loops.** `jails test NoteTest` 6.5 s and `jails test` 6.1 s (Maven);
-a hand-written test through the warm engine 3.9 s on the first run, then
-106 to 132 ms, 96 ms as `testd NoteHandTest`. `jails run` from cold
-answers its first request 24.6 s after the command (Maven build, then a
-3 s Boot start); `run --watch` on a compiled tree is up in 4.1 s and
-restarts 2.8 s after a save, reporting `jails: changed <path>`. With a
-container: `start db` 10.0 s, `migrate` 476 ms, `migrate --check` 324 ms,
-`test --scope integration` 43.0 s for 23 unit tests and 2 ITs, `stop`
-236 ms; `start kafka` 14.0 s; `console` with a script on stdin 4.9 s;
-`db -- -c '\dt'` 688 ms. `new` against start.spring.io 1,665 ms.
-
-### Change
 
 
 **I71.3 — the executor's work is proportional to the change.** *Change*

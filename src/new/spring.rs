@@ -309,11 +309,14 @@ fn complete(
     }
     let applied = seed(&publication, app, request.no_start, debug)?;
 
+    let staged = publication.staged_files();
     publication.publish()?;
     match origin {
         Origin::Initializr => println!("Created ./{name} (deps: {deps}, Java {java})"),
         Origin::Offline => println!("Created ./{name} offline (deps: {deps}, Java {java})"),
     }
+    crate::new::seed::report_unasked_files(&staged);
+    println!("next: cd {name} && jails run");
     reported(applied)
 }
 

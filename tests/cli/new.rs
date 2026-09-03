@@ -394,6 +394,102 @@ fn every_generated_pom_is_one_maven_can_read() {
     );
 }
 
+/// A creation names every file the reader did not ask for, and says what to
+/// do next.
+///
+/// `Created ./demo` and nothing else leaves a reader to discover an
+/// `AGENTS.md`, a `mise.toml` and a `.jails/` with `ls`. The list is read off
+/// the staged tree, so a seed that gains a file says so without anyone
+/// remembering to update a message.
+#[test]
+fn a_creation_names_the_files_the_reader_did_not_ask_for() {
+    let parent = temp_dir("new-creation-report");
+    let created = jails_cmd(&parent, None)
+        .args(["new", "demo", "--offline", "--no-git"])
+        .output()
+        .unwrap();
+    assert!(
+        created.status.success(),
+        "{}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let report = String::from_utf8_lossy(&created.stdout).to_string();
+    for named in [
+        "AGENTS.md",
+        "mise.toml",
+        ".jails/model.jdl",
+        ".jails/compiler.lock.json",
+        "source file(s) under src/",
+        "next: cd demo && jails run",
+    ] {
+        assert!(
+            report.contains(named),
+            "the report names {named}:\n{report}"
+        );
+    }
+    // The build file and the sources are what `new` was asked for; the
+    // executor's own lock is scratch the ignore file already names.
+    assert!(!report.contains("pom.xml"), "{report}");
+    assert!(!report.contains("apply.lock"), "{report}");
+
+    // Every file outside `src/` and the build file is named, which is the
+    // item's own bar: read the tree and hold the report to it.
+    let root = parent.join("demo");
+    let mut unnamed = Vec::new();
+    let mut pending = vec![root.clone()];
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(&directory).unwrap().flatten() {
+            let path = entry.path();
+            if entry.file_type().unwrap().is_dir() {
+                pending.push(path);
+                continue;
+            }
+            let relative = path
+                .strip_prefix(&root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
+            let asked = relative.starts_with("src/")
+                || relative == "pom.xml"
+                || relative == ".jails/apply.lock";
+            if !asked && !report.contains(&relative) {
+                unnamed.push(relative);
+            }
+        }
+    }
+    assert!(
+        unnamed.is_empty(),
+        "these files were written and not named: {unnamed:?}\n{report}"
+    );
+}
+
+/// A single-module project is a project, not a reactor with one module.
+#[test]
+fn about_speaks_of_a_project_when_there_is_one_module() {
+    let parent = temp_dir("about-single-module");
+    let created = jails_cmd(&parent, None)
+        .args(["new", "demo", "--offline", "--no-git"])
+        .output()
+        .unwrap();
+    assert!(created.status.success());
+    let root = parent.join("demo");
+    let about = jails_cmd(&root, None).arg("about").output().unwrap();
+    assert!(about.status.success());
+    let printed = String::from_utf8_lossy(&about.stdout).to_string();
+    let lines = printed.lines().count();
+    assert!(
+        lines <= 5,
+        "a single-module `about` is five lines:\n{printed}"
+    );
+    assert!(printed.starts_with("Project: demo"), "{printed}");
+    for absent in ["Reactor:", "Modules", "(none)"] {
+        assert!(
+            !printed.contains(absent),
+            "{absent} is Maven's word:\n{printed}"
+        );
+    }
+}
+
 #[test]
 fn new_cli_project_passes_real_mvn_test() {
     if !real_mvn_available() {
