@@ -369,10 +369,17 @@ fn an_adopted_resource_evolves_renames_and_destroys_like_a_generated_one() {
     let model = fs::read_to_string(root.join(".jails/model.jdl")).unwrap();
     assert!(model.contains("entity Note @id(ent_message) {"), "{model}");
     assert!(model.contains("eject Note.record @id(eject_"), "{model}");
+    // The reader still owns the renamed record: the accepted projection
+    // does not name their path, so the next render neither rewrites nor
+    // deletes it.
+    let lock = fs::read_to_string(root.join(".jails/compiler.lock.json")).unwrap();
     assert!(
-        !root
-            .join(".jails/generated/main/java/com/example/notes/domain/Note.java")
-            .exists()
+        !lock.contains("domain/Note.java"),
+        "the lock claims the reader's record: {lock}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join(note_path)).unwrap(),
+        MESSAGE.replace("record Message(", "record Note(")
     );
 
     // Destroy is subtraction: the declaration and its adopted line go, the
