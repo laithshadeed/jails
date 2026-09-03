@@ -762,8 +762,8 @@ fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
         .is_file()
     );
     // `.jails/` holds the reader's manifest, the one editable model, the lock
-    // sealing the projection it was compiled from, the executor's own lock and
-    // the `.gitignore` that keeps that lock out of a commit -- and nothing
+    // sealing the projection it was compiled from, the executor's own lock,
+    // and the two files that tell git what to do with them -- and nothing
     // else: no output lives here. Closed rather than counted, so any other
     // bookkeeping appearing here fails.
     let bookkeeping = fs::read_dir(root.join(".jails"))
@@ -773,6 +773,7 @@ fn app_manifest_builds_the_crawler_skeleton_and_is_resumable() {
     assert_eq!(
         bookkeeping,
         [
+            ".gitattributes",
             ".gitignore",
             "app.toml",
             "apply.lock",

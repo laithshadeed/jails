@@ -69,7 +69,7 @@ const SNAPSHOTTED_PROJECT_FILES: [&str; 3] = ["model.jdl", "ledger.toml", "app.t
 /// The locks are excluded for a different reason: they are empty files whose
 /// presence depends on whether a run was interrupted, so they are not output
 /// at all.
-const EXECUTOR_STATE: [&str; 8] = [
+const EXECUTOR_STATE: [&str; 9] = [
     ".jails/objects/",
     ".jails/transactions/",
     ".jails/receipts/",
@@ -92,6 +92,10 @@ const EXECUTOR_STATE: [&str; 8] = [
     // say only that the constant is still the constant, which a unit test
     // beside it says once.
     ".jails/.gitignore",
+    // And the marker saying how git should treat the lock, for the same
+    // reason: fixed bytes about `.jails/` rather than about anything a
+    // scenario generated.
+    ".jails/.gitattributes",
 ];
 
 /// Whether this path is the executor's bookkeeping rather than jails' output.

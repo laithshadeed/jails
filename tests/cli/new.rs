@@ -2,6 +2,38 @@
 
 use super::*;
 
+/// **git is told how to treat the lock: as one value, not as text.**
+///
+/// It is one exact copy of every managed file, so a diff of it is the whole
+/// project restated beside the change somebody actually made, and a textual
+/// three-way merge of two branches' locks produces a file that describes
+/// neither tree. The rule lives inside `.jails/`, next to the ignore file,
+/// because a `.gitattributes` at the repository root is the reader's.
+#[test]
+fn a_creation_tells_git_not_to_diff_or_merge_the_lock() {
+    let parent = temp_dir("git-attributes");
+    let created = jails_cmd(&parent, None)
+        .args(["new-cli", "app"])
+        .output()
+        .unwrap();
+    assert!(
+        created.status.success(),
+        "{}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let attributes = fs::read_to_string(parent.join("app/.jails/.gitattributes")).unwrap();
+    assert!(
+        attributes.contains("compiler.lock.json -diff merge=binary"),
+        "{attributes}"
+    );
+    assert!(
+        attributes.contains("run `jails sync`"),
+        "the file says what to do on a conflict: {attributes}"
+    );
+    // And it is inside `.jails/`, so a reader's own root file is untouched.
+    assert!(!parent.join("app/.gitattributes").exists());
+}
+
 #[test]
 fn new_cli_creates_expected_project_layout() {
     let workdir = temp_dir("new-cli-layout");

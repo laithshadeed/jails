@@ -272,10 +272,18 @@ half is done, and not where this said: the executor writes
 `.jails/.gitignore` naming `apply.lock` and `run/`, from inside, so an
 adopted repository and a `--no-git` project get it too and a reader's own
 root `.gitignore` is left alone. *Change* what is left: `.gitattributes`
-with `.jails/compiler.lock.json -diff merge=binary`, and README
-documenting `rm .jails/compiler.lock.json && jails sync` as the merge
-resolution with the re-baseline caveat. *Done when* a fresh `new` carries
-the `.gitattributes` and the lock never appears in a `git diff`.
+with `.jails/compiler.lock.json -diff merge=binary`, and README documenting the
+merge resolution.
+
+*Landed, with a different resolution.* The executor writes
+`.jails/.gitattributes` beside the ignore file, from inside, so an adopted
+repository gets it too and a root `.gitattributes` -- which is the
+reader's -- is left alone. The documented resolution is *not* `rm
+.jails/compiler.lock.json && jails sync`: with no lock there is no merge
+base, so every managed path reads as reader-owned and the next command
+refuses (I71.8). Keeping either side and running `jails sync` is the
+resolution, and it loses nothing but the other side's record of what it had
+generated, because either projection is a real ancestor of both trees.
 
 **I71.8 — a lost merge base is said out loud.** *Landed, and the premise
 was wrong.* jails does not treat the managed tree as accepted when the

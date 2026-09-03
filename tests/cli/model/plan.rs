@@ -598,12 +598,18 @@ fn every_line_of_a_mutation_report_is_a_file_git_sees_change() {
         let changed: std::collections::BTreeSet<String> = String::from_utf8_lossy(&status.stdout)
             .lines()
             .map(|line| line[3..].trim().to_string())
-            // The executor's own state, not project files: the advisory lock
-            // and the ignore file naming it are written outside the plan --
-            // after the transaction, so a refused plan writes neither -- and a
-            // `jails new` project ignores both. This fixture is a bare Maven
-            // tree with no `.gitignore` of its own, so git still reports them.
-            .filter(|path| path != ".jails/apply.lock" && path != ".jails/.gitignore")
+            // The executor's own state, not project files: the advisory lock,
+            // the ignore file naming it and the attributes file telling git
+            // how to treat the lock are written outside the plan -- after the
+            // transaction, so a refused plan writes none of them -- and a
+            // `jails new` project ignores the first. This fixture is a bare
+            // Maven tree with no `.gitignore` of its own, so git reports them.
+            .filter(|path| {
+                !matches!(
+                    path.as_str(),
+                    ".jails/apply.lock" | ".jails/.gitignore" | ".jails/.gitattributes"
+                )
+            })
             .collect();
 
         assert_eq!(

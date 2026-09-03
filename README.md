@@ -1470,6 +1470,19 @@ there that are not input — `apply.lock`, a mutex, and `run/`, a daemon socket
 beside two caches — are covered by a `.jails/.gitignore` jails writes itself,
 so neither reaches a commit or a diff whatever your own `.gitignore` says.
 
+**Commit the lock, and let git leave it alone.** jails writes a
+`.jails/.gitattributes` marking `compiler.lock.json` as `-diff
+merge=binary`: it is one exact copy of every managed file, so a diff of it
+restates the whole project beside the change you actually made, and a
+textual three-way merge of two branches' locks produces a file that
+describes neither tree. When a merge conflicts on it, keep either side —
+`git checkout --ours .jails/compiler.lock.json` — and run `jails sync`.
+Either side's projection is a real ancestor of both trees, so the merge of
+your managed files is still a three-way merge; what you lose by picking one
+is nothing but the other side's record of what it had generated. Both files
+live inside `.jails/`, because a `.gitattributes` at the repository root is
+yours.
+
 Delete `.jails` and the application is untouched: it builds, and `mvn test`
 passes with the same tests, generated ones included. What you have lost is the
 ability to regenerate and to merge, and the next `jails g` says exactly that

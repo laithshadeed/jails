@@ -358,6 +358,27 @@ apply.lock
 run/
 ";
 
+/// How git should treat the lock: as one value, not as text to merge.
+///
+/// **The lock is regenerated, never merged.** It is one exact copy of every
+/// managed file, so a textual three-way merge of two branches' locks
+/// produces a file that describes neither tree -- and a diff of it is the
+/// whole project restated, which buries the change beside it. `-diff` keeps
+/// it out of the diff and `merge=binary` makes git leave the conflict alone
+/// rather than inventing a resolution; taking either side and running `jails
+/// sync` re-derives the rest, because either side's projection is a real
+/// ancestor of both trees.
+///
+/// Inside `.jails/`, like the ignore file next to it: a `.gitattributes` at
+/// the repository root is the reader's, and jails does not edit files it does
+/// not own.
+const STATE_GITATTRIBUTES: &str = "\
+# Written by jails. The lock is one exact copy of every managed file: git
+# should neither diff it nor try to merge it. On a conflict, keep either
+# side and run `jails sync`.
+compiler.lock.json -diff merge=binary
+";
+
 /// Mark jails' scratch as scratch, from inside `.jails/`.
 ///
 /// Called by the executor, which is the one thing that creates the directory,
@@ -369,13 +390,19 @@ run/
 /// Not a transaction: there is no accepted state to protect and nothing to
 /// report, the way `.jails/run` is not.
 pub fn mark_state_scratch(project: &Path) -> Result<()> {
-    let path = project.join(".jails/.gitignore");
-    if fs::read_to_string(&path).is_ok_and(|found| found == STATE_GITIGNORE) {
-        return Ok(());
+    for (name, content) in [
+        (".jails/.gitignore", STATE_GITIGNORE),
+        (".jails/.gitattributes", STATE_GITATTRIBUTES),
+    ] {
+        let path = project.join(name);
+        if fs::read_to_string(&path).is_ok_and(|found| found == content) {
+            continue;
+        }
+        ensure_parent(&path)?;
+        fs::write(&path, content)
+            .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
     }
-    ensure_parent(&path)?;
-    Ok(fs::write(&path, STATE_GITIGNORE)
-        .map_err(|error| format!("failed to write {}: {error}", path.display()))?)
+    Ok(())
 }
 
 /// Create the user-only directory for disposable daemon process state.
