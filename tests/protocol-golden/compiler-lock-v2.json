@@ -1336,6 +1336,6 @@
       }
     }
   },
-  "projection_digest": "sha256:246ef4a85aec87e2896de9a97689d993fb79f2eff117591b943403f87759752f",
+  "projection_digest": "sha256:5b30adcab211551bfcd8f92c529a376f45daf34f5485ffe8533817ea2da65ec0",
   "schema": "jails.compiler-lock.v3"
 }

@@ -1,12 +1,13 @@
 //! Lower semantic facets into deterministic Java source units.
 //!
-//! The one-file facets, the operation ports and the three storage adapters
-//! are [`crate::recipe::Recipe`] rows over named fragment renderers
-//! (`entity`, `operation` and [`storage`] hold the rows, [`fragment`] the
-//! entity's renderers); what is still a function here is several files from
-//! one facet (`dto`, `http`, `seed`), the units, and the repository contract
-//! and the two proofs that call it, each of which reaches across nodes for a
-//! sample.
+//! The one-file facets, the operation ports, the three storage adapters and
+//! six of the eight source-unit kinds are [`crate::recipe::Recipe`] rows over
+//! named fragment renderers (`entity`, `operation`, [`storage`] and [`unit`]
+//! hold the rows, [`fragment`] the entity's renderers); what is still a
+//! function here is several files from one facet (`dto`, `http`, `seed`), the
+//! record's companion test, `strategy` and `controller`, and the repository
+//! contract and the two proofs that call it. Each of those modules says which
+//! block keeps it out of the row table.
 
 mod entity;
 mod execution_context;
@@ -15,6 +16,7 @@ mod record_validation;
 mod repository;
 mod storage;
 mod time_ordered_uuid;
+pub(crate) mod unit;
 
 use crate::Diagnostic;
 use jails_contracts::{FileKind, FileMode, ProjectPath, Provenance, RenderedFile, RenderedTree};
@@ -42,7 +44,7 @@ pub(crate) fn emit(
     let spring_boot = snapshot.project.spring_boot.as_deref();
     let templates = &snapshot.template_overrides;
     let jdbc = crate::emit::jdbc_on_classpath(&snapshot.project);
-    crate::emit_unit::emit(model, output, spring_boot)?;
+    crate::emit_unit::emit(model, output, snapshot)?;
     if let Some(unit) = execution_context::lower(model)? {
         output
             .insert(unit.path, unit.file)

@@ -68,18 +68,24 @@ const RECIPE_WALKS: &[Pass] = &[
 
 /// The passes that are still functions: emitters that build Java from the
 /// model's structure -- a record's components, a query's SQL, a proof's
-/// request -- and have not been reduced to rows and fragments.
+/// request -- because a block of each fails the criterion a row is measured
+/// against.
 ///
-/// **This is the number to watch.** Every one that becomes a recipe walk
-/// comes off this list, and `docs/60-abstraction.md` S60.3 keeps the count;
-/// the test below holds the two together.
+/// **A `Fragment::Rendered` is one named function of the model and the node**,
+/// independent of every other fragment on the recipe, and a recipe's `files`
+/// is a static list of one file each. So an emitter is a row when its
+/// structural blocks are independent per-node answers, and it stays a function
+/// when its blocks are several readings of one pass over the fields, when a
+/// block needs a fact the signature does not carry (in practice the captured
+/// Boot major), or when the number of files it writes is not one per row. Each
+/// module below says which of the three it is.
 const FUNCTIONS: &[Pass] = &[
-    // The one-file entity facets, the operation ports and the three storage
-    // adapters are `Recipe` rows inside this pass (`emit_java::entity`,
-    // `emit_java::operation`, `emit_java::storage`); what keeps it a function
-    // is the rest: the multi-file facets (dto, http, seed), the units (class,
-    // interface, service, sealed, strategy, controller, test), and the
-    // repository contract and the two proofs that call it.
+    // The one-file entity facets, the operation ports, the three storage
+    // adapters and six of the eight unit kinds are `Recipe` rows inside this
+    // pass (`emit_java::entity`, `::operation`, `::storage`, `::unit`); what
+    // keeps it a function is the rest: the multi-file facets (dto, http,
+    // seed), the record's companion test, `strategy` and `controller`, and
+    // the repository contract and the two proofs that call it.
     emit_java::emit,
     // The SQL lowering: command, query and transition adapters.
     emit_operation::emit,
@@ -253,9 +259,9 @@ pub(crate) fn compose_path(snapshot: &WorkspaceSnapshot) -> Result<ProjectPath, 
 
 #[cfg(test)]
 mod tests {
-    /// The number `docs/60-abstraction.md` S60.3 states for the passes that
-    /// are still functions. A pass that becomes a recipe walk lowers this
-    /// beside the doc; one that grows back raises it and says why.
+    /// The passes that are still functions, against the recipe walks. A pass
+    /// that becomes a recipe walk lowers the first and raises the second; one
+    /// that grows back does the reverse and says why in the table's comments.
     #[test]
     fn five_passes_are_still_functions() {
         assert_eq!(super::FUNCTIONS.len(), 5);
