@@ -33,7 +33,7 @@ use jails_contracts::{
     PlanBundle, PlanDraft, PlanInput, PlannedOperation, ProjectPath, TreeManifest,
     WorkspaceSnapshot,
 };
-use jails_support::{hex, sha256};
+use jails_model::Diagnostic;
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -119,7 +119,7 @@ pub fn materialize(
     model_update: Option<ModelFileUpdate>,
     compiler_version: &str,
     restore: Restore,
-) -> Result<PlanBundle, String> {
+) -> Result<PlanBundle, Diagnostic> {
     let mut blobs = BTreeMap::new();
     let (before, after) = crate::reconcile::trees(snapshot, &draft, &mut blobs, restore)?;
     let managed_tree_changed = before != after;
@@ -143,7 +143,7 @@ pub fn materialize(
     }
     let mut operations = if managed_tree_changed {
         vec![PlannedOperation::PublishMergedTree {
-            root: ProjectPath::parse(jails_contracts::SourceRoot::PARENT)?,
+            root: crate::capture::project_path(jails_contracts::SourceRoot::PARENT)?,
             before: before_id,
             after: after_id,
         }]
@@ -258,7 +258,7 @@ fn materialize_migrations(
     operations: &mut Vec<PlannedOperation>,
     sealed: &mut BTreeMap<ProjectPath, ContentDigest>,
     sealed_bytes: &mut BTreeMap<ProjectPath, Vec<u8>>,
-) -> Result<(), String> {
+) -> Result<(), Diagnostic> {
     if draft.migrations.is_empty() {
         return Ok(());
     }
@@ -268,9 +268,14 @@ fn materialize_migrations(
         .iter()
         .map(|record| {
             record.version.parse::<u64>().map_err(|_| {
-                format!(
-                    "migration `{}` has non-integer version `{}`\n       fix: import the history before asking the canonical compiler to allocate a migration",
-                    record.path, record.version
+                Diagnostic::new(
+                    "workspace-migration-version",
+                    record.path.to_string(),
+                    format!(
+                        "migration `{}` has non-integer version `{}`",
+                        record.path, record.version
+                    ),
+                    "import the history before asking the canonical compiler to allocate a migration",
                 )
             })
         })
@@ -278,10 +283,12 @@ fn materialize_migrations(
     versions.sort_unstable();
     versions.dedup();
     if versions.len() != snapshot.migration_history.records.len() {
-        return Err(
-            "migration history contains duplicate versions\n       fix: repair the Flyway history before planning another migration"
-                .to_string(),
-        );
+        return Err(Diagnostic::new(
+            "workspace-migration-history-duplicate",
+            crate::capture::MIGRATION_ROOT,
+            "migration history contains duplicate versions",
+            "repair the Flyway history before planning another migration",
+        ));
     }
     let first = versions.last().copied().unwrap_or(0) + 1;
     for (offset, migration) in draft.migrations.iter().enumerate() {
@@ -292,18 +299,26 @@ fn materialize_migrations(
                 .bytes()
                 .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
         {
-            return Err(format!(
-                "compiler produced invalid migration name `{}`",
-                migration.logical_name
+            return Err(Diagnostic::without_a_fix(
+                "workspace-migration-name",
+                crate::capture::MIGRATION_ROOT,
+                format!(
+                    "compiler produced invalid migration name `{}`",
+                    migration.logical_name
+                ),
             ));
         }
-        let path = ProjectPath::parse(format!(
+        let path = crate::capture::project_path(format!(
             "{}/V{next:03}__{}.sql",
             crate::capture::MIGRATION_ROOT,
             migration.logical_name
         ))?;
         if snapshot.files.contains_key(&path) {
-            return Err(format!("allocated migration path `{path}` already exists"));
+            return Err(Diagnostic::without_a_fix(
+                "workspace-migration-path-exists",
+                path.to_string(),
+                format!("allocated migration path `{path}` already exists"),
+            ));
         }
         base.files
             .entry(path.clone())
@@ -329,13 +344,16 @@ pub(crate) fn encode_compiler_lock(
     projection: &jails_contracts::RenderedTree,
     migrations: BTreeMap<ProjectPath, ContentDigest>,
     migration_bytes: BTreeMap<ProjectPath, Vec<u8>>,
-) -> Result<Vec<u8>, String> {
-    let model_bytes = model
-        .canonical_json()
-        .map_err(|error| format!("could not encode accepted compiler model: {error}"))?;
+) -> Result<Vec<u8>, Diagnostic> {
+    let model_bytes = model.canonical_json().map_err(|error| {
+        lock_encoding(format!("could not encode accepted compiler model: {error}"))
+    })?;
     let model_digest = digest(&model_bytes)?;
-    let projection_bytes = serde_json::to_vec(projection)
-        .map_err(|error| format!("could not encode accepted compiler projection: {error}"))?;
+    let projection_bytes = serde_json::to_vec(projection).map_err(|error| {
+        lock_encoding(format!(
+            "could not encode accepted compiler projection: {error}"
+        ))
+    })?;
     let projection_digest = digest(&projection_bytes)?;
     serde_json::to_vec_pretty(&CompilerLock {
         schema: COMPILER_LOCK_SCHEMA,
@@ -347,7 +365,17 @@ pub(crate) fn encode_compiler_lock(
         migrations,
         migration_bytes,
     })
-    .map_err(|error| format!("could not encode compiler lock: {error}"))
+    .map_err(|error| lock_encoding(format!("could not encode compiler lock: {error}")))
+}
+
+/// The lock would not serialise. One code for the three halves it is made of,
+/// because a reader can do nothing different about any of them.
+fn lock_encoding(message: String) -> Diagnostic {
+    Diagnostic::without_a_fix(
+        "workspace-lock-encoding",
+        crate::capture::COMPILER_LOCK,
+        message,
+    )
 }
 
 fn materialize_compiler_lock(
@@ -358,7 +386,7 @@ fn materialize_compiler_lock(
     migration_bytes: BTreeMap<ProjectPath, Vec<u8>>,
     blobs: &mut BTreeMap<ContentDigest, Vec<u8>>,
     operations: &mut Vec<PlannedOperation>,
-) -> Result<(), String> {
+) -> Result<(), Diagnostic> {
     let lock_bytes = encode_compiler_lock(
         compiler_version,
         &draft.next_model,
@@ -366,7 +394,7 @@ fn materialize_compiler_lock(
         migrations,
         migration_bytes,
     )?;
-    let path = ProjectPath::parse(crate::capture::COMPILER_LOCK)?;
+    let path = crate::capture::project_path(crate::capture::COMPILER_LOCK)?;
     let before = snapshot
         .files
         .get(&path)
@@ -400,7 +428,7 @@ fn materialize_document_intents(
     intents: &[DocumentIntent],
     blobs: &mut BTreeMap<ContentDigest, Vec<u8>>,
     operations: &mut Vec<PlannedOperation>,
-) -> Result<(), String> {
+) -> Result<(), Diagnostic> {
     let mut desired = BTreeMap::<ProjectPath, Vec<u8>>::new();
     let mut removals = BTreeMap::<ProjectPath, ProjectPath>::new();
     for intent in intents {
@@ -447,7 +475,7 @@ fn materialize_document_intents(
                 update_document(
                     snapshot,
                     &mut desired,
-                    ProjectPath::parse("pom.xml")?,
+                    crate::capture::project_path("pom.xml")?,
                     |text| Ok(crate::documents::set_maven_main_class(text, class)),
                 )?;
             }
@@ -456,7 +484,7 @@ fn materialize_document_intents(
                     jails_contracts::BuildSystem::Maven => update_document(
                         snapshot,
                         &mut desired,
-                        ProjectPath::parse("pom.xml")?,
+                        crate::capture::project_path("pom.xml")?,
                         |text| crate::documents::reconcile_maven_dependencies(text, dependencies),
                     )?,
                     jails_contracts::BuildSystem::Gradle => {
@@ -470,10 +498,12 @@ fn materialize_document_intents(
                         })?;
                     }
                     jails_contracts::BuildSystem::Unknown => {
-                        return Err(
-                            "cannot reconcile dependencies without one captured Maven or Gradle build\n       fix: restore exactly one supported build file, then re-plan"
-                                .to_string(),
-                        );
+                        return Err(Diagnostic::new(
+                            "workspace-dependencies-need-a-build",
+                            "$.build",
+                            "cannot reconcile dependencies without one captured Maven or Gradle build",
+                            "restore exactly one supported build file, then re-plan",
+                        ));
                     }
                 }
             }
@@ -484,7 +514,7 @@ fn materialize_document_intents(
                 jails_contracts::BuildSystem::Maven => update_document(
                     snapshot,
                     &mut desired,
-                    ProjectPath::parse("pom.xml")?,
+                    crate::capture::project_path("pom.xml")?,
                     |text| {
                         crate::documents::reconcile_maven_build_features(
                             text,
@@ -501,10 +531,12 @@ fn materialize_document_intents(
                 }
                 jails_contracts::BuildSystem::Unknown => {
                     if !features.is_empty() {
-                        return Err(
-                            "cannot reconcile build features without one captured Maven or Gradle build\n       fix: restore exactly one supported build file, then re-plan"
-                                .to_string(),
-                        );
+                        return Err(Diagnostic::new(
+                            "workspace-build-features-need-a-build",
+                            "$.build",
+                            "cannot reconcile build features without one captured Maven or Gradle build",
+                            "restore exactly one supported build file, then re-plan",
+                        ));
                     }
                 }
             },
@@ -519,13 +551,19 @@ fn materialize_document_intents(
             }
             DocumentIntent::AdoptJava { source, path, .. } => {
                 if desired.contains_key(source) {
-                    return Err(format!(
-                        "reader source `{source}` cannot be patched and adopted in one plan"
+                    return Err(Diagnostic::without_a_fix(
+                        "workspace-adoption-also-patched",
+                        source.to_string(),
+                        format!(
+                            "reader source `{source}` cannot be patched and adopted in one plan"
+                        ),
                     ));
                 }
                 if removals.insert(source.clone(), path.clone()).is_some() {
-                    return Err(format!(
-                        "reader source `{source}` is adopted more than once"
+                    return Err(Diagnostic::without_a_fix(
+                        "workspace-adoption-repeated",
+                        source.to_string(),
+                        format!("reader source `{source}` is adopted more than once"),
                     ));
                 }
             }
@@ -537,8 +575,11 @@ fn materialize_document_intents(
     }
     for (source, target) in removals {
         let before_file = snapshot.files.get(&source).ok_or_else(|| {
-            format!(
-                "reader source `{source}` was not captured for adoption into `{target}`\n       fix: restore the source and re-plan the import"
+            Diagnostic::new(
+                "workspace-adoption-source-missing",
+                source.to_string(),
+                format!("reader source `{source}` was not captured for adoption into `{target}`"),
+                "restore the source and re-plan the import",
             )
         })?;
         let before = file_image(
@@ -562,16 +603,19 @@ fn update_optional_document(
     snapshot: &WorkspaceSnapshot,
     desired: &mut BTreeMap<ProjectPath, Vec<u8>>,
     path: ProjectPath,
-    update: impl FnOnce(&str) -> Result<String, String>,
-) -> Result<(), String> {
+    update: impl FnOnce(&str) -> Result<String, Diagnostic>,
+) -> Result<(), Diagnostic> {
     let current = desired
         .get(&path)
         .map(Vec::as_slice)
         .or_else(|| snapshot.files.get(&path).map(|file| file.bytes.as_slice()))
         .unwrap_or_default();
     let text = std::str::from_utf8(current).map_err(|_| {
-        format!(
-            "reader document `{path}` is not UTF-8\n       fix: convert it to UTF-8, then re-plan"
+        Diagnostic::new(
+            "workspace-document-not-utf8",
+            path.to_string(),
+            format!("reader document `{path}` is not UTF-8"),
+            "convert it to UTF-8, then re-plan",
         )
     })?;
     desired.insert(path, update(text)?.into_bytes());
@@ -582,11 +626,14 @@ fn update_document(
     snapshot: &WorkspaceSnapshot,
     desired: &mut BTreeMap<ProjectPath, Vec<u8>>,
     path: ProjectPath,
-    update: impl FnOnce(&str) -> Result<String, String>,
-) -> Result<(), String> {
+    update: impl FnOnce(&str) -> Result<String, Diagnostic>,
+) -> Result<(), Diagnostic> {
     let captured = snapshot.files.get(&path).ok_or_else(|| {
-        format!(
-            "reader document `{path}` was not captured\n       fix: restore the build file and re-plan"
+        Diagnostic::new(
+            "workspace-document-not-captured",
+            path.to_string(),
+            format!("reader document `{path}` was not captured"),
+            "restore the build file and re-plan",
         )
     })?;
     let current = desired
@@ -594,31 +641,38 @@ fn update_document(
         .map(Vec::as_slice)
         .unwrap_or(&captured.bytes);
     let text = std::str::from_utf8(current).map_err(|_| {
-        format!(
-            "reader document `{path}` is not UTF-8\n       fix: convert it to UTF-8, then re-plan"
+        Diagnostic::new(
+            "workspace-document-not-utf8",
+            path.to_string(),
+            format!("reader document `{path}` is not UTF-8"),
+            "convert it to UTF-8, then re-plan",
         )
     })?;
     desired.insert(path, update(text)?.into_bytes());
     Ok(())
 }
 
-fn gradle_build_file(snapshot: &WorkspaceSnapshot) -> Result<(ProjectPath, bool), String> {
-    let groovy = ProjectPath::parse("build.gradle")?;
-    let kotlin = ProjectPath::parse("build.gradle.kts")?;
+fn gradle_build_file(snapshot: &WorkspaceSnapshot) -> Result<(ProjectPath, bool), Diagnostic> {
+    let groovy = crate::capture::project_path("build.gradle")?;
+    let kotlin = crate::capture::project_path("build.gradle.kts")?;
     match (
         snapshot.files.contains_key(&groovy),
         snapshot.files.contains_key(&kotlin),
     ) {
         (true, false) => Ok((groovy, false)),
         (false, true) => Ok((kotlin, true)),
-        (true, true) => Err(
-            "both build.gradle and build.gradle.kts exist\n       fix: keep one canonical Gradle build script, then re-plan"
-                .to_string(),
-        ),
-        (false, false) => Err(
-            "captured Gradle project has no build script\n       fix: restore build.gradle or build.gradle.kts, then re-plan"
-                .to_string(),
-        ),
+        (true, true) => Err(Diagnostic::new(
+            "workspace-gradle-build-ambiguous",
+            "$.build",
+            "both build.gradle and build.gradle.kts exist",
+            "keep one canonical Gradle build script, then re-plan",
+        )),
+        (false, false) => Err(Diagnostic::new(
+            "workspace-gradle-build-missing",
+            "$.build",
+            "captured Gradle project has no build script",
+            "restore build.gradle or build.gradle.kts, then re-plan",
+        )),
     }
 }
 
@@ -644,7 +698,7 @@ pub(crate) fn plan_reader_document(
     blobs: &mut BTreeMap<ContentDigest, Vec<u8>>,
     path: ProjectPath,
     after_bytes: Vec<u8>,
-) -> Result<(), String> {
+) -> Result<(), Diagnostic> {
     let before_file = snapshot.files.get(&path);
     if before_file.is_some_and(|file| file.bytes == after_bytes)
         || before_file.is_none() && after_bytes.is_empty()
@@ -680,7 +734,7 @@ pub(crate) fn file_image(
     bytes: &[u8],
     mode: FileMode,
     blobs: &mut BTreeMap<ContentDigest, Vec<u8>>,
-) -> Result<FileImageRef, String> {
+) -> Result<FileImageRef, Diagnostic> {
     let blob = digest(bytes)?;
     blobs.insert(blob.clone(), bytes.to_vec());
     Ok(FileImageRef {
@@ -702,7 +756,7 @@ pub(crate) fn file_kind(path: &ProjectPath) -> FileKind {
     }
 }
 
-pub(crate) fn tree_id(tree: &TreeManifest) -> Result<ContentDigest, String> {
+pub(crate) fn tree_id(tree: &TreeManifest) -> Result<ContentDigest, Diagnostic> {
     canonical_digest("tree", tree)
 }
 
@@ -713,19 +767,22 @@ pub(crate) fn plan_digest(
     summary: &jails_contracts::SemanticPlan,
     operations: &[PlannedOperation],
     effects: &[jails_contracts::EffectIntent],
-) -> Result<ContentDigest, String> {
+) -> Result<ContentDigest, Diagnostic> {
     canonical_digest(
         "plan",
         &(compiler, base, input, summary, operations, effects),
     )
 }
 
-fn canonical_digest(label: &str, value: &impl Serialize) -> Result<ContentDigest, String> {
+fn canonical_digest(label: &str, value: &impl Serialize) -> Result<ContentDigest, Diagnostic> {
     let mut bytes = format!("JAILS-{}-1\0", label.to_ascii_uppercase()).into_bytes();
-    bytes.extend(
-        serde_json::to_vec(value)
-            .map_err(|error| format!("could not encode {label} identity: {error}"))?,
-    );
+    bytes.extend(serde_json::to_vec(value).map_err(|error| {
+        Diagnostic::without_a_fix(
+            "workspace-identity-encoding",
+            "$.plan",
+            format!("could not encode {label} identity: {error}"),
+        )
+    })?);
     digest(&bytes)
 }
 
@@ -733,10 +790,9 @@ fn canonical_digest(label: &str, value: &impl Serialize) -> Result<ContentDigest
 ///
 /// Public because a reader outside this crate has to be able to ask whether a
 /// file still matches a digest the lock recorded, and re-deriving "sha256:" +
-/// hex somewhere else is how two answers to one question start.
-pub fn digest(bytes: &[u8]) -> Result<ContentDigest, String> {
-    ContentDigest::parse(format!("sha256:{}", hex(&sha256(bytes))))
-}
+/// hex somewhere else is how two answers to one question start. The one
+/// derivation is the capture's, because that half is the lower one.
+pub use crate::capture::digest;
 
 /// Put back a published migration the reader edited.
 ///
@@ -754,7 +810,7 @@ fn restore_sealed_migrations(
     base: &mut jails_contracts::SnapshotPreconditions,
     blobs: &mut BTreeMap<ContentDigest, Vec<u8>>,
     operations: &mut Vec<PlannedOperation>,
-) -> Result<(), String> {
+) -> Result<(), Diagnostic> {
     for (path, bytes) in sealed {
         let live = snapshot.files.get(path);
         if live.is_some_and(|file| file.bytes == *bytes) {
@@ -920,7 +976,7 @@ mod tests {
         // structs, and a golden that skipped them would be the same gap these
         // tests exist to close.
         snapshot.files.insert(
-            ProjectPath::parse("pom.xml").unwrap(),
+            crate::capture::project_path("pom.xml").unwrap(),
             jails_contracts::CapturedFile {
                 bytes: GOLDEN_POM.as_bytes().to_vec(),
                 executable: false,

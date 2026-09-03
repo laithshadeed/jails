@@ -316,6 +316,48 @@ deliberately has none -- nothing stores a generator kind, so clap's canonical
 name is the only spelling and a hand-written table beside `value(name = ...)`
 would be the second copy.
 
+## A refusal below the CLI is a `Diagnostic`, and its code says which pass
+
+`jails_model::Diagnostic` is a code, the path it is about, what is wrong and
+what to do. **One prefix per phase, and the prefix is owned by the code that
+runs the pass, not by a crate**: `JDL####` and `model-*` are `jails-model`'s,
+`compile-*` is `jails-compiler`'s, and `workspace-*` is the capture/apply
+phase's -- which is `jails-workspace` *and* `jails-project`'s `capture`,
+`documents` and `merge`, because capture moved crates and the phase did not.
+A `capture-*` family beside `workspace-*` would be two vocabularies for the
+two halves of one pass. `measure::is_canonical_workspace` in
+`tests/architecture/` is the one place that boundary is drawn, and both the
+ownership gate and the `fix:` ratchet read it.
+
+**Adopting the contract rewrote no message.** `Display for Diagnostic` renders
+exactly the `"<what is wrong>\n       fix: <what to do>"` a phase used to
+return as a `String`, so a caller that interpolates it (`could not apply exact
+plan: {error}`) produces the same bytes and only the code is added.
+`Diagnostic::without_a_fix` is the constructor for a refusal that genuinely
+has no next step -- a blob that does not match its digest, a corrupt tag --
+and it exists so the hole is greppable rather than an empty string nobody
+notices. `jails_project::diagnosed` is the one conversion to
+`jails_support::Failure`, a *function* because both types are foreign to every
+crate that can see both, and `Failure::Diagnosed` is `Told` plus the code:
+the human line is unchanged and `--output json` puts the code in the
+envelope's `error.code`, where `invalid-request` used to stand for every
+refusal alike.
+
+**A family of sites saying one thing gets one code behind one constructor.**
+`refused_io` covers every `could not <verb> <path>: <errno>` in the capture
+and the executor; `block_edited`, `missing_tree`, `reader_owned_feature`,
+`lock_undecodable` and their kin do the same for their families.
+`every_diagnostic_code_is_unique_and_kebab_case` fails on a code constructed
+twice, so the second site is a compile-time question rather than a drift.
+`jails-model`'s own 25 doubled codes are counted rather than refused and the
+number may only fall.
+
+`jails-compiler` has not adopted it: it refuses with `CompileError`, a
+newtype over one `String`, from 216 sites, and `docs/10-language.md` A3.13 is
+that work. Three `Result<_, String>` returns remain in `jails-project`
+(`gradle::parse_classpath_report`, two in `template`) and stay: they are not
+this phase, and their refusals are worded by the caller that reports them.
+
 ## Layout
 
 - **The binary's front half is three files, split by the question each

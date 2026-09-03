@@ -163,7 +163,9 @@ pub(super) fn ensure_enforcer(tree: &publish::Tree<'_>, java: &str) -> Result<()
     </executions>
 </plugin>"#
     );
-    if let Some(updated) = crate::pom::add_plugin(&pom, "maven-enforcer-plugin", &plugin)? {
+    if let Some(updated) = crate::pom::add_plugin(&pom, "maven-enforcer-plugin", &plugin)
+        .map_err(jails_project::diagnosed)?
+    {
         tree.put_named("pom.xml", updated, "pom.xml")?;
     }
     Ok(())

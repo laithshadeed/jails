@@ -27,7 +27,7 @@ use jails_contracts::{
     CapturedFile, ContentDigest, DirectoryPrecondition, FilePrecondition, Layout, MigrationHistory,
     MigrationRecord, ProjectPath, RenderedTree, SnapshotPreconditions, WorkspaceSnapshot,
 };
-use jails_model::AppModel;
+use jails_model::{AppModel, Diagnostic};
 use jails_support::{hex, sha256};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -42,6 +42,77 @@ pub const MIGRATION_ROOT: &str = "src/main/resources/db/migration";
 const READER_MAIN_ROOT: &str = "src/main/java";
 const READER_TEST_ROOT: &str = "src/test/java";
 pub const COMPILER_LOCK: &str = ".jails/compiler.lock.json";
+
+/// A canonical project path this phase built, or the diagnostic that it is
+/// not one.
+///
+/// **The three constructors below are the capture/apply phase's shared ones**,
+/// and they live here rather than beside the executor because `jails-project`
+/// is the lower half: `jails-workspace` re-exports this module as
+/// `crate::capture`, so one spelling of `workspace-path-invalid`,
+/// `workspace-digest-invalid` and `workspace-io` serves both halves. Two
+/// spellings would be two codes for one refusal, which is the thing the code
+/// namespace exists to prevent.
+pub fn project_path(value: impl Into<String>) -> Result<ProjectPath, Diagnostic> {
+    let value = value.into();
+    ProjectPath::parse(value.clone())
+        .map_err(|message| Diagnostic::without_a_fix("workspace-path-invalid", value, message))
+}
+
+/// The content address of some bytes, in the one spelling the plan uses.
+pub fn digest(bytes: &[u8]) -> Result<ContentDigest, Diagnostic> {
+    ContentDigest::parse(format!("sha256:{}", hex(&sha256(bytes)))).map_err(|message| {
+        Diagnostic::without_a_fix("workspace-digest-invalid", "$.blobs", message)
+    })
+}
+
+/// Any filesystem call the capture or the executor could not complete.
+///
+/// One code for the family, not one per verb: `could not read`, `could not
+/// inspect`, `could not stage beside` are one refusal -- the operating system
+/// said no -- and the verb stays in the sentence, so every one of those
+/// messages keeps its bytes. No `fix:`, because the next step is whatever the
+/// errno says and inventing one would be advice jails cannot stand behind.
+pub fn refused_io(verb: &str, at: &Path, error: impl std::fmt::Display) -> Diagnostic {
+    Diagnostic::without_a_fix(
+        "workspace-io",
+        at.display().to_string(),
+        format!("could not {verb} {}: {error}", at.display()),
+    )
+}
+
+/// The compiler lock could not be decoded, verified or believed. One code
+/// per question, each reached from every schema version that asks it.
+/// `jails.toml` names a layer that does not exist. One site for the two
+/// readers of it: the capture, and the `ProjectFacts` every command resolves.
+pub(crate) fn layout_invalid(message: String) -> Diagnostic {
+    Diagnostic::without_a_fix("workspace-layout-invalid", "jails.toml", message)
+}
+
+fn lock_undecodable(error: impl std::fmt::Display) -> Diagnostic {
+    Diagnostic::without_a_fix(
+        "workspace-lock-undecodable",
+        COMPILER_LOCK,
+        format!("could not decode `{COMPILER_LOCK}`: {error}"),
+    )
+}
+
+fn lock_unverifiable(error: impl std::fmt::Display) -> Diagnostic {
+    Diagnostic::without_a_fix(
+        "workspace-lock-unverifiable",
+        COMPILER_LOCK,
+        format!("could not verify `{COMPILER_LOCK}`: {error}"),
+    )
+}
+
+fn lock_projection_mismatch() -> Diagnostic {
+    Diagnostic::new(
+        "workspace-lock-projection-mismatch",
+        COMPILER_LOCK,
+        format!("compiler lock `{COMPILER_LOCK}` does not match its accepted projection"),
+        "restore a known-good lock; do not infer merge bases from generated source",
+    )
+}
 const COMPILER_LOCK_SCHEMA_V1: &str = "jails.compiler-lock.v1";
 const COMPILER_LOCK_SCHEMA_V2: &str = "jails.compiler-lock.v2";
 const COMPILER_LOCK_SCHEMA_V3: &str = "jails.compiler-lock.v3";
@@ -131,7 +202,7 @@ pub fn capture(
     intended: Option<&AppModel>,
     reader_paths: &[ProjectPath],
     model_file: ModelFile,
-) -> Result<WorkspaceSnapshot, String> {
+) -> Result<WorkspaceSnapshot, Diagnostic> {
     let trees = ReaderTrees::of(intended.unwrap_or(&model));
     capture_model_state(
         root,
@@ -212,15 +283,19 @@ fn capture_model_state(
     reader_paths: &[ProjectPath],
     model_present: bool,
     trees: ReaderTrees,
-) -> Result<WorkspaceSnapshot, String> {
+) -> Result<WorkspaceSnapshot, Diagnostic> {
     let relative_model = if model_path.is_absolute() {
-        model_path
-            .strip_prefix(root)
-            .map_err(|_| "model path is outside the project root".to_string())?
+        model_path.strip_prefix(root).map_err(|_| {
+            Diagnostic::without_a_fix(
+                "workspace-model-path-outside-root",
+                model_path.display().to_string(),
+                "model path is outside the project root",
+            )
+        })?
     } else {
         model_path
     };
-    let model_path = ProjectPath::parse(path_text(relative_model))?;
+    let model_path = project_path(path_text(relative_model))?;
     let model_digest = digest(model_source)?;
     let mut files = BTreeMap::new();
     // **Observed, not asserted.** The caller passes the model *source*, which
@@ -320,8 +395,10 @@ fn capture_model_state(
     // Read from the capture, not from disk a second time: the whole point of
     // the snapshot is that an external fact is observed once, and a layout read
     // separately could disagree with the precondition recorded above.
-    let layout = match files.get(&ProjectPath::parse("jails.toml")?) {
-        Some(captured) => Layout::parse(&String::from_utf8_lossy(&captured.bytes))?,
+    let layout = match files.get(&project_path("jails.toml")?) {
+        Some(captured) => {
+            Layout::parse(&String::from_utf8_lossy(&captured.bytes)).map_err(layout_invalid)?
+        }
         None => Layout::default(),
     };
     // **The model is desired-state authority** for the two facts it states:
@@ -373,7 +450,7 @@ pub fn observe_rendered_paths<'a>(
     root: &Path,
     snapshot: &mut WorkspaceSnapshot,
     paths: impl IntoIterator<Item = &'a ProjectPath>,
-) -> Result<(), String> {
+) -> Result<(), Diagnostic> {
     for path in paths {
         if snapshot.preconditions.files.contains_key(path) {
             continue;
@@ -395,7 +472,7 @@ pub fn observe_rendered_paths<'a>(
 /// rename or a stranded-reference report walking the tree has to be told
 /// which files are jails' -- and the lock is the only thing that knows. No
 /// lock is no managed file; an unreadable one is an error, as in [`capture`].
-pub fn managed_paths(root: &Path) -> Result<BTreeSet<ProjectPath>, String> {
+pub fn managed_paths(root: &Path) -> Result<BTreeSet<ProjectPath>, Diagnostic> {
     let mut files = BTreeMap::new();
     let mut preconditions = SnapshotPreconditions::default();
     capture_optional_file(root, COMPILER_LOCK, &mut files, &mut preconditions)?;
@@ -512,8 +589,8 @@ fn capture_migration_history(
     root: &Path,
     files: &mut BTreeMap<ProjectPath, CapturedFile>,
     preconditions: &mut SnapshotPreconditions,
-) -> Result<MigrationHistory, String> {
-    let migration_root = ProjectPath::parse(MIGRATION_ROOT)?;
+) -> Result<MigrationHistory, Diagnostic> {
+    let migration_root = project_path(MIGRATION_ROOT)?;
     let absolute = root.join(MIGRATION_ROOT);
     if !absolute.exists() {
         preconditions
@@ -524,9 +601,13 @@ fn capture_migration_history(
         });
     }
     let metadata = std::fs::symlink_metadata(&absolute)
-        .map_err(|error| format!("could not inspect {}: {error}", absolute.display()))?;
+        .map_err(|error| refused_io("inspect", &absolute, error))?;
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
-        return Err(format!("`{MIGRATION_ROOT}` is not a regular directory"));
+        return Err(Diagnostic::without_a_fix(
+            "workspace-migration-root-not-a-directory",
+            MIGRATION_ROOT,
+            format!("`{MIGRATION_ROOT}` is not a regular directory"),
+        ));
     }
     capture_tree(root, &absolute, files, preconditions)?;
     let directory = directory_precondition_from_files(files, &migration_root)?;
@@ -541,7 +622,7 @@ fn capture_migration_history(
             let name = path.as_str().rsplit('/').next()?;
             let version = name.strip_prefix('V')?.split_once("__")?.0;
             name.ends_with(".sql").then(|| {
-                Ok::<_, String>(MigrationRecord {
+                Ok::<_, Diagnostic>(MigrationRecord {
                     version: version.to_string(),
                     path: path.clone(),
                     digest: digest(&file.bytes)?,
@@ -555,24 +636,22 @@ fn capture_migration_history(
 
 fn accepted_compiler_state(
     files: &BTreeMap<ProjectPath, CapturedFile>,
-) -> Result<Option<AcceptedCompilerState>, String> {
+) -> Result<Option<AcceptedCompilerState>, Diagnostic> {
     files
-        .get(&ProjectPath::parse(COMPILER_LOCK)?)
+        .get(&project_path(COMPILER_LOCK)?)
         .map(|file| decode_compiler_lock(&file.bytes))
         .transpose()
 }
 
-fn decode_compiler_lock(bytes: &[u8]) -> Result<AcceptedCompilerState, String> {
-    let header: serde_json::Value = serde_json::from_slice(bytes)
-        .map_err(|error| format!("could not decode `{COMPILER_LOCK}`: {error}"))?;
+fn decode_compiler_lock(bytes: &[u8]) -> Result<AcceptedCompilerState, Diagnostic> {
+    let header: serde_json::Value = serde_json::from_slice(bytes).map_err(lock_undecodable)?;
     let schema = header
         .get("schema")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
     match schema {
         COMPILER_LOCK_SCHEMA_V1 => {
-            let lock: CompilerLockV1 = serde_json::from_value(header)
-                .map_err(|error| format!("could not decode `{COMPILER_LOCK}`: {error}"))?;
+            let lock: CompilerLockV1 = serde_json::from_value(header).map_err(lock_undecodable)?;
             verify_model(&lock.model, &lock.model_digest)?;
             Ok(AcceptedCompilerState {
                 model: lock.model,
@@ -583,15 +662,11 @@ fn decode_compiler_lock(bytes: &[u8]) -> Result<AcceptedCompilerState, String> {
             })
         }
         COMPILER_LOCK_SCHEMA_V2 => {
-            let lock: CompilerLockV2 = serde_json::from_value(header)
-                .map_err(|error| format!("could not decode `{COMPILER_LOCK}`: {error}"))?;
+            let lock: CompilerLockV2 = serde_json::from_value(header).map_err(lock_undecodable)?;
             verify_model(&lock.model, &lock.model_digest)?;
-            let projection = serde_json::to_vec(&lock.projection)
-                .map_err(|error| format!("could not verify `{COMPILER_LOCK}`: {error}"))?;
+            let projection = serde_json::to_vec(&lock.projection).map_err(lock_unverifiable)?;
             if digest(&projection)? != lock.projection_digest {
-                return Err(format!(
-                    "compiler lock `{COMPILER_LOCK}` does not match its accepted projection\n       fix: restore a known-good lock; do not infer merge bases from generated source"
-                ));
+                return Err(lock_projection_mismatch());
             }
             Ok(AcceptedCompilerState {
                 model: lock.model,
@@ -602,15 +677,11 @@ fn decode_compiler_lock(bytes: &[u8]) -> Result<AcceptedCompilerState, String> {
             })
         }
         COMPILER_LOCK_SCHEMA_V3 => {
-            let lock: CompilerLockV3 = serde_json::from_value(header)
-                .map_err(|error| format!("could not decode `{COMPILER_LOCK}`: {error}"))?;
+            let lock: CompilerLockV3 = serde_json::from_value(header).map_err(lock_undecodable)?;
             verify_model(&lock.model, &lock.model_digest)?;
-            let projection = serde_json::to_vec(&lock.projection)
-                .map_err(|error| format!("could not verify `{COMPILER_LOCK}`: {error}"))?;
+            let projection = serde_json::to_vec(&lock.projection).map_err(lock_unverifiable)?;
             if digest(&projection)? != lock.projection_digest {
-                return Err(format!(
-                    "compiler lock `{COMPILER_LOCK}` does not match its accepted projection\n       fix: restore a known-good lock; do not infer merge bases from generated source"
-                ));
+                return Err(lock_projection_mismatch());
             }
             Ok(AcceptedCompilerState {
                 model: lock.model,
@@ -620,37 +691,46 @@ fn decode_compiler_lock(bytes: &[u8]) -> Result<AcceptedCompilerState, String> {
                 migration_bytes: lock.migration_bytes,
             })
         }
-        other => Err(format!(
-            "unsupported compiler lock `{other}`\n       fix: regenerate `{COMPILER_LOCK}` with this version of jails"
+        other => Err(Diagnostic::new(
+            "workspace-lock-schema-unsupported",
+            COMPILER_LOCK,
+            format!("unsupported compiler lock `{other}`"),
+            format!("regenerate `{COMPILER_LOCK}` with this version of jails"),
         )),
     }
 }
 
-fn verify_model(model: &AppModel, expected: &ContentDigest) -> Result<(), String> {
-    let actual = digest(
-        &model
-            .canonical_json()
-            .map_err(|error| format!("could not verify `{COMPILER_LOCK}`: {error}"))?,
-    )?;
+fn verify_model(model: &AppModel, expected: &ContentDigest) -> Result<(), Diagnostic> {
+    let actual = digest(&model.canonical_json().map_err(lock_unverifiable)?)?;
     if &actual != expected {
-        return Err(format!(
-            "compiler lock `{COMPILER_LOCK}` does not match its accepted model\n       fix: restore a known-good lock; do not infer merge bases from generated source"
+        return Err(Diagnostic::new(
+            "workspace-lock-model-mismatch",
+            COMPILER_LOCK,
+            format!("compiler lock `{COMPILER_LOCK}` does not match its accepted model"),
+            "restore a known-good lock; do not infer merge bases from generated source",
         ));
     }
     Ok(())
 }
 
-pub fn observe_directory(root: &Path, path: &ProjectPath) -> Result<DirectoryPrecondition, String> {
+pub fn observe_directory(
+    root: &Path,
+    path: &ProjectPath,
+) -> Result<DirectoryPrecondition, Diagnostic> {
     let absolute = root.join(path.as_str());
     let metadata = match std::fs::symlink_metadata(&absolute) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(DirectoryPrecondition::Missing);
         }
-        Err(error) => return Err(format!("could not inspect {}: {error}", absolute.display())),
+        Err(error) => return Err(refused_io("inspect", &absolute, error)),
     };
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
-        return Err(format!("`{}` is not a regular directory", path.as_str()));
+        return Err(Diagnostic::without_a_fix(
+            "workspace-not-a-regular-directory",
+            path.to_string(),
+            format!("`{}` is not a regular directory", path.as_str()),
+        ));
     }
     let mut files = BTreeMap::new();
     let mut ignored = SnapshotPreconditions::default();
@@ -661,14 +741,21 @@ pub fn observe_directory(root: &Path, path: &ProjectPath) -> Result<DirectoryPre
 fn directory_precondition_from_files(
     files: &BTreeMap<ProjectPath, CapturedFile>,
     root: &ProjectPath,
-) -> Result<DirectoryPrecondition, String> {
+) -> Result<DirectoryPrecondition, Diagnostic> {
     let entries = files
         .iter()
         .filter(|(path, _)| path.is_within(root))
-        .map(|(path, file)| Ok::<_, String>((path.as_str(), digest(&file.bytes)?, file.executable)))
+        .map(|(path, file)| {
+            Ok::<_, Diagnostic>((path.as_str(), digest(&file.bytes)?, file.executable))
+        })
         .collect::<Result<Vec<_>, _>>()?;
-    let encoded = serde_json::to_vec(&entries)
-        .map_err(|error| format!("could not encode directory precondition: {error}"))?;
+    let encoded = serde_json::to_vec(&entries).map_err(|error| {
+        Diagnostic::without_a_fix(
+            "workspace-directory-precondition-encoding",
+            root.to_string(),
+            format!("could not encode directory precondition: {error}"),
+        )
+    })?;
     Ok(DirectoryPrecondition::Present {
         digest: digest(&encoded)?,
     })
@@ -679,24 +766,27 @@ fn capture_optional_file(
     relative: &str,
     files: &mut BTreeMap<ProjectPath, CapturedFile>,
     preconditions: &mut SnapshotPreconditions,
-) -> Result<(), String> {
+) -> Result<(), Diagnostic> {
     let path = root.join(relative);
     let metadata = match std::fs::symlink_metadata(&path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             preconditions
                 .files
-                .insert(ProjectPath::parse(relative)?, FilePrecondition::Missing);
+                .insert(project_path(relative)?, FilePrecondition::Missing);
             return Ok(());
         }
-        Err(error) => return Err(format!("could not inspect {}: {error}", path.display())),
+        Err(error) => return Err(refused_io("inspect", &path, error)),
     };
     if !metadata.is_file() || metadata.file_type().is_symlink() {
-        return Err(format!("`{relative}` is not a regular reader file"));
+        return Err(Diagnostic::without_a_fix(
+            "workspace-reader-file-not-regular",
+            relative,
+            format!("`{relative}` is not a regular reader file"),
+        ));
     }
-    let bytes = std::fs::read(&path)
-        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
-    let path = ProjectPath::parse(relative)?;
+    let bytes = std::fs::read(&path).map_err(|error| refused_io("read", &path, error))?;
+    let path = project_path(relative)?;
     let executable = executable(&metadata);
     preconditions.files.insert(
         path.clone(),
@@ -714,23 +804,22 @@ fn capture_tree(
     directory: &Path,
     files: &mut BTreeMap<ProjectPath, CapturedFile>,
     preconditions: &mut SnapshotPreconditions,
-) -> Result<(), String> {
-    let entries = std::fs::read_dir(directory)
-        .map_err(|error| format!("could not read {}: {error}", directory.display()))?;
+) -> Result<(), Diagnostic> {
+    let entries =
+        std::fs::read_dir(directory).map_err(|error| refused_io("read", directory, error))?;
     for entry in entries {
-        let entry = entry.map_err(|error| {
-            format!(
-                "could not read an entry under {}: {error}",
-                directory.display()
-            )
-        })?;
+        let entry = entry.map_err(|error| refused_io("read an entry under", directory, error))?;
         let path = entry.path();
         let metadata = std::fs::symlink_metadata(&path)
-            .map_err(|error| format!("could not inspect {}: {error}", path.display()))?;
+            .map_err(|error| refused_io("inspect", &path, error))?;
         if metadata.file_type().is_symlink() {
-            return Err(format!(
-                "managed output `{}` is a symlink; replace it with a regular file",
-                path.display()
+            return Err(Diagnostic::without_a_fix(
+                "workspace-managed-output-symlink",
+                path.display().to_string(),
+                format!(
+                    "managed output `{}` is a symlink; replace it with a regular file",
+                    path.display()
+                ),
             ));
         }
         if metadata.is_dir() {
@@ -738,17 +827,21 @@ fn capture_tree(
             continue;
         }
         if !metadata.is_file() {
-            return Err(format!(
-                "managed output `{}` is not a regular file",
-                path.display()
+            return Err(Diagnostic::without_a_fix(
+                "workspace-managed-output-not-regular",
+                path.display().to_string(),
+                format!("managed output `{}` is not a regular file", path.display()),
             ));
         }
-        let bytes = std::fs::read(&path)
-            .map_err(|error| format!("could not read {}: {error}", path.display()))?;
-        let relative = path
-            .strip_prefix(root)
-            .map_err(|_| format!("{} escaped the project root", path.display()))?;
-        let project_path = ProjectPath::parse(path_text(relative))?;
+        let bytes = std::fs::read(&path).map_err(|error| refused_io("read", &path, error))?;
+        let relative = path.strip_prefix(root).map_err(|_| {
+            Diagnostic::without_a_fix(
+                "workspace-capture-path-escaped-root",
+                path.display().to_string(),
+                format!("{} escaped the project root", path.display()),
+            )
+        })?;
+        let project_path = project_path(path_text(relative))?;
         let executable = executable(&metadata);
         preconditions.files.insert(
             project_path.clone(),
@@ -767,10 +860,6 @@ fn path_text(path: &Path) -> String {
         .map(|component| component.as_os_str().to_string_lossy())
         .collect::<Vec<_>>()
         .join("/")
-}
-
-fn digest(bytes: &[u8]) -> Result<ContentDigest, String> {
-    ContentDigest::parse(format!("sha256:{}", hex(&sha256(bytes))))
 }
 
 #[cfg(unix)]
@@ -815,7 +904,7 @@ mod tests {
             json!("sha256:0000000000000000000000000000000000000000000000000000000000000000");
         let error = decode_compiler_lock(&serde_json::to_vec(&tampered).unwrap())
             .expect_err("a lock that disagrees with its own digest must refuse");
-        assert!(error.contains("compiler.lock"), "{error}");
+        assert!(error.to_string().contains("compiler.lock"), "{error}");
     }
 
     #[test]
@@ -826,7 +915,7 @@ mod tests {
         let projection_digest = digest(&serde_json::to_vec(&projection).unwrap()).unwrap();
         let mut damaged = projection;
         damaged.files.insert(
-            ProjectPath::parse("src/main/java/Damaged.java").unwrap(),
+            project_path("src/main/java/Damaged.java").unwrap(),
             jails_contracts::RenderedFile {
                 kind: jails_contracts::FileKind::JavaMain,
                 mode: jails_contracts::FileMode::Regular,
@@ -851,6 +940,6 @@ mod tests {
         .unwrap();
 
         let error = decode_compiler_lock(&bytes).unwrap_err();
-        assert!(error.contains("accepted projection"), "{error}");
+        assert!(error.to_string().contains("accepted projection"), "{error}");
     }
 }

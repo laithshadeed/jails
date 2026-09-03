@@ -47,7 +47,9 @@ pub(crate) fn run(filter: Option<String>, invocation: Invocation) -> Result<()> 
         &[],
         jails_project::capture::ModelFile::Observed,
     )
-    .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
+    .map_err(|error| {
+        Failure::diagnosed(error.code, format!("could not capture workspace: {error}"))
+    })?;
     let mut model = snapshot.model.model;
     model.project.layout = snapshot.project.layout;
     model.refresh_derived();

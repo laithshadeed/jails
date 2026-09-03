@@ -141,7 +141,9 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
         &capture_paths,
         jails_project::capture::ModelFile::Observed,
     )
-    .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
+    .map_err(|error| {
+        Failure::diagnosed(error.code, format!("could not capture workspace: {error}"))
+    })?;
     clock.mark("capture");
     // **The refusal says the whole request was abandoned.** A command naming
     // several things -- `jails add csv security` -- plans all of them and
@@ -171,7 +173,9 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
         &mut snapshot,
         draft.generated.files.keys(),
     )
-    .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
+    .map_err(|error| {
+        Failure::diagnosed(error.code, format!("could not capture workspace: {error}"))
+    })?;
     draft.migrations.extend(authored_migration);
     // **What the compiler noticed but would not refuse over.** A warning that
     // stays inside the draft is a warning nobody reads; these are the shapes
@@ -200,7 +204,12 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
             jails_workspace::Restore::Refuse
         },
     )
-    .map_err(|error| Failure::Told(format!("could not materialize exact plan: {error}")))?;
+    .map_err(|error| {
+        Failure::diagnosed(
+            error.code,
+            format!("could not materialize exact plan: {error}"),
+        )
+    })?;
     clock.mark("materialize");
 
     if let Some(path) = &invocation.plan_out {
@@ -236,8 +245,9 @@ pub(crate) fn finish_generation(prepared: PreparedMutation) -> Result<()> {
                 jails_contracts::PlannedOperation::ReplaceModelFile { before: None, .. }
             )
         });
-    let execution = jails_workspace::execute(&root, &bundle)
-        .map_err(|error| Failure::Told(format!("could not apply exact plan: {error}")))?;
+    let execution = jails_workspace::execute(&root, &bundle).map_err(|error| {
+        Failure::diagnosed(error.code, format!("could not apply exact plan: {error}"))
+    })?;
     clock.mark("execute");
     if converted {
         eprintln!("  create  {}", crate::model_command::JDL_PATH);

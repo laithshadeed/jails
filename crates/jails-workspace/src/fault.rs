@@ -67,7 +67,7 @@ impl Drop for Armed {
 
 /// Fail here if this point is armed.
 #[cfg(any(test, feature = "fault-injection"))]
-pub(crate) fn trip(name: &str) -> Result<(), String> {
+pub(crate) fn trip(name: &str) -> Result<(), jails_model::Diagnostic> {
     let armed = armed::ARMED.with(|slot| slot.borrow().clone());
     match armed {
         Some(armed) if armed == name => {
@@ -75,7 +75,11 @@ pub(crate) fn trip(name: &str) -> Result<(), String> {
                 // No unwinding, no flush, no destructor. The point.
                 std::process::abort();
             }
-            Err(format!("fault injected at `{name}`"))
+            Err(jails_model::Diagnostic::without_a_fix(
+                "workspace-fault-injected",
+                "$.fault",
+                format!("fault injected at `{name}`"),
+            ))
         }
         _ => Ok(()),
     }
@@ -84,7 +88,7 @@ pub(crate) fn trip(name: &str) -> Result<(), String> {
 /// Nothing. Compiled out of a release build entirely.
 #[cfg(not(any(test, feature = "fault-injection")))]
 #[inline(always)]
-pub(crate) fn trip(_name: &str) -> Result<(), String> {
+pub(crate) fn trip(_name: &str) -> Result<(), jails_model::Diagnostic> {
     Ok(())
 }
 

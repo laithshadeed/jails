@@ -163,8 +163,12 @@ fn refuse_reader_java(root: &Path, request: &Request) -> Result<()> {
     // **The reader's files only.** Managed sources sit beside theirs under
     // `src/`, name the old type by construction, and are the rename's to
     // move; the lock says which they are.
-    let managed = jails_project::capture::managed_paths(root)
-        .map_err(|error| Failure::Told(format!("could not read the compiler lock: {error}")))?;
+    let managed = jails_project::capture::managed_paths(root).map_err(|error| {
+        Failure::diagnosed(
+            error.code,
+            format!("could not read the compiler lock: {error}"),
+        )
+    })?;
     let mut java = Vec::new();
     collect(&root.join("src"), "java", &mut java);
     for path in java {

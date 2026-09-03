@@ -49,7 +49,14 @@ pub(crate) fn finish_invocation(
         "status": "refused",
         "exit_code": 1,
         "command": command_path,
-        "error": { "code": "invalid-request", "message": message },
+        // The code is the diagnostic's when a pass below the CLI refused --
+        // `workspace-precondition-stale` says which pass and which check, where
+        // `invalid-request` said only that something was wrong. A refusal a
+        // command worded itself has no pass to name and keeps the constant.
+        "error": {
+            "code": failure.code().unwrap_or("invalid-request"),
+            "message": message,
+        },
     });
     let rendered = format!("{envelope}\n");
     print!("{rendered}");

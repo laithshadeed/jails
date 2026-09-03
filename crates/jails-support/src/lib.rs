@@ -56,6 +56,19 @@ pub enum Failure {
     /// A message for the reader. Free text, and by convention it carries a
     /// `fix:` line saying what to do next.
     Told(String),
+    /// The same message, plus the diagnostic code of the pass that refused.
+    ///
+    /// **This is [`Self::Told`] with one field, deliberately, and not a
+    /// second report shape.** A phase below the CLI -- the linker, the
+    /// compiler, capture, materialization, the executor -- refuses with a
+    /// `jails_model::Diagnostic`, which carries a code saying *which pass*
+    /// said so. The human line is unchanged: `message` is whatever the
+    /// diagnostic rendered, interpolated into whatever sentence the caller
+    /// wraps it in, so `jails: could not apply exact plan: ...` reads today
+    /// as it read before. The code is what `--output json` puts in the
+    /// envelope's `error.code`, where the constant `invalid-request` used to
+    /// stand for every refusal alike.
+    Diagnosed { code: &'static str, message: String },
     /// The command has already reported. Set the exit code and say nothing
     /// more -- `doctor` prints a full report and then fails only to make the
     /// shell see it.
@@ -66,8 +79,32 @@ impl Failure {
     /// The message to print, or `None` when the command has already spoken.
     pub fn message(&self) -> Option<&str> {
         match self {
-            Self::Told(what) => Some(what),
+            Self::Told(what) | Self::Diagnosed { message: what, .. } => Some(what),
             Self::Reported => None,
+        }
+    }
+
+    /// Which pass refused, when one said so in the diagnostic vocabulary.
+    ///
+    /// `None` is not "no error": it is a refusal worded by a command rather
+    /// than diagnosed by a pass, and the JSON envelope keeps calling that
+    /// `invalid-request`.
+    pub fn code(&self) -> Option<&'static str> {
+        match self {
+            Self::Diagnosed { code, .. } => Some(code),
+            Self::Told(_) | Self::Reported => None,
+        }
+    }
+
+    /// Wrap a diagnosed refusal in the sentence a command tells it in.
+    ///
+    /// The one constructor for [`Self::Diagnosed`], so a call site cannot
+    /// build the message and forget the code: it takes the code out of the
+    /// diagnostic and the wording out of the caller in one call.
+    pub fn diagnosed(code: &'static str, message: impl Into<String>) -> Self {
+        Self::Diagnosed {
+            code,
+            message: message.into(),
         }
     }
 }

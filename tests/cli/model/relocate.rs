@@ -151,3 +151,63 @@ fn model_relocate_refuses_an_occupied_destination_without_writing() {
     assert!(stderr.contains("already exists"), "{stderr}");
     assert_eq!(snapshot_tree(&root), before, "the refusal wrote bytes");
 }
+
+/// `--output json` names the pass that refused, and says the same sentence.
+///
+/// **Both halves in one test, because they are one property.** Adopting the
+/// diagnostic contract added a code and was not allowed to reword anything, so
+/// this drives one refusal twice -- once human, once machine -- and asserts
+/// that the JSON `error.message` is exactly the human line with `jails: `
+/// taken off, while `error.code` is the workspace code for *this* refusal
+/// rather than the constant `invalid-request` every refusal used to carry.
+#[test]
+fn a_refused_relocation_reports_the_code_of_the_pass_and_the_same_sentence() {
+    let root = model_project("model-relocate-json-code", MODEL);
+    apply_canonical_model(&root, "initial-plan");
+    let moved = age(&root);
+    let (_, destination) = moved
+        .iter()
+        .find(|(_, new)| new.ends_with("/domain/Note.java"))
+        .cloned()
+        .unwrap();
+    fs::create_dir_all(root.join(&destination).parent().unwrap()).unwrap();
+    fs::write(
+        root.join(&destination),
+        "package com.example.notes.domain;\n",
+    )
+    .unwrap();
+
+    let human = jails_cmd(&root, None)
+        .args(["model", "relocate"])
+        .output()
+        .unwrap();
+    assert!(!human.status.success());
+    let stderr = String::from_utf8_lossy(&human.stderr);
+    let told = stderr
+        .trim_end()
+        .strip_prefix("jails: ")
+        .unwrap_or_else(|| panic!("{stderr}"))
+        .to_string();
+
+    let machine = jails_cmd(&root, None)
+        .args(["model", "relocate", "--output", "json"])
+        .output()
+        .unwrap();
+    assert!(!machine.status.success());
+    let envelope: serde_json::Value = serde_json::from_slice(&machine.stdout)
+        .unwrap_or_else(|error| panic!("{error}: {}", String::from_utf8_lossy(&machine.stdout)));
+    assert_eq!(
+        envelope["error"]["code"],
+        serde_json::json!("workspace-relocate-destination-exists"),
+        "{envelope}"
+    );
+    assert_eq!(
+        envelope["error"]["message"].as_str().unwrap(),
+        told,
+        "the machine and human renderings of one refusal disagree"
+    );
+    assert!(
+        told.contains("fix: move or remove your file first"),
+        "{told}"
+    );
+}

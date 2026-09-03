@@ -1536,19 +1536,22 @@ fn every_cross_reference_in_the_documents_resolves() {
 /// prefix is the one already in the tree to copy. Then two crates own one
 /// namespace and nothing says which pass a code came from.
 ///
-/// A code says which pass refused, so the prefix is owned by the crate that
-/// owns the pass: `JDL####` and `model-*` are `jails-model`'s, `compile-*` is
-/// `jails-compiler`'s, `plan-*` is `jails-workspace`'s. The rule is checked
-/// over *string literals* -- a code only ever appears inside one, and blanked
-/// source would report zero however wrong the tree was.
+/// A code says which pass refused, so the prefix is owned by the code that
+/// runs the pass: `JDL####` and `model-*` are `jails-model`'s, `compile-*` is
+/// `jails-compiler`'s, `workspace-*` is the capture/apply phase's. The rule is
+/// checked over *string literals* -- a code only ever appears inside one, and
+/// blanked source would report zero however wrong the tree was.
+///
+/// **The owner is a set of files, not a crate, because one phase outgrew one
+/// crate.** Capture, the document adapters and the three-way merge moved into
+/// `jails-project` and materialization, verification and the executor stayed in
+/// `jails-workspace`; they are still one phase, and one phase gets one prefix.
+/// A `capture-*` family beside `workspace-*` would be two vocabularies for the
+/// two halves of a single pass, which is the thing the table exists to prevent.
+/// `measure::is_canonical_workspace` already draws exactly that boundary for
+/// the `fix:` ratchet, and it is reused here so the two cannot disagree.
 #[test]
 fn every_diagnostic_code_belongs_to_the_crate_that_owns_its_phase() {
-    const OWNERS: &[(&str, &str)] = &[
-        ("JDL", "jails-model"),
-        ("model-", "jails-model"),
-        ("compile-", "jails-compiler"),
-        ("workspace-", "jails-workspace"),
-    ];
     // The root binary reports on the model in the linker's own vocabulary --
     // `model-io` when it cannot read the file, `model-generated-drift` when
     // the committed tree disagrees with this compilation -- and both are in
@@ -1568,20 +1571,17 @@ fn every_diagnostic_code_belongs_to_the_crate_that_owns_its_phase() {
             continue;
         }
         for literal in code(&file.literals) {
-            let Some((prefix, owner)) = OWNERS
-                .iter()
-                .find(|(prefix, _)| literal.starts_with(prefix))
-                .copied()
-            else {
+            let Some((prefix, owner)) = diagnostic_owner(&literal) else {
                 continue;
             };
             seen += 1;
             if prefix == "model-" && path.ends_with(ALSO_OWNS_MODEL) {
                 continue;
             }
-            if !path.contains(&format!("crates/{owner}/")) {
+            if !owner.owns(&file.path) {
                 offenders.push(format!(
-                    "  {path}: `{literal}` is {owner}'s `{prefix}` namespace"
+                    "  {path}: `{literal}` is {}'s `{prefix}` namespace",
+                    owner.name()
                 ));
             }
         }
@@ -1595,6 +1595,151 @@ fn every_diagnostic_code_belongs_to_the_crate_that_owns_its_phase() {
         offenders.is_empty(),
         "a diagnostic code escaped the crate that owns its phase:\n{}",
         offenders.join("\n")
+    );
+}
+
+/// Which pass may construct a code, as the files that run it.
+#[derive(Clone, Copy)]
+enum CodeOwner {
+    /// One crate, matched by its directory.
+    Crate(&'static str),
+    /// The capture/apply phase, whose two halves ship in two crates.
+    CanonicalWorkspace,
+}
+
+impl CodeOwner {
+    fn owns(self, path: &Path) -> bool {
+        match self {
+            Self::Crate(name) => path
+                .to_string_lossy()
+                .replace('\\', "/")
+                .contains(&format!("crates/{name}/")),
+            Self::CanonicalWorkspace => is_canonical_workspace(path),
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Crate(name) => name,
+            Self::CanonicalWorkspace => {
+                "the capture/apply phase (jails-workspace, and jails-project's \
+                 capture/documents/merge)"
+            }
+        }
+    }
+}
+
+fn diagnostic_owner(literal: &str) -> Option<(&'static str, CodeOwner)> {
+    const OWNERS: &[(&str, CodeOwner)] = &[
+        ("JDL", CodeOwner::Crate("jails-model")),
+        ("model-", CodeOwner::Crate("jails-model")),
+        ("compile-", CodeOwner::Crate("jails-compiler")),
+        ("workspace-", CodeOwner::CanonicalWorkspace),
+    ];
+    OWNERS
+        .iter()
+        .find(|(prefix, _)| literal.starts_with(prefix))
+        .copied()
+}
+
+/// One code names one refusal, and it is spelled in kebab-case.
+///
+/// **Two properties, one scan, because they fail the same way.** A code
+/// constructed at two sites is two refusals wearing one name, so a reader who
+/// greps the code finds two answers and a caller who matches on it cannot tell
+/// them apart -- the fix is a shared constructor, which is what
+/// `refused_io`, `missing_tree`, `block_edited` and their kin are. A code
+/// spelled `workspace_io` or `workspaceIo` is a second convention, and the
+/// namespace is only navigable while there is one.
+///
+/// `JDL####` is deliberately not kebab-case and is exempt from the spelling
+/// half: it is JDL v1 §18.1's own numbering, not a name this repository
+/// chose.
+///
+/// **The parser and the linker are counted rather than refused, and the count
+/// is a ratchet.** Twenty-five of `jails-model`'s codes are raised from two
+/// places -- a rule checked once while parsing an operation and again while
+/// linking it, a constraint checked on the entity and on the model. Each pair
+/// really is one refusal, so each is a shared constructor waiting to be
+/// written; that is `jails-model`'s own work and predates this contract, so
+/// this holds the number where it is instead of pretending the property is
+/// clean. `compile-*` and `workspace-*` adopted the contract with the
+/// property, and get no allowance at all.
+#[test]
+fn every_diagnostic_code_is_unique_and_kebab_case() {
+    /// Codes in the parser's and the linker's namespaces raised from more
+    /// than one site. Lower it when one is collapsed; never raise it.
+    const REPEATED_MODEL_CODES: usize = 25;
+
+    let mut sites: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+    for file in sources() {
+        let path = file.path.to_string_lossy().into_owned();
+        if path.ends_with("tests/architecture/rules.rs")
+            || path.ends_with("jails-model/src/diagnostic.rs")
+        {
+            continue;
+        }
+        for literal in regex_lite_codes(&file.literals) {
+            if diagnostic_owner(&literal).is_none() {
+                continue;
+            }
+            sites.entry(literal).or_default().push(path.clone());
+        }
+    }
+    assert!(
+        sites.len() > 100,
+        "the scanner found only {} diagnostic codes -- it has stopped reading them",
+        sites.len()
+    );
+    let mut offenders = Vec::new();
+    let mut repeated_in_the_model = 0_usize;
+    for (code, at) in &sites {
+        let counted = matches!(
+            diagnostic_owner(code),
+            Some((_, CodeOwner::Crate("jails-model")))
+        );
+        if at.len() > 1 {
+            if counted {
+                repeated_in_the_model += 1;
+            } else {
+                offenders.push(format!(
+                    "  `{code}` is constructed at {} sites, so it names more than one refusal:\n    {}\n  \
+                     Give the shared refusal one constructor, or the two refusals two codes.",
+                    at.len(),
+                    at.join("\n    ")
+                ));
+            }
+        }
+        if code.starts_with("JDL") {
+            continue;
+        }
+        if !code
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte == b'-')
+            || code.starts_with('-')
+            || code.ends_with('-')
+            || code.contains("--")
+        {
+            offenders.push(format!("  `{code}` is not kebab-case"));
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "a diagnostic code does not name exactly one refusal:\n{}",
+        offenders.join("\n")
+    );
+    assert!(
+        repeated_in_the_model <= REPEATED_MODEL_CODES,
+        "{repeated_in_the_model} parser/linker codes are raised from more than one site, above \
+         the recorded {REPEATED_MODEL_CODES}. A code names one refusal: give the shared one a \
+         constructor, or the two refusals two codes."
+    );
+    assert!(
+        repeated_in_the_model == REPEATED_MODEL_CODES,
+        "only {repeated_in_the_model} parser/linker codes are now raised from more than one \
+         site, below the recorded {REPEATED_MODEL_CODES}. Lower the constant in the same \
+         change, or the allowance claims more than it describes."
     );
 }
 

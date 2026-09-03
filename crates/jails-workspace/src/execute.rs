@@ -27,13 +27,14 @@
 //! migrations passes. Without them the second run of an interrupted plan would
 //! refuse over its own half-finished work.
 
+use crate::capture::refused_io;
 use crate::verify_bundle;
 use fs2::FileExt as _;
 use jails_contracts::{
     ContentDigest, FileMode, FilePrecondition, PlanBundle, PlannedOperation, ProjectPath,
     TreeManifest,
 };
-use jails_support::{hex, sha256};
+use jails_model::Diagnostic;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write as _;
@@ -48,11 +49,10 @@ pub struct Execution {
     pub files_deleted: usize,
 }
 
-pub fn execute(root: &Path, bundle: &PlanBundle) -> Result<Execution, String> {
+pub fn execute(root: &Path, bundle: &PlanBundle) -> Result<Execution, Diagnostic> {
     verify_bundle(bundle)?;
     let jails = root.join(".jails");
-    std::fs::create_dir_all(&jails)
-        .map_err(|error| format!("could not create {}: {error}", jails.display()))?;
+    std::fs::create_dir_all(&jails).map_err(|error| refused_io("create", &jails, error))?;
     let lock_path = jails.join("apply.lock");
     let lock = std::fs::OpenOptions::new()
         .create(true)
@@ -60,9 +60,9 @@ pub fn execute(root: &Path, bundle: &PlanBundle) -> Result<Execution, String> {
         .write(true)
         .truncate(false)
         .open(&lock_path)
-        .map_err(|error| format!("could not open {}: {error}", lock_path.display()))?;
+        .map_err(|error| refused_io("open", &lock_path, error))?;
     lock.lock_exclusive()
-        .map_err(|error| format!("could not lock {}: {error}", lock_path.display()))?;
+        .map_err(|error| refused_io("lock", &lock_path, error))?;
     crate::fault::trip(crate::fault::point::AFTER_LOCK)?;
     sweep_staged(root, bundle)?;
     verify_preconditions(root, bundle)?;
@@ -78,17 +78,10 @@ pub fn execute(root: &Path, bundle: &PlanBundle) -> Result<Execution, String> {
                 before,
                 after,
             } => {
-                let tree = bundle
-                    .trees
-                    .get(after)
-                    .ok_or_else(|| format!("plan references missing tree `{}`", after.as_str()))?;
+                let tree = bundle.trees.get(after).ok_or_else(|| missing_tree(after))?;
                 let previous = before
                     .as_ref()
-                    .map(|before| {
-                        bundle.trees.get(before).ok_or_else(|| {
-                            format!("plan references missing tree `{}`", before.as_str())
-                        })
-                    })
+                    .map(|before| bundle.trees.get(before).ok_or_else(|| missing_tree(before)))
                     .transpose()?;
                 crate::fault::trip(crate::fault::point::BEFORE_TREE)?;
                 let counts = publish_merged_tree(root, managed_root, previous, tree, bundle)?;
@@ -108,9 +101,13 @@ pub fn execute(root: &Path, bundle: &PlanBundle) -> Result<Execution, String> {
                     continue;
                 }
                 let bytes = bundle.blobs.get(&after.blob).ok_or_else(|| {
-                    format!(
-                        "model after-image references missing blob `{}`",
-                        after.blob.as_str()
+                    Diagnostic::without_a_fix(
+                        "workspace-after-image-blob-missing",
+                        format!("$.blobs.{}", after.blob.as_str()),
+                        format!(
+                            "model after-image references missing blob `{}`",
+                            after.blob.as_str()
+                        ),
                     )
                 })?;
                 write_atomic(root, path, bytes, after.mode)?;
@@ -126,7 +123,7 @@ pub fn execute(root: &Path, bundle: &PlanBundle) -> Result<Execution, String> {
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                     Err(error) => {
-                        return Err(format!("could not delete {}: {error}", absolute.display()));
+                        return Err(refused_io("delete", &absolute, error));
                     }
                 }
             }
@@ -157,7 +154,7 @@ pub fn execute(root: &Path, bundle: &PlanBundle) -> Result<Execution, String> {
 /// exactly the one `write_atomic` asks: not "what do the mode bits say", which
 /// answers about the wrong subject on every unusual filesystem, but "can this
 /// process create a file here right now".
-fn preflight_writable(root: &Path, bundle: &PlanBundle) -> Result<(), String> {
+fn preflight_writable(root: &Path, bundle: &PlanBundle) -> Result<(), Diagnostic> {
     fn parent_of(path: &ProjectPath) -> Option<std::path::PathBuf> {
         std::path::Path::new(path.as_str())
             .parent()
@@ -176,14 +173,16 @@ fn preflight_writable(root: &Path, bundle: &PlanBundle) -> Result<(), String> {
     for parent in parents {
         let absolute = root.join(&parent);
         std::fs::create_dir_all(&absolute)
-            .map_err(|error| format!("could not create {}: {error}", absolute.display()))?;
+            .map_err(|error| refused_io("create", &absolute, error))?;
         tempfile::Builder::new()
             .prefix(STAGED_PREFIX)
             .tempfile_in(&absolute)
             .map_err(|error| {
-                format!(
-                    "could not stage into {}: {error}\n       fix: make the directory writable, then run the same command again -- nothing was written",
-                    absolute.display()
+                Diagnostic::new(
+                    "workspace-directory-not-writable",
+                    absolute.display().to_string(),
+                    format!("could not stage into {}: {error}", absolute.display()),
+                    "make the directory writable, then run the same command again -- nothing was written",
                 )
             })?;
     }
@@ -211,7 +210,7 @@ const STAGED_PREFIX: &str = ".jails-staged-";
 ///
 /// It runs under the lock, so no other run has a staged file in flight here:
 /// anything matching is a dead run's, never a live one's.
-fn sweep_staged(root: &Path, bundle: &PlanBundle) -> Result<(), String> {
+fn sweep_staged(root: &Path, bundle: &PlanBundle) -> Result<(), Diagnostic> {
     let mut parents = BTreeSet::new();
     for path in desired_files(bundle)?.keys() {
         parents.extend(root.join(path.as_str()).parent().map(Path::to_path_buf));
@@ -222,15 +221,15 @@ fn sweep_staged(root: &Path, bundle: &PlanBundle) -> Result<(), String> {
     Ok(())
 }
 
-fn sweep_staged_in(directory: &Path) -> Result<(), String> {
+fn sweep_staged_in(directory: &Path) -> Result<(), Diagnostic> {
     if !directory.exists() {
         return Ok(());
     }
-    for entry in std::fs::read_dir(directory)
-        .map_err(|error| format!("could not read {}: {error}", directory.display()))?
+    for entry in
+        std::fs::read_dir(directory).map_err(|error| refused_io("read", directory, error))?
     {
         let path = entry
-            .map_err(|error| format!("could not read {}: {error}", directory.display()))?
+            .map_err(|error| refused_io("read", directory, error))?
             .path();
         if path.is_file() && is_staged(&path) {
             remove_staged(&path)?;
@@ -245,18 +244,15 @@ fn is_staged(path: &Path) -> bool {
         .is_some_and(|name| name.starts_with(STAGED_PREFIX))
 }
 
-fn remove_staged(path: &Path) -> Result<(), String> {
+fn remove_staged(path: &Path) -> Result<(), Diagnostic> {
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(format!(
-            "could not clear staged {}: {error}",
-            path.display()
-        )),
+        Err(error) => Err(refused_io("clear staged", path, error)),
     }
 }
 
-fn verify_preconditions(root: &Path, bundle: &PlanBundle) -> Result<(), String> {
+fn verify_preconditions(root: &Path, bundle: &PlanBundle) -> Result<(), Diagnostic> {
     let desired = desired_files(bundle)?;
     let removed = removed_files(bundle)?;
     for (path, expected) in &bundle.plan.base.files {
@@ -280,8 +276,12 @@ fn verify_preconditions(root: &Path, bundle: &PlanBundle) -> Result<(), String> 
             (Some(_), FilePrecondition::Missing) => "it was created after the plan",
             _ => "its bytes changed after the plan",
         };
-        return Err(format!(
-            "stale exact plan: `{path}` no longer matches its captured precondition -- {observed}"
+        return Err(Diagnostic::without_a_fix(
+            "workspace-precondition-stale",
+            path.to_string(),
+            format!(
+                "stale exact plan: `{path}` no longer matches its captured precondition -- {observed}"
+            ),
         ));
     }
     for (path, expected) in &desired {
@@ -292,8 +292,10 @@ fn verify_preconditions(root: &Path, bundle: &PlanBundle) -> Result<(), String> 
         if actual.is_none() || actual_matches_desired(actual.as_ref(), Some(expected)) {
             continue;
         }
-        return Err(format!(
-            "stale exact plan: new managed path `{path}` appeared after planning"
+        return Err(Diagnostic::without_a_fix(
+            "workspace-precondition-path-appeared",
+            path.to_string(),
+            format!("stale exact plan: new managed path `{path}` appeared after planning"),
         ));
     }
     for (path, expected) in &bundle.plan.base.directories {
@@ -301,8 +303,12 @@ fn verify_preconditions(root: &Path, bundle: &PlanBundle) -> Result<(), String> 
         if actual == *expected || directory_is_plan_prefix(root, path, bundle)? {
             continue;
         }
-        return Err(format!(
-            "stale exact plan: directory `{path}` no longer matches its captured precondition"
+        return Err(Diagnostic::without_a_fix(
+            "workspace-precondition-directory-stale",
+            path.to_string(),
+            format!(
+                "stale exact plan: directory `{path}` no longer matches its captured precondition"
+            ),
         ));
     }
     Ok(())
@@ -312,7 +318,7 @@ fn directory_is_plan_prefix(
     root: &Path,
     directory: &ProjectPath,
     bundle: &PlanBundle,
-) -> Result<bool, String> {
+) -> Result<bool, Diagnostic> {
     let actual = existing_files(root, directory)?;
     let base = bundle
         .plan
@@ -375,18 +381,23 @@ fn publish_merged_tree(
     previous: Option<&TreeManifest>,
     desired: &TreeManifest,
     bundle: &PlanBundle,
-) -> Result<(usize, usize), String> {
+) -> Result<(usize, usize), Diagnostic> {
     let mut written = 0_usize;
     for (path, entry) in &desired.entries {
         if !path.is_within(managed_root) {
-            return Err(format!(
-                "tree entry `{path}` escaped managed root `{managed_root}`"
+            return Err(Diagnostic::without_a_fix(
+                "workspace-tree-entry-escaped",
+                path.to_string(),
+                format!("tree entry `{path}` escaped managed root `{managed_root}`"),
             ));
         }
-        let bytes = bundle
-            .blobs
-            .get(&entry.blob)
-            .ok_or_else(|| format!("tree entry `{path}` references a missing blob"))?;
+        let bytes = bundle.blobs.get(&entry.blob).ok_or_else(|| {
+            Diagnostic::without_a_fix(
+                "workspace-tree-entry-blob-missing",
+                path.to_string(),
+                format!("tree entry `{path}` references a missing blob"),
+            )
+        })?;
         let actual = actual_file(root, path)?;
         if actual
             .as_ref()
@@ -409,7 +420,7 @@ fn publish_merged_tree(
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => {
-                return Err(format!("could not delete {}: {error}", absolute.display()));
+                return Err(refused_io("delete", &absolute, error));
             }
         }
         remove_empty_ancestors(root, &path)?;
@@ -427,19 +438,25 @@ fn retired_paths(previous: Option<&TreeManifest>, desired: &TreeManifest) -> Vec
         .collect()
 }
 
-fn verify_after(root: &Path, bundle: &PlanBundle) -> Result<(), String> {
+fn verify_after(root: &Path, bundle: &PlanBundle) -> Result<(), Diagnostic> {
     let desired = desired_files(bundle)?;
     for (path, expected) in &desired {
         let actual = actual_file(root, path)?;
         if !actual_matches_desired(actual.as_ref(), Some(expected)) {
-            return Err(format!(
-                "executor did not publish exact after-image `{path}`"
+            return Err(Diagnostic::without_a_fix(
+                "workspace-after-image-not-published",
+                path.to_string(),
+                format!("executor did not publish exact after-image `{path}`"),
             ));
         }
     }
     for path in removed_files(bundle)? {
         if actual_file(root, &path)?.is_some() {
-            return Err(format!("executor did not remove `{path}`"));
+            return Err(Diagnostic::without_a_fix(
+                "workspace-removal-incomplete",
+                path.to_string(),
+                format!("executor did not remove `{path}`"),
+            ));
         }
     }
     Ok(())
@@ -451,15 +468,12 @@ struct DesiredFile {
     mode: FileMode,
 }
 
-fn desired_files(bundle: &PlanBundle) -> Result<BTreeMap<ProjectPath, DesiredFile>, String> {
+fn desired_files(bundle: &PlanBundle) -> Result<BTreeMap<ProjectPath, DesiredFile>, Diagnostic> {
     let mut files = BTreeMap::new();
     for operation in &bundle.plan.operations {
         match operation {
             PlannedOperation::PublishMergedTree { after, .. } => {
-                let tree = bundle
-                    .trees
-                    .get(after)
-                    .ok_or_else(|| format!("plan references missing tree `{}`", after.as_str()))?;
+                let tree = bundle.trees.get(after).ok_or_else(|| missing_tree(after))?;
                 for (path, entry) in &tree.entries {
                     files.insert(
                         path.clone(),
@@ -490,7 +504,7 @@ fn desired_files(bundle: &PlanBundle) -> Result<BTreeMap<ProjectPath, DesiredFil
 
 /// Every path this plan removes: reader files it retires and managed files
 /// the accepted projection held that the reconciled one does not.
-fn removed_files(bundle: &PlanBundle) -> Result<BTreeSet<ProjectPath>, String> {
+fn removed_files(bundle: &PlanBundle) -> Result<BTreeSet<ProjectPath>, Diagnostic> {
     let mut removed = BTreeSet::new();
     for operation in &bundle.plan.operations {
         match operation {
@@ -498,17 +512,10 @@ fn removed_files(bundle: &PlanBundle) -> Result<BTreeSet<ProjectPath>, String> {
                 removed.insert(path.clone());
             }
             PlannedOperation::PublishMergedTree { before, after, .. } => {
-                let desired = bundle
-                    .trees
-                    .get(after)
-                    .ok_or_else(|| format!("plan references missing tree `{}`", after.as_str()))?;
+                let desired = bundle.trees.get(after).ok_or_else(|| missing_tree(after))?;
                 let previous = before
                     .as_ref()
-                    .map(|before| {
-                        bundle.trees.get(before).ok_or_else(|| {
-                            format!("plan references missing tree `{}`", before.as_str())
-                        })
-                    })
+                    .map(|before| bundle.trees.get(before).ok_or_else(|| missing_tree(before)))
                     .transpose()?;
                 removed.extend(retired_paths(previous, desired));
             }
@@ -523,20 +530,19 @@ struct ActualFile {
     mode: FileMode,
 }
 
-fn actual_file(root: &Path, path: &ProjectPath) -> Result<Option<ActualFile>, String> {
+fn actual_file(root: &Path, path: &ProjectPath) -> Result<Option<ActualFile>, Diagnostic> {
     let absolute = root.join(path.as_str());
     let metadata = match std::fs::symlink_metadata(&absolute) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(format!("could not inspect {}: {error}", absolute.display())),
+        Err(error) => return Err(refused_io("inspect", &absolute, error)),
     };
     if !metadata.is_file() || metadata.file_type().is_symlink() {
-        return Err(format!("`{}` is not a regular file", absolute.display()));
+        return Err(not_a_regular_file(&absolute));
     }
-    let bytes = std::fs::read(&absolute)
-        .map_err(|error| format!("could not read {}: {error}", absolute.display()))?;
+    let bytes = std::fs::read(&absolute).map_err(|error| refused_io("read", &absolute, error))?;
     Ok(Some(ActualFile {
-        digest: digest(&bytes)?,
+        digest: crate::materialize::digest(&bytes)?,
         mode: mode(&metadata),
     }))
 }
@@ -566,34 +572,33 @@ fn write_atomic(
     path: &ProjectPath,
     bytes: &[u8],
     mode: FileMode,
-) -> Result<(), String> {
+) -> Result<(), Diagnostic> {
     let destination = root.join(path.as_str());
-    let parent = destination
-        .parent()
-        .ok_or_else(|| format!("managed path `{path}` has no parent"))?;
-    std::fs::create_dir_all(parent)
-        .map_err(|error| format!("could not create {}: {error}", parent.display()))?;
+    let parent = destination.parent().ok_or_else(|| {
+        Diagnostic::without_a_fix(
+            "workspace-managed-path-has-no-parent",
+            path.to_string(),
+            format!("managed path `{path}` has no parent"),
+        )
+    })?;
+    std::fs::create_dir_all(parent).map_err(|error| refused_io("create", parent, error))?;
     let mut staged = tempfile::Builder::new()
         .prefix(STAGED_PREFIX)
         .tempfile_in(parent)
-        .map_err(|error| format!("could not stage beside {}: {error}", destination.display()))?;
+        .map_err(|error| refused_io("stage beside", &destination, error))?;
     staged
         .write_all(bytes)
         .and_then(|()| staged.flush())
-        .map_err(|error| format!("could not stage {}: {error}", destination.display()))?;
+        .map_err(|error| refused_io("stage", &destination, error))?;
     set_mode(staged.path(), mode)?;
     staged
         .as_file()
         .sync_all()
-        .map_err(|error| format!("could not sync staged {}: {error}", destination.display()))?;
+        .map_err(|error| refused_io("sync staged", &destination, error))?;
     crate::fault::trip(crate::fault::point::BEFORE_FILE)?;
-    staged.persist(&destination).map_err(|error| {
-        format!(
-            "could not publish staged {}: {}",
-            destination.display(),
-            error.error
-        )
-    })?;
+    staged
+        .persist(&destination)
+        .map_err(|error| refused_io("publish staged", &destination, error.error))?;
     crate::fault::trip(crate::fault::point::AFTER_FILE)?;
     Ok(())
 }
@@ -606,7 +611,7 @@ fn write_atomic(
 /// `.jails` itself are the project's shape and stay, empty or not. Anything
 /// non-empty ends the ascent, so a reader file beside the deleted one keeps
 /// its directory.
-fn remove_empty_ancestors(root: &Path, path: &ProjectPath) -> Result<(), String> {
+fn remove_empty_ancestors(root: &Path, path: &ProjectPath) -> Result<(), Diagnostic> {
     let mut relative = Path::new(path.as_str()).parent();
     while let Some(directory) = relative {
         let text = directory.to_string_lossy();
@@ -619,10 +624,7 @@ fn remove_empty_ancestors(root: &Path, path: &ProjectPath) -> Result<(), String>
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) if error.kind() == std::io::ErrorKind::DirectoryNotEmpty => break,
             Err(error) => {
-                return Err(format!(
-                    "could not remove empty directory {}: {error}",
-                    absolute.display()
-                ));
+                return Err(refused_io("remove empty directory", &absolute, error));
             }
         }
         relative = directory.parent();
@@ -638,7 +640,10 @@ fn keeps_empty_directory(relative: &str) -> bool {
 }
 
 /// Every regular file under one directory, for a directory precondition.
-fn existing_files(root: &Path, directory: &ProjectPath) -> Result<BTreeSet<ProjectPath>, String> {
+fn existing_files(
+    root: &Path,
+    directory: &ProjectPath,
+) -> Result<BTreeSet<ProjectPath>, Diagnostic> {
     let mut files = BTreeSet::new();
     let absolute = root.join(directory.as_str());
     if absolute.exists() {
@@ -651,27 +656,51 @@ fn walk_files(
     root: &Path,
     directory: &Path,
     files: &mut BTreeSet<ProjectPath>,
-) -> Result<(), String> {
-    for entry in std::fs::read_dir(directory)
-        .map_err(|error| format!("could not read {}: {error}", directory.display()))?
+) -> Result<(), Diagnostic> {
+    for entry in
+        std::fs::read_dir(directory).map_err(|error| refused_io("read", directory, error))?
     {
         let path = entry
-            .map_err(|error| format!("could not read {}: {error}", directory.display()))?
+            .map_err(|error| refused_io("read", directory, error))?
             .path();
         let metadata = std::fs::symlink_metadata(&path)
-            .map_err(|error| format!("could not inspect {}: {error}", path.display()))?;
+            .map_err(|error| refused_io("inspect", &path, error))?;
         if metadata.is_dir() && !metadata.file_type().is_symlink() {
             walk_files(root, &path, files)?;
         } else if metadata.is_file() && !metadata.file_type().is_symlink() {
-            let relative = path
-                .strip_prefix(root)
-                .map_err(|_| format!("{} escaped project root", path.display()))?;
-            files.insert(ProjectPath::parse(path_text(relative))?);
+            let relative = path.strip_prefix(root).map_err(|_| {
+                Diagnostic::without_a_fix(
+                    "workspace-path-escaped-root",
+                    path.display().to_string(),
+                    format!("{} escaped project root", path.display()),
+                )
+            })?;
+            files.insert(crate::capture::project_path(path_text(relative))?);
         } else {
-            return Err(format!("`{}` is not a regular file", path.display()));
+            return Err(not_a_regular_file(&path));
         }
     }
     Ok(())
+}
+
+/// A plan naming a tree its own bundle does not carry, from any of the five
+/// places that resolve one.
+fn missing_tree(id: &ContentDigest) -> Diagnostic {
+    Diagnostic::without_a_fix(
+        "workspace-plan-tree-missing",
+        format!("$.trees.{}", id.as_str()),
+        format!("plan references missing tree `{}`", id.as_str()),
+    )
+}
+
+/// A path the executor has to read or write that is a directory, a symlink or
+/// a device. One site, because it is one refusal reached from two walks.
+fn not_a_regular_file(at: &Path) -> Diagnostic {
+    Diagnostic::without_a_fix(
+        "workspace-not-a-regular-file",
+        at.display().to_string(),
+        format!("`{}` is not a regular file", at.display()),
+    )
 }
 
 fn path_text(path: &Path) -> String {
@@ -679,10 +708,6 @@ fn path_text(path: &Path) -> String {
         .map(|component| component.as_os_str().to_string_lossy())
         .collect::<Vec<_>>()
         .join("/")
-}
-
-fn digest(bytes: &[u8]) -> Result<ContentDigest, String> {
-    ContentDigest::parse(format!("sha256:{}", hex(&sha256(bytes))))
 }
 
 #[cfg(unix)]
@@ -701,7 +726,7 @@ fn mode(_metadata: &std::fs::Metadata) -> FileMode {
 }
 
 #[cfg(unix)]
-fn set_mode(path: &Path, mode: FileMode) -> Result<(), String> {
+fn set_mode(path: &Path, mode: FileMode) -> Result<(), Diagnostic> {
     use std::os::unix::fs::PermissionsExt as _;
     let bits = if mode == FileMode::Executable {
         0o755
@@ -709,10 +734,10 @@ fn set_mode(path: &Path, mode: FileMode) -> Result<(), String> {
         0o644
     };
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(bits))
-        .map_err(|error| format!("could not set mode on {}: {error}", path.display()))
+        .map_err(|error| refused_io("set mode on", path, error))
 }
 
 #[cfg(not(unix))]
-fn set_mode(_path: &Path, _mode: FileMode) -> Result<(), String> {
+fn set_mode(_path: &Path, _mode: FileMode) -> Result<(), Diagnostic> {
     Ok(())
 }

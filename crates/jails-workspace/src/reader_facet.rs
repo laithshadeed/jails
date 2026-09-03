@@ -8,6 +8,7 @@ use jails_contracts::{
     ContentDigest, FileMode, PlannedOperation, ProjectPath, ReaderFacetKind, RenderedReaderFacet,
     WorkspaceSnapshot,
 };
+use jails_model::Diagnostic;
 use std::collections::{BTreeMap, BTreeSet};
 
 enum ManagedFileMerge {
@@ -23,7 +24,7 @@ pub(crate) fn materialize(
     blobs: &mut BTreeMap<ContentDigest, Vec<u8>>,
     operations: &mut Vec<PlannedOperation>,
     restore: crate::materialize::Restore,
-) -> Result<(), String> {
+) -> Result<(), Diagnostic> {
     let ids = baseline
         .keys()
         .chain(generated.keys())
@@ -41,8 +42,11 @@ pub(crate) fn materialize(
         if let (Some(base), Some(desired)) = (base, desired)
             && (base.path != desired.path || base.kind != desired.kind)
         {
-            return Err(format!(
-                "reader facet `{id}` changed document identity\n       fix: keep its path and kind stable or introduce a new facet id"
+            return Err(Diagnostic::new(
+                "workspace-facet-identity-changed",
+                path.to_string(),
+                format!("reader facet `{id}` changed document identity"),
+                "keep its path and kind stable or introduce a new facet id",
             ));
         }
         let kind = desired
@@ -57,17 +61,25 @@ pub(crate) fn materialize(
                     .or_else(|| snapshot.files.get(path).map(|file| file.bytes.as_slice()))
                     .unwrap_or_default();
                 let text = std::str::from_utf8(current).map_err(|_| {
-                    format!(
-                        "reader document `{path}` is not UTF-8\n       fix: restore a UTF-8 document before compiling model facets"
+                    Diagnostic::new(
+                        "workspace-facet-document-not-utf8",
+                        path.to_string(),
+                        format!("reader document `{path}` is not UTF-8"),
+                        "restore a UTF-8 document before compiling model facets",
                     )
                 })?;
                 if base.is_none()
                     && desired.is_some()
                     && compose_service_without_marker(text, service, marker)
                 {
-                    return Err(format!(
-                        "compose service `{service}` already exists outside `{}{marker}` in `{path}`\n       fix: rename or remove the reader-owned service before generating",
-                        jails_codemod::Marked::OPEN_PREFIX
+                    return Err(Diagnostic::new(
+                        "workspace-compose-service-reader-owned",
+                        path.to_string(),
+                        format!(
+                            "compose service `{service}` already exists outside `{}{marker}` in `{path}`",
+                            jails_codemod::Marked::OPEN_PREFIX
+                        ),
+                        "rename or remove the reader-owned service before generating",
                     ));
                 }
                 let updated = crate::documents::reconcile_compose_service(
@@ -82,8 +94,11 @@ pub(crate) fn materialize(
             }
             ReaderFacetKind::ManagedFile { mode } => {
                 if !managed_files.insert(path.clone()) {
-                    return Err(format!(
-                        "two managed project-file facets target `{path}`\n       fix: give every external artifact one stable path"
+                    return Err(Diagnostic::new(
+                        "workspace-facet-path-collision",
+                        path.to_string(),
+                        format!("two managed project-file facets target `{path}`"),
+                        "give every external artifact one stable path",
                     ));
                 }
                 let current = snapshot.files.get(path);
@@ -141,7 +156,7 @@ fn reconcile_managed_file(
     current: Option<&[u8]>,
     desired: Option<&[u8]>,
     restore: crate::materialize::Restore,
-) -> Result<ManagedFileMerge, String> {
+) -> Result<ManagedFileMerge, Diagnostic> {
     match (base, current, desired) {
         (None, None, Some(desired)) => Ok(ManagedFileMerge::Write(desired.to_vec())),
         // **A file that already says what jails would write is adopted, not
@@ -153,8 +168,11 @@ fn reconcile_managed_file(
         (None, Some(current), Some(desired)) if current == desired => {
             Ok(ManagedFileMerge::Write(desired.to_vec()))
         }
-        (None, Some(_), Some(_)) => Err(format!(
-            "managed project path `{path}` is already reader-owned\n       fix: move the existing file before generating; nothing was written"
+        (None, Some(_), Some(_)) => Err(Diagnostic::new(
+            "workspace-facet-path-reader-owned",
+            path.to_string(),
+            format!("managed project path `{path}` is already reader-owned"),
+            "move the existing file before generating; nothing was written",
         )),
         (Some(base), Some(current), Some(desired)) => {
             let merged = if current == base || current == desired {
@@ -163,9 +181,14 @@ fn reconcile_managed_file(
                 match crate::merge::three_way(path, base, current, desired)? {
                     crate::merge::Merged::Clean(bytes) => bytes,
                     crate::merge::Merged::Conflicted { hunks } => {
-                        return Err(format!(
-                            "`{path}` has {hunks} overlapping edit{} between your file and the generator\n       fix: reconcile that project file by hand; nothing was written",
-                            if hunks == 1 { "" } else { "s" }
+                        return Err(Diagnostic::new(
+                            "workspace-facet-file-conflict",
+                            path.to_string(),
+                            format!(
+                                "`{path}` has {hunks} overlapping edit{} between your file and the generator",
+                                if hunks == 1 { "" } else { "s" }
+                            ),
+                            "reconcile that project file by hand; nothing was written",
                         ));
                     }
                 }
@@ -180,15 +203,23 @@ fn reconcile_managed_file(
         (Some(_), None, Some(desired)) if restore == crate::materialize::Restore::Deleted => {
             Ok(ManagedFileMerge::Write(desired.to_vec()))
         }
-        (Some(_), None, Some(_)) => Err(format!(
-            "managed project file `{path}` was deleted by you while the generator still needs it\n       fix: `jails resource repair` writes it back from the model, or remove the owning model component; nothing was written"
+        (Some(_), None, Some(_)) => Err(Diagnostic::new(
+            "workspace-facet-file-deleted",
+            path.to_string(),
+            format!(
+                "managed project file `{path}` was deleted by you while the generator still needs it"
+            ),
+            "`jails resource repair` writes it back from the model, or remove the owning model component; nothing was written",
         )),
         (Some(base), Some(current), None) if current == base => Ok(ManagedFileMerge::Remove),
         (Some(_), Some(_), None) if restore == crate::materialize::Restore::EditedAndRemoved => {
             Ok(ManagedFileMerge::Remove)
         }
-        (Some(_), Some(_), None) => Err(format!(
-            "`{path}` was edited by you but removed by the generator\n       fix: move the custom content to another file, keep the model component, or repeat with `--force` to discard the edits; nothing was written"
+        (Some(_), Some(_), None) => Err(Diagnostic::new(
+            "workspace-facet-file-edited-and-removed",
+            path.to_string(),
+            format!("`{path}` was edited by you but removed by the generator"),
+            "move the custom content to another file, keep the model component, or repeat with `--force` to discard the edits; nothing was written",
         )),
         (Some(_), None, None) | (None, None, None) | (None, Some(_), None) => {
             Ok(ManagedFileMerge::Unchanged)
@@ -231,7 +262,7 @@ mod tests {
     use super::*;
 
     fn path() -> ProjectPath {
-        ProjectPath::parse("load-tests/api.js").unwrap()
+        crate::capture::project_path("load-tests/api.js").unwrap()
     }
 
     #[test]
@@ -265,8 +296,8 @@ mod tests {
         )
         .err()
         .unwrap();
-        assert!(error.contains("overlapping"), "{error}");
-        assert!(error.contains("nothing was written"), "{error}");
+        assert!(error.to_string().contains("overlapping"), "{error}");
+        assert!(error.to_string().contains("nothing was written"), "{error}");
 
         let collision = reconcile_managed_file(
             &path(),
@@ -277,7 +308,10 @@ mod tests {
         )
         .err()
         .unwrap();
-        assert!(collision.contains("reader-owned"), "{collision}");
+        assert!(
+            collision.to_string().contains("reader-owned"),
+            "{collision}"
+        );
 
         let deletion = reconcile_managed_file(
             &path(),
@@ -288,7 +322,10 @@ mod tests {
         )
         .err()
         .unwrap();
-        assert!(deletion.contains("deleted by you"), "{deletion}");
+        assert!(
+            deletion.to_string().contains("deleted by you"),
+            "{deletion}"
+        );
 
         let removal = reconcile_managed_file(
             &path(),
@@ -299,6 +336,6 @@ mod tests {
         )
         .err()
         .unwrap();
-        assert!(removal.contains("edited by you"), "{removal}");
+        assert!(removal.to_string().contains("edited by you"), "{removal}");
     }
 }

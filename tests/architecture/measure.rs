@@ -972,7 +972,7 @@ pub(crate) fn refusals_without_a_fix(src: &[Source]) -> usize {
 /// The capture/apply boundary: the executor's crate, and the reader half of
 /// it that lives in `jails-project` -- capture, the document adapters and the
 /// three-way merge -- whose subject is deliberately a filesystem root.
-fn is_canonical_workspace(path: &Path) -> bool {
+pub(crate) fn is_canonical_workspace(path: &Path) -> bool {
     let path = path.to_string_lossy().replace('\\', "/");
     path.contains("/crates/jails-workspace/src/")
         || path.contains("/crates/jails-project/src/capture")

@@ -22,7 +22,7 @@ const LABELS: [&str; 4] = ["main", "test", "main-resources", "test-resources"];
 /// Unchanged text means there was none. A block whose closing marker is
 /// missing is an error rather than a guess, as everywhere `owned_block` is
 /// read.
-pub fn strip_generated_source_roots(text: &str) -> Result<String, String> {
+pub fn strip_generated_source_roots(text: &str) -> Result<String, jails_model::Diagnostic> {
     let mut text = text.to_string();
     let mut markers = vec![ROOTS_MARKER.to_string()];
     markers.extend(LABELS.iter().map(|label| format!("{MARKER}:{label}")));

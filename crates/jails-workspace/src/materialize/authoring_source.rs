@@ -16,6 +16,7 @@ use super::{digest, file_image};
 use jails_contracts::{
     ContentDigest, FileImageRef, FileMode, ModelFileUpdate, PlannedOperation, WorkspaceSnapshot,
 };
+use jails_model::Diagnostic;
 use std::collections::BTreeMap;
 
 pub(super) fn publish_authoring_source(
@@ -23,12 +24,12 @@ pub(super) fn publish_authoring_source(
     model_update: Option<ModelFileUpdate>,
     blobs: &mut BTreeMap<ContentDigest, Vec<u8>>,
     operations: &mut Vec<PlannedOperation>,
-) -> Result<(), String> {
+) -> Result<(), Diagnostic> {
     if let Some(update) = model_update {
         let before = snapshot.files.get(&update.path).map(|file| {
             let blob = digest(&file.bytes)?;
             blobs.insert(blob.clone(), file.bytes.clone());
-            Ok::<_, String>(FileImageRef {
+            Ok::<_, Diagnostic>(FileImageRef {
                 blob,
                 len: file.bytes.len() as u64,
                 mode: if file.executable {
@@ -59,7 +60,11 @@ pub(super) fn publish_authoring_source(
         // precondition rather than being deleted anyway.
         for path in update.retire {
             let file = snapshot.files.get(&path).ok_or_else(|| {
-                format!("cannot retire `{path}`: it was not captured before planning")
+                Diagnostic::without_a_fix(
+                    "workspace-retire-not-captured",
+                    path.to_string(),
+                    format!("cannot retire `{path}`: it was not captured before planning"),
+                )
             })?;
             let before = file_image(
                 &file.bytes,

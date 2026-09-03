@@ -22,6 +22,7 @@ use jails_contracts::{
     FileMode, FilePrecondition, Plan, PlanBundle, PlanInput, PlannedOperation, ProjectPath,
     RenderedTree, SemanticPlan, SourceRoot, TreeEntry, TreeManifest, WorkspaceSnapshot,
 };
+use jails_model::Diagnostic;
 use std::collections::BTreeMap;
 
 /// Where the older releases rendered.
@@ -39,17 +40,20 @@ const MOVES: [(&str, SourceRoot); 5] = [
 
 /// Where a managed path the lock names moves to, or `None` when it already
 /// lives under `src/`.
-fn destination(path: &ProjectPath) -> Result<Option<ProjectPath>, String> {
+fn destination(path: &ProjectPath) -> Result<Option<ProjectPath>, Diagnostic> {
     let Some(rest) = path.as_str().strip_prefix(OLD_ROOT) else {
         return Ok(None);
     };
     for (prefix, root) in MOVES {
         if let Some(relative) = rest.strip_prefix(prefix) {
-            return root.join(relative).map(Some);
+            return crate::capture::project_path(format!("{}/{relative}", root.path())).map(Some);
         }
     }
-    Err(format!(
-        "managed file `{path}` is under the old generated root and matches no source set\n       fix: move it by hand and edit `.jails/compiler.lock.json` to name the new path"
+    Err(Diagnostic::new(
+        "workspace-relocate-unmapped",
+        path.to_string(),
+        format!("managed file `{path}` is under the old generated root and matches no source set"),
+        "move it by hand and edit `.jails/compiler.lock.json` to name the new path",
     ))
 }
 
@@ -60,12 +64,14 @@ fn destination(path: &ProjectPath) -> Result<Option<ProjectPath>, String> {
 /// discovered by the executor.
 pub fn relocation_targets(
     snapshot: &WorkspaceSnapshot,
-) -> Result<Vec<(ProjectPath, ProjectPath)>, String> {
+) -> Result<Vec<(ProjectPath, ProjectPath)>, Diagnostic> {
     let Some(projection) = snapshot.accepted_projection.as_ref() else {
-        return Err(
-            "this project has no accepted projection\n       fix: nothing is managed yet, so there is nothing to relocate"
-                .to_string(),
-        );
+        return Err(Diagnostic::new(
+            "workspace-relocate-nothing-accepted",
+            "$.projection",
+            "this project has no accepted projection",
+            "nothing is managed yet, so there is nothing to relocate",
+        ));
     };
     projection
         .files
@@ -82,12 +88,14 @@ pub fn relocation_targets(
 pub fn relocate(
     snapshot: &WorkspaceSnapshot,
     compiler_version: &str,
-) -> Result<PlanBundle, String> {
+) -> Result<PlanBundle, Diagnostic> {
     let targets = relocation_targets(snapshot)?;
     if targets.is_empty() {
-        return Err(
-            "nothing to relocate: every managed file already lives under `src/`".to_string(),
-        );
+        return Err(Diagnostic::without_a_fix(
+            "workspace-relocate-nothing-to-move",
+            "$.projection",
+            "nothing to relocate: every managed file already lives under `src/`",
+        ));
     }
     let projection = snapshot
         .accepted_projection
@@ -109,13 +117,19 @@ pub fn relocate(
             continue;
         };
         if snapshot.files.contains_key(new) {
-            return Err(format!(
-                "`{new}` already exists, and the managed file `{path}` moves there\n       fix: move or remove your file first; nothing was written"
+            return Err(Diagnostic::new(
+                "workspace-relocate-destination-exists",
+                new.to_string(),
+                format!("`{new}` already exists, and the managed file `{path}` moves there"),
+                "move or remove your file first; nothing was written",
             ));
         }
         let Some(live) = snapshot.files.get(path) else {
-            return Err(format!(
-                "managed file `{path}` is missing from the tree\n       fix: restore it, then run `jails model relocate` again; nothing was written"
+            return Err(Diagnostic::new(
+                "workspace-relocate-source-missing",
+                path.to_string(),
+                format!("managed file `{path}` is missing from the tree"),
+                "restore it, then run `jails model relocate` again; nothing was written",
             ));
         };
         let mode = if live.executable {
@@ -144,17 +158,22 @@ pub fn relocate(
     }
 
     let mut operations = vec![PlannedOperation::PublishMergedTree {
-        root: ProjectPath::parse(SourceRoot::PARENT)?,
+        root: crate::capture::project_path(SourceRoot::PARENT)?,
         before: Some(tree_id(&before)?),
         after: tree_id(&after)?,
     }];
     for build_file in ["pom.xml", "build.gradle", "build.gradle.kts"] {
-        let path = ProjectPath::parse(build_file)?;
+        let path = crate::capture::project_path(build_file)?;
         let Some(captured) = snapshot.files.get(&path) else {
             continue;
         };
         let text = std::str::from_utf8(&captured.bytes).map_err(|_| {
-            format!("reader document `{path}` is not UTF-8\n       fix: convert it to UTF-8, then run again")
+            Diagnostic::new(
+                "workspace-relocate-document-not-utf8",
+                path.to_string(),
+                format!("reader document `{path}` is not UTF-8"),
+                "convert it to UTF-8, then run again",
+            )
         })?;
         let stripped = crate::documents::strip_generated_source_roots(text)?;
         crate::materialize::plan_reader_document(
@@ -179,7 +198,7 @@ pub fn relocate(
         snapshot.accepted_migrations.clone(),
         snapshot.accepted_migration_bytes.clone(),
     )?;
-    let lock_path = ProjectPath::parse(crate::capture::COMPILER_LOCK)?;
+    let lock_path = crate::capture::project_path(crate::capture::COMPILER_LOCK)?;
     let lock_before = snapshot
         .files
         .get(&lock_path)

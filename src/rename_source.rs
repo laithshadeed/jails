@@ -37,8 +37,12 @@ pub(crate) fn run(old: &str, new: &str, force: bool, invocation: Invocation) -> 
     // **The reader's files only.** Managed sources sit beside theirs under
     // `src/`, and the lock says which is which; a managed file naming the
     // old type is renamed by the model, not by this.
-    let managed = jails_project::capture::managed_paths(&root)
-        .map_err(|error| Failure::Told(format!("could not read the compiler lock: {error}")))?;
+    let managed = jails_project::capture::managed_paths(&root).map_err(|error| {
+        Failure::diagnosed(
+            error.code,
+            format!("could not read the compiler lock: {error}"),
+        )
+    })?;
     let mut rewrites: BTreeMap<PathBuf, (String, PathBuf)> = BTreeMap::new();
     let mut occurrences = 0_usize;
     let mut in_literals = 0_usize;

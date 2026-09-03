@@ -467,7 +467,7 @@ pub fn add_plugin(
     pom: &str,
     artifact_id: &str,
     body: &str,
-) -> std::result::Result<Option<String>, String> {
+) -> std::result::Result<Option<String>, jails_model::Diagnostic> {
     if has_plugin(pom, artifact_id) {
         return Ok(None);
     }
@@ -499,7 +499,7 @@ pub(crate) fn plugin_nest(block: &str) -> [String; 3] {
 pub(crate) fn insert_plugin(
     text: &str,
     shapes: &[String; 3],
-) -> std::result::Result<String, String> {
+) -> std::result::Result<String, jails_model::Diagnostic> {
     if let Some(at) = direct_child_close(text, &["project", "build", "plugins"]) {
         return Ok(insert_indented_block(text, at, &shapes[0], 0));
     }
@@ -507,10 +507,7 @@ pub(crate) fn insert_plugin(
         return Ok(insert_indented_block(text, at, &shapes[1], 0));
     }
     let Some(at) = direct_child_close(text, &["project"]) else {
-        return Err(
-            "pom.xml has no closing project element\n       fix: repair the Maven POM, then re-plan"
-                .to_string(),
-        );
+        return Err(super::maven_project_unclosed());
     };
     Ok(insert_indented_block(text, at, &shapes[2], 0))
 }

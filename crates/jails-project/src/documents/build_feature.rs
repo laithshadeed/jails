@@ -2,6 +2,7 @@
 
 use super::{owned_block, pom, replace_owned_block};
 use jails_contracts::BuildFeature;
+use jails_model::Diagnostic;
 use std::collections::BTreeSet;
 
 const INTEGRATION_TESTS_MARKER: &str = "jails:integration-tests";
@@ -12,7 +13,7 @@ pub fn reconcile_maven_build_features(
     text: &str,
     features: &BTreeSet<BuildFeature>,
     managed_versions: bool,
-) -> Result<String, String> {
+) -> Result<String, Diagnostic> {
     let text = reconcile_maven_integration_tests(
         text,
         features.contains(&BuildFeature::IntegrationTests),
@@ -26,7 +27,7 @@ pub fn reconcile_gradle_build_features(
     text: &str,
     features: &BTreeSet<BuildFeature>,
     kotlin: bool,
-) -> Result<String, String> {
+) -> Result<String, Diagnostic> {
     let text = reconcile_gradle_integration_tests(
         text,
         features.contains(&BuildFeature::IntegrationTests),
@@ -41,15 +42,17 @@ pub fn reconcile_gradle_build_features(
         // marked block and touches nothing else. Guessing where the top of
         // somebody's build file is produces a script that no longer evaluates,
         // which is worse than a capability that says it cannot.
-        return Err(
-            "the canonical Gradle backend cannot install formatting: Spotless needs `id 'com.diffplug.spotless'` inside `plugins { }`, which must be the first statement in the script.\n       fix: add the plugin entry yourself and configure `spotless { }`, or keep formatting outside the canonical model"
-                .to_string(),
-        );
+        return Err(Diagnostic::new(
+            "workspace-gradle-formatting-unsupported",
+            super::BUILD_SUBJECT,
+            "the canonical Gradle backend cannot install formatting: Spotless needs `id 'com.diffplug.spotless'` inside `plugins { }`, which must be the first statement in the script.",
+            "add the plugin entry yourself and configure `spotless { }`, or keep formatting outside the canonical model",
+        ));
     }
     Ok(text)
 }
 
-fn reconcile_maven_coverage(text: &str, enabled: bool) -> Result<String, String> {
+fn reconcile_maven_coverage(text: &str, enabled: bool) -> Result<String, Diagnostic> {
     let open = format!("<!-- {COVERAGE_MARKER} -->");
     let close = format!("<!-- /{COVERAGE_MARKER} -->");
     let expected = maven_feature_blocks(COVERAGE_MARKER, maven_coverage_plugin());
@@ -65,8 +68,11 @@ fn reconcile_maven_coverage(text: &str, enabled: bool) -> Result<String, String>
         return Ok(text.to_string());
     }
     if pom::has_plugin(text, "jacoco-maven-plugin") {
-        return Err(format!(
-            "Maven already configures `jacoco-maven-plugin` outside `<!-- {COVERAGE_MARKER} -->`\n       fix: remove the reader-owned duplicate or keep coverage outside the canonical model"
+        return Err(reader_owned_feature(
+            format!(
+                "Maven already configures `jacoco-maven-plugin` outside `<!-- {COVERAGE_MARKER} -->`"
+            ),
+            "remove the reader-owned duplicate or keep coverage outside the canonical model",
         ));
     }
     insert_maven_feature_plugin(text, COVERAGE_MARKER, maven_coverage_plugin())
@@ -77,7 +83,7 @@ fn reconcile_maven_coverage(text: &str, enabled: bool) -> Result<String, String>
 /// The plugin is pinned and so is the formatter under it: a formatter that
 /// drifts version rewrites files nobody touched, and the diff blames whoever
 /// happened to run the build.
-fn reconcile_maven_formatting(text: &str, enabled: bool) -> Result<String, String> {
+fn reconcile_maven_formatting(text: &str, enabled: bool) -> Result<String, Diagnostic> {
     let open = format!("<!-- {FORMATTING_MARKER} -->");
     let close = format!("<!-- /{FORMATTING_MARKER} -->");
     let expected = maven_feature_blocks(FORMATTING_MARKER, maven_formatting_plugin());
@@ -93,8 +99,11 @@ fn reconcile_maven_formatting(text: &str, enabled: bool) -> Result<String, Strin
         return Ok(text.to_string());
     }
     if pom::has_plugin(text, "spotless-maven-plugin") {
-        return Err(format!(
-            "Maven already configures `spotless-maven-plugin` outside `<!-- {FORMATTING_MARKER} -->`\n       fix: remove the reader-owned duplicate or keep formatting outside the canonical model"
+        return Err(reader_owned_feature(
+            format!(
+                "Maven already configures `spotless-maven-plugin` outside `<!-- {FORMATTING_MARKER} -->`"
+            ),
+            "remove the reader-owned duplicate or keep formatting outside the canonical model",
         ));
     }
     insert_maven_feature_plugin(text, FORMATTING_MARKER, maven_formatting_plugin())
@@ -141,14 +150,22 @@ fn marked_maven_feature(marker: &str, body: &str) -> String {
 /// to add a plugin legitimately writes inside it, which reads back as "the
 /// owned block was edited" and refuses every later plan, which is what `add
 /// coverage` then `add fake` would do on a pom with no `<build>`.
-fn insert_maven_feature_plugin(text: &str, marker: &str, plugin: &str) -> Result<String, String> {
+fn insert_maven_feature_plugin(
+    text: &str,
+    marker: &str,
+    plugin: &str,
+) -> Result<String, Diagnostic> {
     pom::insert_plugin(
         text,
         &pom::plugin_nest(&marked_maven_feature(marker, plugin)),
     )
 }
 
-fn reconcile_gradle_coverage(text: &str, enabled: bool, kotlin: bool) -> Result<String, String> {
+fn reconcile_gradle_coverage(
+    text: &str,
+    enabled: bool,
+    kotlin: bool,
+) -> Result<String, Diagnostic> {
     let open = format!("// {COVERAGE_MARKER}");
     let close = format!("// /{COVERAGE_MARKER}");
     let expected = gradle_coverage_block(kotlin);
@@ -164,8 +181,9 @@ fn reconcile_gradle_coverage(text: &str, enabled: bool, kotlin: bool) -> Result<
         return Ok(text.to_string());
     }
     if text.contains("jacocoTestCoverageVerification") || text.contains("plugin: 'jacoco'") {
-        return Err(format!(
-            "Gradle already configures JaCoCo outside `// {COVERAGE_MARKER}`\n       fix: remove the reader-owned duplicate or keep coverage outside the canonical model"
+        return Err(reader_owned_feature(
+            format!("Gradle already configures JaCoCo outside `// {COVERAGE_MARKER}`"),
+            "remove the reader-owned duplicate or keep coverage outside the canonical model",
         ));
     }
     let separator = if text.is_empty() || text.ends_with('\n') {
@@ -190,13 +208,11 @@ fn refuse_edited_feature(
     expected: &str,
     label: &str,
     marker: &str,
-) -> Result<(), String> {
+) -> Result<(), Diagnostic> {
     if normalized(existing) == normalized(expected) {
         return Ok(());
     }
-    Err(format!(
-        "the owned {label} block was edited\n       fix: restore the complete `{marker}` block, or remove it and re-plan"
-    ))
+    Err(block_edited(label, marker))
 }
 
 fn refuse_edited_feature_any(
@@ -204,23 +220,21 @@ fn refuse_edited_feature_any(
     expected: &[String],
     label: &str,
     marker: &str,
-) -> Result<(), String> {
+) -> Result<(), Diagnostic> {
     if expected
         .iter()
         .any(|candidate| normalized(existing) == normalized(candidate))
     {
         return Ok(());
     }
-    Err(format!(
-        "the owned {label} block was edited\n       fix: restore the complete `{marker}` block, or remove it and re-plan"
-    ))
+    Err(block_edited(label, marker))
 }
 
 fn reconcile_maven_integration_tests(
     text: &str,
     enabled: bool,
     managed_versions: bool,
-) -> Result<String, String> {
+) -> Result<String, Diagnostic> {
     let open = format!("<!-- {INTEGRATION_TESTS_MARKER} -->");
     let close = format!("<!-- /{INTEGRATION_TESTS_MARKER} -->");
     let expected = maven_integration_tests_blocks(managed_versions);
@@ -236,8 +250,11 @@ fn reconcile_maven_integration_tests(
         return Ok(text.to_string());
     }
     if pom::has_plugin(text, "maven-failsafe-plugin") {
-        return Err(format!(
-            "Maven already configures `maven-failsafe-plugin` outside `<!-- {INTEGRATION_TESTS_MARKER} -->`\n       fix: remove the reader-owned duplicate or keep integration-test execution outside the canonical model"
+        return Err(reader_owned_feature(
+            format!(
+                "Maven already configures `maven-failsafe-plugin` outside `<!-- {INTEGRATION_TESTS_MARKER} -->`"
+            ),
+            "remove the reader-owned duplicate or keep integration-test execution outside the canonical model",
         ));
     }
     insert_maven_plugin(text, managed_versions)
@@ -279,7 +296,7 @@ fn maven_integration_tests_blocks(managed_versions: bool) -> [String; 3] {
 /// formatting siblings: removing the last integration-test unit takes the
 /// `<build><plugins>` this created back out with it, so a pom jails found
 /// without one is left exactly as it was found.
-fn insert_maven_plugin(text: &str, managed_versions: bool) -> Result<String, String> {
+fn insert_maven_plugin(text: &str, managed_versions: bool) -> Result<String, Diagnostic> {
     pom::insert_plugin(text, &maven_integration_tests_blocks(managed_versions))
 }
 
@@ -287,7 +304,7 @@ fn reconcile_gradle_integration_tests(
     text: &str,
     enabled: bool,
     kotlin: bool,
-) -> Result<String, String> {
+) -> Result<String, Diagnostic> {
     let open = format!("// {INTEGRATION_TESTS_MARKER}");
     let close = format!("// /{INTEGRATION_TESTS_MARKER}");
     let expected = gradle_integration_tests_block(kotlin);
@@ -303,8 +320,11 @@ fn reconcile_gradle_integration_tests(
         return Ok(text.to_string());
     }
     if text.contains("integrationTest") {
-        return Err(format!(
-            "Gradle already declares `integrationTest` outside `// {INTEGRATION_TESTS_MARKER}`\n       fix: remove the reader-owned duplicate or keep integration-test execution outside the canonical model"
+        return Err(reader_owned_feature(
+            format!(
+                "Gradle already declares `integrationTest` outside `// {INTEGRATION_TESTS_MARKER}`"
+            ),
+            "remove the reader-owned duplicate or keep integration-test execution outside the canonical model",
         ));
     }
     let separator = if text.is_empty() || text.ends_with('\n') {
@@ -324,25 +344,47 @@ fn gradle_integration_tests_block(kotlin: bool) -> String {
     format!("// {INTEGRATION_TESTS_MARKER}\n{body}// /{INTEGRATION_TESTS_MARKER}\n")
 }
 
-fn refuse_edited(existing: &str, expected: &str, label: &str) -> Result<(), String> {
+fn refuse_edited(existing: &str, expected: &str, label: &str) -> Result<(), Diagnostic> {
     if normalized(existing) == normalized(expected) {
         return Ok(());
     }
-    Err(format!(
-        "the owned {label} block was edited\n       fix: restore the complete `{INTEGRATION_TESTS_MARKER}` block, or remove it and re-plan"
-    ))
+    Err(block_edited(label, INTEGRATION_TESTS_MARKER))
 }
 
-fn refuse_edited_any(existing: &str, expected: &[String], label: &str) -> Result<(), String> {
+fn refuse_edited_any(existing: &str, expected: &[String], label: &str) -> Result<(), Diagnostic> {
     if expected
         .iter()
         .any(|candidate| normalized(existing) == normalized(candidate))
     {
         return Ok(());
     }
-    Err(format!(
-        "the owned {label} block was edited\n       fix: restore the complete `{INTEGRATION_TESTS_MARKER}` block, or remove it and re-plan"
-    ))
+    Err(block_edited(label, INTEGRATION_TESTS_MARKER))
+}
+
+/// The reader's own build already does what a feature would install.
+///
+/// One code for the five: Maven and Gradle, coverage, formatting and
+/// integration tests. Each names its own plugin and its own way out in the
+/// sentence, but the refusal is the same one -- jails will not claim a block
+/// somebody else wrote.
+fn reader_owned_feature(message: String, fix: &str) -> Diagnostic {
+    Diagnostic::new(
+        "workspace-build-feature-reader-owned",
+        super::BUILD_SUBJECT,
+        message,
+        fix,
+    )
+}
+
+/// The owned block is no longer the block jails wrote. One code for the four
+/// callers, which differ only in which marker they name.
+fn block_edited(label: &str, marker: &str) -> Diagnostic {
+    Diagnostic::new(
+        "workspace-owned-block-edited",
+        marker.to_string(),
+        format!("the owned {label} block was edited"),
+        format!("restore the complete `{marker}` block, or remove it and re-plan"),
+    )
 }
 
 fn normalized(block: &str) -> String {
@@ -384,7 +426,7 @@ mod tests {
         assert!(once.contains("<version>3.5.6</version>"), "{once}");
         let edited = once.replace("<goal>verify</goal>", "<goal>none</goal>");
         let error = reconcile_maven_build_features(&edited, &enabled(), false).unwrap_err();
-        assert!(error.contains("was edited"), "{error}");
+        assert!(error.to_string().contains("was edited"), "{error}");
     }
 
     #[test]
@@ -426,7 +468,10 @@ mod tests {
         );
         let edited = once.replace("<minimum>0.80</minimum>", "<minimum>0.75</minimum>");
         let error = reconcile_maven_build_features(&edited, &coverage(), false).unwrap_err();
-        assert!(error.contains("coverage block was edited"), "{error}");
+        assert!(
+            error.to_string().contains("coverage block was edited"),
+            "{error}"
+        );
         // **Removal takes back the plugin, not the container.** `<build>` and
         // `<plugins>` are created outside the markers on purpose (see
         // `insert_maven_feature_plugin`), because owning them makes the next

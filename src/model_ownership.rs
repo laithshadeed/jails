@@ -55,7 +55,9 @@ pub(crate) fn run(invocation: Invocation) -> Result<()> {
         &[],
         jails_project::capture::ModelFile::Observed,
     )
-    .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
+    .map_err(|error| {
+        Failure::diagnosed(error.code, format!("could not capture workspace: {error}"))
+    })?;
     let rows = snapshot
         .accepted_projection
         .as_ref()

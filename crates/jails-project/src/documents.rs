@@ -23,13 +23,22 @@ pub use spring_test::{
     remove_spring_test_import, set_maven_main_class, spring_boot_test_targets,
 };
 
+use jails_model::Diagnostic;
+
 pub(crate) const DEPENDENCY_MARKER: &str = "jails:dependencies";
+
+/// The build file these adapters refuse about when no path is in scope.
+///
+/// A dependency or a build feature is reconciled into whichever build file the
+/// project has, and the adapter is handed the text rather than the path. The
+/// diagnostic's subject is the build, spelled the way the model spells one.
+const BUILD_SUBJECT: &str = "$.build";
 
 pub fn reconcile_properties(
     text: &str,
     previous: &[jails_contracts::PropertyEntry],
     desired: &[jails_contracts::PropertyEntry],
-) -> Result<String, String> {
+) -> Result<String, Diagnostic> {
     use jails_codemod::Marked;
     use std::collections::{BTreeMap, BTreeSet};
 
@@ -76,18 +85,27 @@ pub fn reconcile_properties(
             continue;
         }
         if !seen.insert(key.to_string()) {
-            return Err(format!(
-                "properties key `{key}` occurs more than once\n       fix: keep one declaration for the key, then re-plan"
+            return Err(Diagnostic::new(
+                "workspace-properties-key-repeated",
+                key.to_string(),
+                format!("properties key `{key}` occurs more than once"),
+                "keep one declaration for the key, then re-plan",
             ));
         }
         if !previous.contains_key(key) && !inside_marker {
-            return Err(format!(
-                "reader-owned properties already declare `{key}`\n       fix: remove the reader-owned key or do not declare it in the canonical model"
+            return Err(Diagnostic::new(
+                "workspace-properties-key-reader-owned",
+                key.to_string(),
+                format!("reader-owned properties already declare `{key}`"),
+                "remove the reader-owned key or do not declare it in the canonical model",
             ));
         }
         if has_continuation(line) {
-            return Err(format!(
-                "managed properties key `{key}` uses a continuation line\n       fix: rewrite the value on one line, then re-plan"
+            return Err(Diagnostic::new(
+                "workspace-properties-continuation",
+                key.to_string(),
+                format!("managed properties key `{key}` uses a continuation line"),
+                "rewrite the value on one line, then re-plan",
             ));
         }
         if let Some(value) = desired.get(key) {
@@ -129,20 +147,25 @@ pub fn reconcile_compose_service(
     marker: &str,
     previous: Option<&[u8]>,
     desired: Option<&[u8]>,
-) -> Result<String, String> {
+) -> Result<String, Diagnostic> {
     let range = compose_marked_range(text, marker)?;
     let current = range.map(|(start, end)| &text.as_bytes()[start..end]);
     if previous.is_none() && range.is_none() && compose_has_service(text, service) {
-        return Err(format!(
-            "compose service `{service}` already exists outside `{}{marker}`\n       fix: rename the reader-owned service or remove the canonical capability",
-            jails_codemod::Marked::OPEN_PREFIX
+        return Err(Diagnostic::new(
+            "workspace-compose-service-unmarked",
+            path.to_string(),
+            format!(
+                "compose service `{service}` already exists outside `{}{marker}`",
+                jails_codemod::Marked::OPEN_PREFIX
+            ),
+            "rename the reader-owned service or remove the canonical capability",
         ));
     }
     let selected = reconcile_facet_bytes(path, previous, current, desired)?;
     match (range, selected) {
         (Some((start, end)), Some(bytes)) => {
-            let replacement = std::str::from_utf8(&bytes)
-                .map_err(|_| format!("compiler emitted non-UTF-8 compose facet for `{service}`"))?;
+            let replacement =
+                std::str::from_utf8(&bytes).map_err(|_| non_utf8_compose_facet(path, service))?;
             let mut output = String::with_capacity(text.len() - (end - start) + bytes.len());
             output.push_str(&text[..start]);
             output.push_str(replacement);
@@ -156,8 +179,8 @@ pub fn reconcile_compose_service(
             Ok(clean_empty_compose(output))
         }
         (None, Some(bytes)) => {
-            let block = std::str::from_utf8(&bytes)
-                .map_err(|_| format!("compiler emitted non-UTF-8 compose facet for `{service}`"))?;
+            let block =
+                std::str::from_utf8(&bytes).map_err(|_| non_utf8_compose_facet(path, service))?;
             Ok(insert_compose_service(text, block))
         }
         (None, None) => Ok(text.to_string()),
@@ -169,11 +192,14 @@ fn reconcile_facet_bytes(
     base: Option<&[u8]>,
     current: Option<&[u8]>,
     desired: Option<&[u8]>,
-) -> Result<Option<Vec<u8>>, String> {
+) -> Result<Option<Vec<u8>>, Diagnostic> {
     match (base, current, desired) {
         (None, None, Some(desired)) => Ok(Some(desired.to_vec())),
-        (None, Some(_), Some(_)) => Err(format!(
-            "generated compose facet in `{path}` has no accepted merge base\n       fix: restore `.jails/compiler.lock.json` or move the colliding marked block"
+        (None, Some(_), Some(_)) => Err(Diagnostic::new(
+            "workspace-compose-facet-no-base",
+            path.to_string(),
+            format!("generated compose facet in `{path}` has no accepted merge base"),
+            "restore `.jails/compiler.lock.json` or move the colliding marked block",
         )),
         (Some(base), Some(current), Some(desired)) if current == base => Ok(Some(desired.to_vec())),
         (Some(base), Some(current), Some(desired)) if desired == base => Ok(Some(current.to_vec())),
@@ -181,9 +207,14 @@ fn reconcile_facet_bytes(
         (Some(base), Some(current), Some(desired)) => {
             match crate::merge::three_way(path, base, current, desired)? {
                 crate::merge::Merged::Clean(bytes) => Ok(Some(bytes)),
-                crate::merge::Merged::Conflicted { hunks } => Err(format!(
-                    "`{path}` has {hunks} overlapping compose edit{} between your service and the generator\n       fix: reconcile that marked service by hand; nothing was written",
-                    if hunks == 1 { "" } else { "s" }
+                crate::merge::Merged::Conflicted { hunks } => Err(Diagnostic::new(
+                    "workspace-compose-facet-conflict",
+                    path.to_string(),
+                    format!(
+                        "`{path}` has {hunks} overlapping compose edit{} between your service and the generator",
+                        if hunks == 1 { "" } else { "s" }
+                    ),
+                    "reconcile that marked service by hand; nothing was written",
                 )),
             }
         }
@@ -192,24 +223,58 @@ fn reconcile_facet_bytes(
             match crate::merge::three_way(path, base, b"", desired)? {
                 crate::merge::Merged::Clean(bytes) if bytes.is_empty() => Ok(None),
                 crate::merge::Merged::Clean(bytes) => Ok(Some(bytes)),
-                crate::merge::Merged::Conflicted { hunks } => Err(format!(
-                    "`{path}` has {hunks} overlapping compose deletion and generator edit{}\n       fix: restore or reconcile that marked service by hand; nothing was written",
-                    if hunks == 1 { "" } else { "s" }
+                crate::merge::Merged::Conflicted { hunks } => Err(Diagnostic::new(
+                    "workspace-compose-facet-deletion-conflict",
+                    path.to_string(),
+                    format!(
+                        "`{path}` has {hunks} overlapping compose deletion and generator edit{}",
+                        if hunks == 1 { "" } else { "s" }
+                    ),
+                    "restore or reconcile that marked service by hand; nothing was written",
                 )),
             }
         }
         (Some(base), Some(current), None) if current == base => Ok(None),
-        (Some(_), Some(_), None) => Err(format!(
-            "`{path}` contains a hand-edited generated compose service that the model removes\n       fix: move the custom service outside the managed markers or restore the capability; nothing was written"
+        (Some(_), Some(_), None) => Err(Diagnostic::new(
+            "workspace-compose-facet-edited-and-removed",
+            path.to_string(),
+            format!(
+                "`{path}` contains a hand-edited generated compose service that the model removes"
+            ),
+            "move the custom service outside the managed markers or restore the capability; nothing was written",
         )),
         (Some(_), None, None) | (None, None, None) => Ok(None),
-        (None, Some(_), None) => Err(format!(
-            "`{path}` contains an untracked generated compose facet\n       fix: restore `.jails/compiler.lock.json` or remove the stale marked block"
+        (None, Some(_), None) => Err(Diagnostic::new(
+            "workspace-compose-facet-untracked",
+            path.to_string(),
+            format!("`{path}` contains an untracked generated compose facet"),
+            "restore `.jails/compiler.lock.json` or remove the stale marked block",
         )),
     }
 }
 
-fn compose_marked_range(text: &str, marker: &str) -> Result<Option<(usize, usize)>, String> {
+/// A POM with no `</project>`. One site for the two adapters that insert
+/// into one: the dependency block here and the plugin block in [`pom`].
+pub(crate) fn maven_project_unclosed() -> Diagnostic {
+    Diagnostic::new(
+        "workspace-maven-project-unclosed",
+        "pom.xml",
+        "pom.xml has no closing project element",
+        "repair the Maven POM, then re-plan",
+    )
+}
+
+/// A compose block the compiler produced that is not text. One site, because
+/// the replace and the insert arms reach the same refusal.
+fn non_utf8_compose_facet(path: &jails_contracts::ProjectPath, service: &str) -> Diagnostic {
+    Diagnostic::without_a_fix(
+        "workspace-compose-facet-not-utf8",
+        path.to_string(),
+        format!("compiler emitted non-UTF-8 compose facet for `{service}`"),
+    )
+}
+
+fn compose_marked_range(text: &str, marker: &str) -> Result<Option<(usize, usize)>, Diagnostic> {
     // The same two strings `codemod` writes, from `codemod`. Building them
     // here makes the file that finds a block and the file that writes one two
     // statements of one format.
@@ -225,8 +290,11 @@ fn compose_marked_range(text: &str, marker: &str) -> Result<Option<(usize, usize
     match (opens.as_slice(), closes.as_slice()) {
         ([], []) => Ok(None),
         ([(start, _)], [(_, end)]) if start < end => Ok(Some((*start, *end))),
-        _ => Err(format!(
-            "compose marker `jails:{marker}` is missing, duplicated, or out of order\n       fix: keep exactly one opening and closing marker, then re-plan"
+        _ => Err(Diagnostic::new(
+            "workspace-compose-marker-damaged",
+            format!("jails:{marker}"),
+            format!("compose marker `jails:{marker}` is missing, duplicated, or out of order"),
+            "keep exactly one opening and closing marker, then re-plan",
         )),
     }
 }
@@ -372,7 +440,7 @@ fn escape_property_value(value: &str) -> String {
 pub fn reconcile_maven_dependencies(
     text: &str,
     dependencies: &[jails_contracts::BuildDependency],
-) -> Result<String, String> {
+) -> Result<String, Diagnostic> {
     let open = format!("<!-- {DEPENDENCY_MARKER} -->");
     let close = format!("<!-- /{DEPENDENCY_MARKER} -->");
     let body = maven_dependency_block(dependencies);
@@ -387,10 +455,7 @@ pub fn reconcile_maven_dependencies(
         return Ok(insert_indented_block(text, at, &block, 0));
     }
     let Some(at) = direct_child_close(text, &["project"]) else {
-        return Err(
-            "pom.xml has no closing project element\n       fix: repair the Maven POM, then re-plan"
-                .to_string(),
-        );
+        return Err(maven_project_unclosed());
     };
     let indent = line_indent(text, at).unwrap_or("");
     let child = format!("{indent}    ");
@@ -405,7 +470,7 @@ pub fn reconcile_gradle_dependencies(
     text: &str,
     dependencies: &[jails_contracts::BuildDependency],
     kotlin: bool,
-) -> Result<String, String> {
+) -> Result<String, Diagnostic> {
     let open = format!("// {DEPENDENCY_MARKER}");
     let close = format!("// /{DEPENDENCY_MARKER}");
     let body = gradle_dependency_block(dependencies, kotlin);
@@ -418,8 +483,11 @@ pub fn reconcile_gradle_dependencies(
     for dependency in dependencies {
         let coordinate = format!("{}:{}", dependency.group, dependency.artifact);
         if declares_coordinate(text, &coordinate) {
-            return Err(format!(
-                "Gradle already declares `{coordinate}` outside `{open}`\n       fix: remove the reader-owned duplicate or declare it only in the canonical model"
+            return Err(Diagnostic::new(
+                "workspace-gradle-dependency-reader-owned",
+                BUILD_SUBJECT,
+                format!("Gradle already declares `{coordinate}` outside `{open}`"),
+                "remove the reader-owned duplicate or declare it only in the canonical model",
             ));
         }
     }
@@ -542,14 +610,19 @@ fn dependency_scope(scope: jails_model::DependencyScope) -> &'static str {
 fn refuse_unowned_maven_duplicates(
     text: &str,
     dependencies: &[jails_contracts::BuildDependency],
-) -> Result<(), String> {
+) -> Result<(), Diagnostic> {
     for dependency in dependencies {
         let group = format!("<groupId>{}</groupId>", dependency.group);
         let artifact = format!("<artifactId>{}</artifactId>", dependency.artifact);
         if text.contains(&group) && text.contains(&artifact) {
             let coordinate = format!("{}:{}", dependency.group, dependency.artifact);
-            return Err(format!(
-                "Maven already declares `{coordinate}` outside `<!-- {DEPENDENCY_MARKER} -->`\n       fix: remove the reader-owned duplicate or declare it only in the canonical model"
+            return Err(Diagnostic::new(
+                "workspace-maven-dependency-reader-owned",
+                "pom.xml",
+                format!(
+                    "Maven already declares `{coordinate}` outside `<!-- {DEPENDENCY_MARKER} -->`"
+                ),
+                "remove the reader-owned duplicate or declare it only in the canonical model",
             ));
         }
     }
@@ -561,7 +634,7 @@ fn replace_owned_block(
     open: &str,
     close: &str,
     replacement: Option<&str>,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, Diagnostic> {
     let Some(block) = owned_block(text, open, close)? else {
         return Ok(None);
     };
@@ -581,18 +654,24 @@ fn replace_owned_block(
     Ok(Some(output))
 }
 
-fn owned_block<'a>(text: &'a str, open: &str, close: &str) -> Result<Option<&'a str>, String> {
+fn owned_block<'a>(text: &'a str, open: &str, close: &str) -> Result<Option<&'a str>, Diagnostic> {
     let Some(start) = text.find(open) else {
         if text.contains(close) {
-            return Err(format!(
-                "found `{close}` without its opening marker\n       fix: repair or remove the damaged owned block, then re-plan"
+            return Err(Diagnostic::new(
+                "workspace-owned-block-unopened",
+                BUILD_SUBJECT,
+                format!("found `{close}` without its opening marker"),
+                "repair or remove the damaged owned block, then re-plan",
             ));
         }
         return Ok(None);
     };
     let Some(relative_end) = text[start..].find(close) else {
-        return Err(format!(
-            "found `{open}` without its closing marker\n       fix: repair or remove the damaged owned block, then re-plan"
+        return Err(Diagnostic::new(
+            "workspace-owned-block-unclosed",
+            BUILD_SUBJECT,
+            format!("found `{open}` without its closing marker"),
+            "repair or remove the damaged owned block, then re-plan",
         ));
     };
     let end = start + relative_end + close.len();
@@ -863,8 +942,8 @@ mod tests {
             &[property("server.port", "8080")],
         )
         .unwrap_err();
-        assert!(error.contains("reader-owned"), "{error}");
-        assert!(error.contains("fix:"), "{error}");
+        assert!(error.to_string().contains("reader-owned"), "{error}");
+        assert!(error.to_string().contains("fix:"), "{error}");
     }
 
     #[test]
@@ -912,8 +991,11 @@ mod tests {
         let desired = b"  # jails:redis\n  redis:\n    image: redis:generator\n  # /jails:redis\n";
         let error =
             reconcile_facet_bytes(&path, Some(base), Some(reader), Some(desired)).unwrap_err();
-        assert!(error.contains("overlapping compose edit"), "{error}");
-        assert!(error.contains("nothing was written"), "{error}");
+        assert!(
+            error.to_string().contains("overlapping compose edit"),
+            "{error}"
+        );
+        assert!(error.to_string().contains("nothing was written"), "{error}");
     }
 }
 

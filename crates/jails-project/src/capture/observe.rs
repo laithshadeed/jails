@@ -26,9 +26,9 @@ use std::path::{Path, PathBuf};
 /// they are, because the commands that resolve one run on projects that may
 /// have no model at all. A `jails.toml` that names a layer that does not
 /// exist is refused here, as it is everywhere.
-pub fn facts(root: &Path) -> Result<ProjectFacts, String> {
+pub fn facts(root: &Path) -> Result<ProjectFacts, jails_model::Diagnostic> {
     let layout = match std::fs::read_to_string(root.join("jails.toml")) {
-        Ok(source) => Layout::parse(&source)?,
+        Ok(source) => Layout::parse(&source).map_err(super::layout_invalid)?,
         Err(_) => Layout::default(),
     };
     Ok(observed(root, layout))

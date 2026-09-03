@@ -14,24 +14,41 @@
 
 use super::materialize::{BUNDLE_SCHEMA, PLAN_SCHEMA, digest, plan_digest, tree_id};
 use jails_contracts::{FileImageRef, PlanBundle, PlannedOperation};
+use jails_model::Diagnostic;
 
-pub fn verify_bundle(bundle: &PlanBundle) -> Result<(), String> {
+pub fn verify_bundle(bundle: &PlanBundle) -> Result<(), Diagnostic> {
     if bundle.schema != BUNDLE_SCHEMA || bundle.plan.schema != PLAN_SCHEMA {
-        return Err("unsupported exact-plan schema".to_string());
+        return Err(Diagnostic::without_a_fix(
+            "workspace-bundle-schema",
+            "$.plan",
+            "unsupported exact-plan schema",
+        ));
     }
     for (id, bytes) in &bundle.blobs {
         if &digest(bytes)? != id {
-            return Err(format!("blob `{id:?}` does not match its content"));
+            return Err(Diagnostic::without_a_fix(
+                "workspace-blob-content-mismatch",
+                format!("$.blobs.{}", id.as_str()),
+                format!("blob `{id:?}` does not match its content"),
+            ));
         }
     }
     for (id, tree) in &bundle.trees {
         for entry in tree.entries.values() {
             if !bundle.blobs.contains_key(&entry.blob) {
-                return Err(format!("tree `{id:?}` references a missing blob"));
+                return Err(Diagnostic::without_a_fix(
+                    "workspace-tree-blob-missing",
+                    format!("$.trees.{}", id.as_str()),
+                    format!("tree `{id:?}` references a missing blob"),
+                ));
             }
         }
         if &tree_id(tree)? != id {
-            return Err(format!("tree `{id:?}` does not match its manifest"));
+            return Err(Diagnostic::without_a_fix(
+                "workspace-tree-manifest-mismatch",
+                format!("$.trees.{}", id.as_str()),
+                format!("tree `{id:?}` does not match its manifest"),
+            ));
         }
     }
     for operation in &bundle.plan.operations {
@@ -42,7 +59,11 @@ pub fn verify_bundle(bundle: &PlanBundle) -> Result<(), String> {
                     .is_some_and(|tree| !bundle.trees.contains_key(tree))
                     || !bundle.trees.contains_key(after)
                 {
-                    return Err("managed-tree operation references a missing tree".to_string());
+                    return Err(Diagnostic::without_a_fix(
+                        "workspace-tree-missing",
+                        "$.plan.operations",
+                        "managed-tree operation references a missing tree",
+                    ));
                 }
             }
             PlannedOperation::ReplaceModelFile { before, after, .. } => {
@@ -76,22 +97,31 @@ pub fn verify_bundle(bundle: &PlanBundle) -> Result<(), String> {
         &bundle.plan.follow_up_effects,
     )?;
     if actual != bundle.plan.digest || bundle.plan.id != actual.as_str() {
-        return Err("plan digest does not match the exact plan".to_string());
+        return Err(Diagnostic::without_a_fix(
+            "workspace-plan-digest-mismatch",
+            "$.plan",
+            "plan digest does not match the exact plan",
+        ));
     }
     Ok(())
 }
 
-fn verify_image(bundle: &PlanBundle, image: &FileImageRef) -> Result<(), String> {
+fn verify_image(bundle: &PlanBundle, image: &FileImageRef) -> Result<(), Diagnostic> {
     let bytes = bundle.blobs.get(&image.blob).ok_or_else(|| {
-        format!(
-            "file image references missing blob `{}`",
-            image.blob.as_str()
+        Diagnostic::without_a_fix(
+            "workspace-image-blob-missing",
+            format!("$.blobs.{}", image.blob.as_str()),
+            format!(
+                "file image references missing blob `{}`",
+                image.blob.as_str()
+            ),
         )
     })?;
     if bytes.len() as u64 != image.len {
-        return Err(format!(
-            "file image `{}` has the wrong length",
-            image.blob.as_str()
+        return Err(Diagnostic::without_a_fix(
+            "workspace-image-length-mismatch",
+            format!("$.blobs.{}", image.blob.as_str()),
+            format!("file image `{}` has the wrong length", image.blob.as_str()),
         ));
     }
     Ok(())

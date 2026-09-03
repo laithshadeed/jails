@@ -58,7 +58,7 @@ impl Project {
         // `generate` reports and `doctor` names, and `require_maven` is what
         // stops a command that needs the real answer from running on a guess.
         let build_file = read_build_file(build, root)?;
-        let facts = crate::capture::facts(root)?;
+        let facts = crate::capture::facts(root).map_err(crate::diagnosed)?;
         if facts.base_package.is_empty() {
             // The refusal names the tree it looked in.
             crate::spec::base_package(root)?;
@@ -94,7 +94,7 @@ impl Project {
         // `inspect` reading `pom.xml` unconditionally has `doctor` report
         // "build.gradle is missing" about a file that is right there.
         let build_file = read_build_file(build, root).unwrap_or_default();
-        let facts = crate::capture::facts(root)?;
+        let facts = crate::capture::facts(root).map_err(crate::diagnosed)?;
         Ok(Self {
             root: root.to_path_buf(),
             build,

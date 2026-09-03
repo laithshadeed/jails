@@ -4,6 +4,7 @@ use jails_contracts::{
     ContentDigest, DocumentIntent, FileKind, FileMode, PlanDraft, ProjectPath, RenderedFile,
     RenderedTree, TreeEntry, TreeManifest, WorkspaceSnapshot,
 };
+use jails_model::Diagnostic;
 use std::collections::{BTreeMap, BTreeSet};
 
 type ArtifactFile<'a> = (&'a ProjectPath, &'a RenderedFile);
@@ -29,7 +30,7 @@ pub(crate) fn trees(
     draft: &PlanDraft,
     blobs: &mut BTreeMap<ContentDigest, Vec<u8>>,
     restore: crate::materialize::Restore,
-) -> Result<(TreeManifest, TreeManifest), String> {
+) -> Result<(TreeManifest, TreeManifest), Diagnostic> {
     let mut before = TreeManifest::default();
     let mut tree = TreeManifest::default();
     let baseline = artifact_index(&draft.baseline)?;
@@ -71,8 +72,13 @@ pub(crate) fn trees(
             && old_path != new_path
             && snapshot.files.contains_key(new_path)
         {
-            return Err(format!(
-                "renamed artifact `{artifact_id}` cannot move to `{new_path}` because that path already exists\n       fix: move the destination file; nothing was written"
+            return Err(Diagnostic::new(
+                "workspace-rename-destination-exists",
+                new_path.to_string(),
+                format!(
+                    "renamed artifact `{artifact_id}` cannot move to `{new_path}` because that path already exists"
+                ),
+                "move the destination file; nothing was written",
             ));
         }
         reconcile_artifact(
@@ -99,15 +105,20 @@ pub(crate) fn trees(
             .keys()
             .find(|path| !adopted_targets.contains(*path))
             .expect("different adoption sets have one missing target");
-        return Err(format!(
-            "adoption target `{missing}` is not a compiler artifact\n       fix: import only source units represented by the canonical model"
+        return Err(Diagnostic::new(
+            "workspace-adoption-target-unmodelled",
+            missing.to_string(),
+            format!("adoption target `{missing}` is not a compiler artifact"),
+            "import only source units represented by the canonical model",
         ));
     }
 
     Ok((before, tree))
 }
 
-fn adoption_index(intents: &[DocumentIntent]) -> Result<BTreeMap<ProjectPath, Adoption>, String> {
+fn adoption_index(
+    intents: &[DocumentIntent],
+) -> Result<BTreeMap<ProjectPath, Adoption>, Diagnostic> {
     let mut targets = BTreeMap::new();
     let mut sources = BTreeSet::new();
     for intent in intents {
@@ -115,8 +126,10 @@ fn adoption_index(intents: &[DocumentIntent]) -> Result<BTreeMap<ProjectPath, Ad
             continue;
         };
         if !sources.insert(source.clone()) {
-            return Err(format!(
-                "reader source `{source}` is adopted more than once"
+            return Err(Diagnostic::without_a_fix(
+                "workspace-adoption-source-repeated",
+                source.to_string(),
+                format!("reader source `{source}` is adopted more than once"),
             ));
         }
         if targets
@@ -129,19 +142,26 @@ fn adoption_index(intents: &[DocumentIntent]) -> Result<BTreeMap<ProjectPath, Ad
             )
             .is_some()
         {
-            return Err(format!("managed target `{path}` is adopted more than once"));
+            return Err(Diagnostic::without_a_fix(
+                "workspace-adoption-target-repeated",
+                path.to_string(),
+                format!("managed target `{path}` is adopted more than once"),
+            ));
         }
     }
     Ok(targets)
 }
 
-fn artifact_index(tree: &RenderedTree) -> Result<BTreeMap<String, ArtifactFile<'_>>, String> {
+fn artifact_index(tree: &RenderedTree) -> Result<BTreeMap<String, ArtifactFile<'_>>, Diagnostic> {
     let mut artifacts = BTreeMap::new();
     for (path, file) in &tree.files {
         let id = file.provenance.artifact_id.clone();
         if let Some((previous, _)) = artifacts.insert(id.clone(), (path, file)) {
-            return Err(format!(
-                "compiler emitted artifact `{id}` at both `{previous}` and `{path}`\n       fix: give every emitted file its own stable artifact id"
+            return Err(Diagnostic::new(
+                "workspace-artifact-path-collision",
+                path.to_string(),
+                format!("compiler emitted artifact `{id}` at both `{previous}` and `{path}`"),
+                "give every emitted file its own stable artifact id",
             ));
         }
     }
@@ -167,7 +187,7 @@ fn reconcile_artifact(
     ownership: Ownership<'_>,
     tree: &mut TreeManifest,
     blobs: &mut BTreeMap<ContentDigest, Vec<u8>>,
-) -> Result<(), String> {
+) -> Result<(), Diagnostic> {
     let Ownership {
         ejected,
         adoption,
@@ -180,15 +200,25 @@ fn reconcile_artifact(
     let desired_file = desired.map(|(_, file)| file);
     let selected = if let Some(adoption) = adoption {
         if base_file.is_some() || live.is_some() {
-            return Err(format!(
-                "adoption target `{output_path}` already has canonical history or live bytes\n       fix: import only into a project with no canonical managed artifact"
+            return Err(Diagnostic::new(
+                "workspace-adoption-target-occupied",
+                output_path.to_string(),
+                format!(
+                    "adoption target `{output_path}` already has canonical history or live bytes"
+                ),
+                "import only into a project with no canonical managed artifact",
             ));
         }
         let theirs = desired_file.expect("an adoption target was matched to desired artifact");
         let ours = snapshot.files.get(&adoption.source).ok_or_else(|| {
-            format!(
-                "reader source `{}` was not captured for adoption\n       fix: restore the file and re-plan the import",
-                adoption.source
+            Diagnostic::new(
+                "workspace-adoption-source-uncaptured",
+                adoption.source.to_string(),
+                format!(
+                    "reader source `{}` was not captured for adoption",
+                    adoption.source
+                ),
+                "restore the file and re-plan the import",
             )
         })?;
         let bytes = if ours.bytes == adoption.base || ours.bytes == theirs.bytes {
@@ -198,10 +228,15 @@ fn reconcile_artifact(
             {
                 crate::merge::Merged::Clean(bytes) => bytes,
                 crate::merge::Merged::Conflicted { hunks } => {
-                    return Err(format!(
-                        "`{}` has {hunks} overlapping legacy-template and reader edit{} during import\n       fix: reconcile that component by hand; nothing was written",
-                        adoption.source,
-                        if hunks == 1 { "" } else { "s" }
+                    return Err(Diagnostic::new(
+                        "workspace-import-conflict",
+                        adoption.source.to_string(),
+                        format!(
+                            "`{}` has {hunks} overlapping legacy-template and reader edit{} during import",
+                            adoption.source,
+                            if hunks == 1 { "" } else { "s" }
+                        ),
+                        "reconcile that component by hand; nothing was written",
                     ));
                 }
             }
@@ -211,8 +246,11 @@ fn reconcile_artifact(
         match (base_file, live, desired_file) {
             (None, None, Some(theirs)) => Some((theirs.bytes.clone(), theirs.kind, theirs.mode)),
             (None, Some(_), Some(_)) => {
-                return Err(format!(
-                    "generated path `{output_path}` is already reader-owned\n       fix: move the existing file or explicitly import it before generating"
+                return Err(Diagnostic::new(
+                    "workspace-generated-path-reader-owned",
+                    output_path.to_string(),
+                    format!("generated path `{output_path}` is already reader-owned"),
+                    "move the existing file or explicitly import it before generating",
                 ));
             }
             (Some(base), Some(ours), Some(theirs)) if ours.bytes == base.bytes => {
@@ -231,9 +269,14 @@ fn reconcile_artifact(
                         Some((bytes, theirs.kind, captured_mode(ours)))
                     }
                     crate::merge::Merged::Conflicted { hunks } => {
-                        return Err(format!(
-                            "`{output_path}` has {hunks} overlapping edit{} between your file and the generator\n       fix: reconcile that component by hand; nothing was written",
-                            if hunks == 1 { "" } else { "s" }
+                        return Err(Diagnostic::new(
+                            "workspace-managed-file-conflict",
+                            output_path.to_string(),
+                            format!(
+                                "`{output_path}` has {hunks} overlapping edit{} between your file and the generator",
+                                if hunks == 1 { "" } else { "s" }
+                            ),
+                            "reconcile that component by hand; nothing was written",
                         ));
                     }
                 }
@@ -246,8 +289,11 @@ fn reconcile_artifact(
                 None
             }
             (Some(_), Some(_), None) => {
-                return Err(format!(
-                    "`{live_path}` was edited by you but removed by the generator\n       fix: move the custom code to reader source, keep the model component, or repeat with `--force` to discard the edits; nothing was written"
+                return Err(Diagnostic::new(
+                    "workspace-managed-file-edited-and-removed",
+                    live_path.to_string(),
+                    format!("`{live_path}` was edited by you but removed by the generator"),
+                    "move the custom code to reader source, keep the model component, or repeat with `--force` to discard the edits; nothing was written",
                 ));
             }
             // `resource repair` is the one plan that writes it back. A
@@ -259,8 +305,13 @@ fn reconcile_artifact(
                 Some((theirs.bytes.clone(), theirs.kind, theirs.mode))
             }
             (Some(_), None, Some(_)) => {
-                return Err(format!(
-                    "managed file `{live_path}` was deleted by you while the generator still needs it\n       fix: `jails resource repair` writes it back from the model, or eject its implementation boundary; nothing was written"
+                return Err(Diagnostic::new(
+                    "workspace-managed-file-deleted",
+                    live_path.to_string(),
+                    format!(
+                        "managed file `{live_path}` was deleted by you while the generator still needs it"
+                    ),
+                    "`jails resource repair` writes it back from the model, or eject its implementation boundary; nothing was written",
                 ));
             }
             (Some(_), None, None) => None,
@@ -292,7 +343,7 @@ fn insert_tree_entry(
     bytes: Vec<u8>,
     kind: FileKind,
     mode: FileMode,
-) -> Result<(), String> {
+) -> Result<(), Diagnostic> {
     let blob = crate::materialize::digest(&bytes)?;
     blobs.insert(blob.clone(), bytes);
     if tree
@@ -300,8 +351,11 @@ fn insert_tree_entry(
         .insert(path.clone(), TreeEntry { kind, mode, blob })
         .is_some()
     {
-        return Err(format!(
-            "two reconciled artifacts target `{path}`\n       fix: resolve the compiler path collision"
+        return Err(Diagnostic::new(
+            "workspace-tree-path-collision",
+            path.to_string(),
+            format!("two reconciled artifacts target `{path}`"),
+            "resolve the compiler path collision",
         ));
     }
     Ok(())

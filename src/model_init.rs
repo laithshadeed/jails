@@ -80,7 +80,12 @@ fn run_as(invocation: Invocation) -> Result<()> {
         jails_compiler::COMPILER_VERSION,
         jails_workspace::Restore::Refuse,
     )
-    .map_err(|error| Failure::Told(format!("could not materialize the new model: {error}")))?;
+    .map_err(|error| {
+        Failure::diagnosed(
+            error.code,
+            format!("could not materialize the new model: {error}"),
+        )
+    })?;
     if invocation.pretend {
         if invocation.output == Output::Human {
             println!("--pretend: would create {}", crate::model_command::JDL_PATH);
@@ -88,7 +93,10 @@ fn run_as(invocation: Invocation) -> Result<()> {
         return Ok(());
     }
     jails_workspace::execute(&root, &bundle).map_err(|error| {
-        Failure::Told(format!("could not write the application model: {error}"))
+        Failure::diagnosed(
+            error.code,
+            format!("could not write the application model: {error}"),
+        )
     })?;
     if invocation.output == Output::Human {
         println!("  create  {}", crate::model_command::JDL_PATH);

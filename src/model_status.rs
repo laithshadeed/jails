@@ -120,7 +120,9 @@ pub(crate) fn run(selector: &str, live: Option<Live>, invocation: Invocation) ->
         &[],
         jails_project::capture::ModelFile::Observed,
     )
-    .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
+    .map_err(|error| {
+        Failure::diagnosed(error.code, format!("could not capture workspace: {error}"))
+    })?;
     let report = inspect(&snapshot, selector, live.as_ref());
     match invocation.output {
         Output::Human => print!("{}", render_human(&report)),

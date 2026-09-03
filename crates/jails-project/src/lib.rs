@@ -62,5 +62,23 @@ pub use documents::pom;
 /// The eleven layers, from the crate that owns every closed vocabulary.
 /// Module code says `crate::layout`.
 pub use jails_model::layout;
+
+/// A diagnosed refusal, as the failure a command reports.
+///
+/// **This is the one boundary between the two vocabularies, and it is a
+/// function rather than a `From` because it cannot be one.** `Diagnostic` is
+/// `jails-model`'s and `Failure` is `jails-support`'s; neither crate depends
+/// on the other, so `impl From<Diagnostic> for Failure` is an orphan wherever
+/// it is written. This crate is the lowest one that can see both.
+///
+/// The human line does not change: `Diagnostic`'s `Display` renders exactly
+/// the `"<message>\n       fix: <what to do>"` the phase used to return as a
+/// `String`, so a `?` through here keeps the sentence byte for byte and adds
+/// only the code, which `--output json` puts in the envelope's `error.code`.
+/// A caller that wraps the refusal in a sentence of its own builds the message
+/// itself and passes `diagnostic.code` to [`jails_support::Failure::diagnosed`].
+pub fn diagnosed(diagnostic: jails_model::Diagnostic) -> jails_support::Failure {
+    jails_support::Failure::diagnosed(diagnostic.code, diagnostic.to_string())
+}
 pub use jails_spec::{build, release, spec};
 pub(crate) use jails_support::{json, process};

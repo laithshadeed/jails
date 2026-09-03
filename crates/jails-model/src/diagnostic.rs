@@ -26,7 +26,7 @@
 //! | `JDL####` | lexing and parsing JDL v1 | `jails-model`, `jdl/v1/` |
 //! | `model-*` | linking (JDL v1 §18.2) | `jails-model` |
 //! | `compile-*` | semantic lowering | `jails-compiler` |
-//! | `workspace-*` | capture, materialization, execution | `jails-workspace` |
+//! | `workspace-*` | capture, materialization, execution | `jails-workspace`, and `jails-project`'s `capture`, `documents` and `merge` |
 //!
 //! `every_diagnostic_code_belongs_to_the_crate_that_owns_its_phase` in
 //! `tests/architecture/` holds that, so the third vocabulary cannot reappear
@@ -106,6 +106,24 @@ impl Diagnostic {
         }
     }
 
+    /// A refusal that can only say what it found.
+    ///
+    /// The `fix` is mandatory on [`Self::new`] because a refusal a reader can
+    /// act on has to say what to do next. Some cannot: a bundle whose blob
+    /// does not match its digest, a decoded tag that is not a tag, a tree
+    /// entry pointing at nothing. These are corruption reports, and a `fix:`
+    /// line on one would be an invented instruction -- the same reasoning the
+    /// `refusals with no fix: line` ratchet records for withdrawing its
+    /// target. The constructor is named so the hole is greppable rather than
+    /// spelled `""` at a call site and indistinguishable from an oversight.
+    pub fn without_a_fix(
+        code: &'static str,
+        path: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self::new(code, path, message, String::new())
+    }
+
     /// A report a reader may act on or ignore without changing what is emitted.
     pub fn warning(
         code: &'static str,
@@ -120,6 +138,32 @@ impl Diagnostic {
     }
 }
 
+/// One diagnostic reads as the sentence a reader is shown.
+///
+/// **This is what keeps adopting the contract from rewriting any message.** A
+/// phase below the CLI used to return a `String` shaped
+/// `"<what is wrong>\n       fix: <what to do>"`, and callers interpolate that
+/// string into a sentence of their own (`could not apply exact plan: {error}`).
+/// Splitting it into `message` and `fix` and rendering it back here produces
+/// the same bytes, so a `?` through `jails_support::Failure` carries the
+/// text unchanged and only the code is added. The seven-space indent is the
+/// one [`Diagnostics`] already writes.
+///
+/// The code and the path are deliberately *not* rendered: they are what
+/// `--output json` carries, and putting them in the human line would change
+/// every refusal the reader has ever seen.
+impl Display for Diagnostic {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)?;
+        if !self.fix.is_empty() {
+            write!(formatter, "\n       fix: {}", self.fix)?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for Diagnostic {}
+
 /// Every problem found in one parse/link pass.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct Diagnostics {
@@ -128,7 +172,7 @@ pub struct Diagnostics {
 
 impl Diagnostics {
     /// Public so the crates above this one can adopt the contract.
-    pub(crate) fn from_vec(diagnostics: Vec<Diagnostic>) -> Self {
+    pub fn from_vec(diagnostics: Vec<Diagnostic>) -> Self {
         Self { diagnostics }
     }
 

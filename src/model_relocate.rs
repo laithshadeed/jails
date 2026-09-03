@@ -27,8 +27,11 @@ pub(crate) fn run(invocation: Invocation) -> Result<()> {
         &[],
         jails_project::capture::ModelFile::Observed,
     )
-    .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
-    let targets = jails_workspace::relocation_targets(&snapshot).map_err(Failure::Told)?;
+    .map_err(|error| {
+        Failure::diagnosed(error.code, format!("could not capture workspace: {error}"))
+    })?;
+    let targets =
+        jails_workspace::relocation_targets(&snapshot).map_err(jails_project::diagnosed)?;
     if targets.is_empty() {
         if invocation.output == Output::Human {
             println!("nothing to relocate: every managed file already lives under `src/`");
@@ -48,9 +51,17 @@ pub(crate) fn run(invocation: Invocation) -> Result<()> {
         &mut snapshot,
         targets.iter().map(|(_, destination)| destination),
     )
-    .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
-    let bundle = jails_workspace::relocate(&snapshot, jails_compiler::COMPILER_VERSION)
-        .map_err(|error| Failure::Told(format!("could not plan the relocation: {error}")))?;
+    .map_err(|error| {
+        Failure::diagnosed(error.code, format!("could not capture workspace: {error}"))
+    })?;
+    let bundle = jails_workspace::relocate(&snapshot, jails_compiler::COMPILER_VERSION).map_err(
+        |error| {
+            Failure::diagnosed(
+                error.code,
+                format!("could not plan the relocation: {error}"),
+            )
+        },
+    )?;
 
     if let Some(path) = &invocation.plan_out {
         write_bundle(path, &bundle)?;
@@ -58,8 +69,12 @@ pub(crate) fn run(invocation: Invocation) -> Result<()> {
     if invocation.pretend || invocation.plan_out.is_some() {
         return report_plan(&bundle, &invocation);
     }
-    let execution = jails_workspace::execute(&root, &bundle)
-        .map_err(|error| Failure::Told(format!("could not relocate managed output: {error}")))?;
+    let execution = jails_workspace::execute(&root, &bundle).map_err(|error| {
+        Failure::diagnosed(
+            error.code,
+            format!("could not relocate managed output: {error}"),
+        )
+    })?;
     if invocation.output == Output::Human {
         for (old, new) in &targets {
             println!("  move    {old} -> {new}");

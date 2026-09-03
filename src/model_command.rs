@@ -245,7 +245,10 @@ pub(crate) fn sync(no_start: bool, invocation: Invocation) -> Result<()> {
         return crate::model_generate::report_plan(&bundle, &invocation);
     }
     let execution = jails_workspace::execute(root, &bundle).map_err(|error| {
-        Failure::Told(format!("could not synchronize canonical model: {error}"))
+        Failure::diagnosed(
+            error.code,
+            format!("could not synchronize canonical model: {error}"),
+        )
     })?;
     if invocation.output == Output::Human {
         // The same distinction `add` draws: a sync over a project that is
@@ -398,8 +401,9 @@ pub(crate) fn apply(bundle_path: &Path, output: Output) -> Result<()> {
         ))
     })?;
     let root = crate::model_command::root()?;
-    let execution = jails_workspace::execute(&root, &bundle)
-        .map_err(|error| Failure::Told(format!("could not apply exact plan: {error}")))?;
+    let execution = jails_workspace::execute(&root, &bundle).map_err(|error| {
+        Failure::diagnosed(error.code, format!("could not apply exact plan: {error}"))
+    })?;
     if output == Output::Human {
         println!(
             "applied {}: {} operations, {} files written, {} files deleted",
@@ -677,7 +681,9 @@ fn compile(
         &reader_paths,
         jails_project::capture::ModelFile::Observed,
     )
-    .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
+    .map_err(|error| {
+        Failure::diagnosed(error.code, format!("could not capture workspace: {error}"))
+    })?;
     let draft = jails_compiler::Compiler::compile(
         &snapshot,
         &snapshot.model.model,
@@ -692,7 +698,9 @@ fn compile(
         &mut snapshot,
         draft.generated.files.keys(),
     )
-    .map_err(|error| Failure::Told(format!("could not capture workspace: {error}")))?;
+    .map_err(|error| {
+        Failure::diagnosed(error.code, format!("could not capture workspace: {error}"))
+    })?;
     if notice == Notice::Print {
         for diagnostic in &draft.diagnostics {
             eprintln!("jails: {}", diagnostic.message);
@@ -712,7 +720,12 @@ fn compile(
             Repair::DeletedManagedFiles => jails_workspace::Restore::Deleted,
         },
     )
-    .map_err(|error| Failure::Told(format!("could not materialize exact plan: {error}")))
+    .map_err(|error| {
+        Failure::diagnosed(
+            error.code,
+            format!("could not materialize exact plan: {error}"),
+        )
+    })
 }
 
 /// `jails resource repair` on a canonical project.
