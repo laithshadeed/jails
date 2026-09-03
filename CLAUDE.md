@@ -1152,6 +1152,12 @@ stop.
   like the bug this bullet warns about and is not one --
   `deps/jackson-databind/pom.xml` says so in a comment beside its own
   `jackson-annotations` dependency. Check there before "fixing" it.
+- **Boot 4 renamed the servlet web starter too.** `spring-boot-starter-web`
+  became `spring-boot-starter-webmvc`, and the compiler picks by the captured
+  Boot major beside its `spring_starter("web", …)` call. Declaring the old
+  name on a Boot 4 project is what `jails lint` reported on every fresh
+  scaffold, and the fixtures already carried `webmvc`, so the plan was adding
+  a second starter for the same slice.
 - **Boot 4 split the servlet test slice.** `@WebMvcTest` and
   `@AutoConfigureMockMvc` live in `spring-boot-webmvc-test`, so a generated
   test using either needs `spring-boot-starter-webmvc-test`, which the

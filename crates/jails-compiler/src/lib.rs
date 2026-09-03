@@ -310,10 +310,20 @@ impl Compiler {
         // Gated on the project being Spring for the facet half, because the
         // entry is versionless: correct under `spring-boot-starter-parent`,
         // and fatal without it, where Maven refuses to read the pom at all.
+        // **Boot 4 split the servlet web starter out, and the name changes
+        // with it.** `spring-boot-starter-web` is the Boot 3 spelling and
+        // `spring-boot-starter-webmvc` the Boot 4 one; declaring the old name
+        // on a Boot 4 project is what `jails lint` reported on every fresh
+        // scaffold. Decided here, once, the way the moved imports are.
+        let servlet_starter =
+            match crate::emit_capability::boot_major(snapshot.project.spring_boot.as_deref()) {
+                Some(major) if major >= 4 => "webmvc",
+                _ => "web",
+            };
         required.when(
             declares("api")
                 || (snapshot.project.spring_boot.is_some() && has_facet(jails_model::Facet::Http)),
-            spring_starter("web", DependencyScope::Compile),
+            spring_starter(servlet_starter, DependencyScope::Compile),
         );
         let dependencies = required.into_sorted();
         let mut reader_document_intents = match snapshot.project.build_system {

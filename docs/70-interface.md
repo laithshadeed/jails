@@ -726,10 +726,14 @@ linker refuses an operation that can construct none of its entity's
 required fields under either storage. *Done when* the `g usecase` above
 refuses with that message.
 
-**I71.12 — the compiler and the linter agree.** *Change* the web facet
-declares `spring-boot-starter-webmvc` where the captured Boot version is
-4, decided once the way the `Import::Moved` rows are. *Done when* `jails
-lint` on a fresh scaffold reports nothing.
+**I71.12 — the compiler and the linter agree.** *Landed.* The servlet
+starter's name is decided from the captured Boot major in one place beside
+the `spring_starter` call, so a Boot 4 project gets
+`spring-boot-starter-webmvc` and everything below it keeps
+`spring-boot-starter-web`. Twenty goldens lost the dependency entirely
+rather than changing it: the fixture already declares `webmvc` outside the
+marked block, so the reconciler now sees the requirement met and adds
+nothing -- which is the duplicate the linter was reporting.
 
 **I71.34 — the daemon refuses a socket path it cannot bind.** *Landed,
 without the `$XDG_RUNTIME_DIR` half.* `refuse_an_unbindable_socket` runs in
