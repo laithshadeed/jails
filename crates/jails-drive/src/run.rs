@@ -313,6 +313,27 @@ pub fn validate_test_options(options: &TestOptions) -> Result<()> {
     test_plan::validate_runtime_options(options)
 }
 
+/// Refuse a launcher-backed run when the launcher is not declared.
+///
+/// **A command that reports test results does not edit the build file.**
+/// The warm engine runs JUnit's console launcher over already-compiled
+/// classes, and that launcher is a dependency in the reader's POM.
+/// Installing it on their behalf meant a `jails test` writing to `pom.xml`
+/// -- and, on a project jails had not converted yet, writing
+/// `.jails/model.jdl` too -- as a side effect of *how* the tests were run.
+/// The transition has a command; this names it.
+fn refuse_without_the_launcher(project: &crate::project::Project) -> Result<()> {
+    if project.has_dependency("org.junit.platform", "junit-platform-console") {
+        return Ok(());
+    }
+    Err(jails_support::Failure::Told(
+        "this run needs JUnit's console launcher, which is a dependency this project does \
+         not declare\n       fix: run `jails add fast-test` once, or run `jails test` \
+         without `--fast`, `--engine warm` or `--affected`"
+            .to_string(),
+    ))
+}
+
 pub fn test(requested: &[String], options: TestOptions, debug: bool) -> Result<()> {
     validate_test_options(&options)?;
     if options.watch {
@@ -401,6 +422,19 @@ fn test_report_once_with_fallback(
         );
     }
 
+    // **Checked once, and only for the engine that needs it.** The launcher
+    // is a dependency in the reader's POM; `--fast` used to install it, which
+    // made a command that reports test results edit the build file -- and, on
+    // a project jails had not converted, write a model too. Refusing here
+    // rather than at the flag is what lets `--fast` keep falling back to the
+    // build tool when nothing is compiled: that run never reaches a launcher.
+    if plan
+        .partitions
+        .iter()
+        .any(|partition| partition.engine == crate::testing::TestEngine::TestdV2)
+    {
+        refuse_without_the_launcher(&crate::project::Project::load(&root)?)?;
+    }
     let mut reports = Vec::new();
     for partition in &plan.partitions {
         let selectors = partition

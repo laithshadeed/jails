@@ -1932,6 +1932,23 @@ fn test_fast_is_a_visible_alias_for_the_complete_auto_engine() {
     );
 }
 
+/// Put JUnit's console launcher on a fixture's test classpath.
+///
+/// **A test run installs nothing**, so a fixture that means to exercise the
+/// warm engine asks for the launcher the way a reader would. `jails test
+/// --fast` used to declare it as a side effect of how the tests were run.
+fn declare_the_launcher(root: &std::path::Path, path: &str) {
+    let added = jails_cmd_with_path(root, path)
+        .args(["add", "fast-test"])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "{}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+}
+
 #[test]
 fn auto_engine_merges_warm_and_build_partitions_without_losing_a_selector() {
     if !real_mvn_available() || !real_java_supports_target_release() {
@@ -1954,6 +1971,7 @@ fn auto_engine_merges_warm_and_build_partitions_without_losing_a_selector() {
     )
     .unwrap();
 
+    declare_the_launcher(&root, &path);
     let prepared = jails_cmd_with_path(&root, &path)
         .args(["test", "--fast"])
         .output()
@@ -2031,6 +2049,7 @@ fn a_timed_warm_run_cancels_the_request_and_recycles_the_daemon() {
     )
     .unwrap();
 
+    declare_the_launcher(&root, &path);
     let prepared = jails_cmd_with_path(&root, &path)
         .args(["test", "--fast", "PingTest"])
         .output()
@@ -2145,6 +2164,8 @@ fn testd_refuses_stale_classes_and_sees_a_recompile_after_it_started() {
     )
     .unwrap();
 
+    declare_the_launcher(&root, &path);
+
     // Nothing compiled: refused, and the refusal names the way out.
     let cold = jails_cmd_with_path(&root, &path)
         .args(["testd"])
@@ -2163,6 +2184,7 @@ fn testd_refuses_stale_classes_and_sees_a_recompile_after_it_started() {
     // `--fast` splices the console launcher, pinned to this project's JUnit,
     // and compiles. `testd` shares that dependency rather than having its own
     // idea of which JUnit this is.
+    declare_the_launcher(&root, &path);
     let prepared = jails_cmd_with_path(&root, &path)
         .args(["test", "--fast"])
         .output()
@@ -2281,6 +2303,7 @@ fn testd_affected_selects_transitively_and_widens_when_it_cannot_know() {
         std::fs::write(&file, body).unwrap();
     }
 
+    declare_the_launcher(&root, &path);
     let prepared = jails_cmd_with_path(&root, &path)
         .args(["test", "--fast"])
         .output()
@@ -2730,10 +2753,13 @@ fn a_generated_project_reports_the_same_tests_on_every_engine_under_maven_and_gr
             "{build} `--engine build` must discover what `jails test` did: {stdout}"
         );
 
-        // 3. `--fast` declares the launcher in the model, which reaches the
-        //    build file as a dependency -- and on Gradle as the block that
-        //    carries the classpath task -- so the warm engine has what it
-        //    needs on both.
+        // 3. `jails add fast-test` declares the launcher in the model, which
+        //    reaches the build file as a dependency -- and on Gradle as the
+        //    block that carries the classpath task -- so the warm engine has
+        //    what it needs on both. A test run never declares it: that would
+        //    make reporting test results edit the build file.
+        let (ok, stdout, stderr) = run(root, &["add", "fast-test"]);
+        assert!(ok, "{build} `add fast-test`: {stdout}{stderr}");
         let (ok, stdout, stderr) = run(root, &["test", "--fast", "PlainTest"]);
         assert!(ok, "{build} `--fast`: {stdout}{stderr}");
 

@@ -214,7 +214,7 @@ read again beside it. No module outside `capture` reads the pom, and the
 board's Maven-scanner row holds the count at one.
 
 **Every advertised generator and capability has a compiler backend: 39 of 39
-and 25 of 25**, held by `canonical_support::registry_classifies_every_advertised_word`.
+and 26 of 26**, held by `canonical_support::registry_classifies_every_advertised_word`.
 **The declarative ones are `Recipe` rows and `emit.rs` walks two tables.**
 `crates/jails-compiler/src/recipe.rs` is the shape -- files, dependencies,
 properties, compose services, build features, placement -- over a `Node`
@@ -711,6 +711,13 @@ this phase, and their refusals are worded by the caller that reports them.
   `JAILS_MAVEN` names the Maven command; `maven::mvnd_can_start` probes mvnd
   up front because a read-only home kills it with an exit status
   indistinguishable from a failing build.
+- **A test run installs nothing.** `--fast` and `--engine warm` need JUnit's
+  console launcher, which is a dependency in the reader's POM; `jails test`
+  used to declare it (and convert the project to the model) as a side effect
+  of *how* the tests were run. `fast-test` is an ordinary `jails add`
+  capability now, and `run::refuse_without_the_launcher` fires where the warm
+  engine is about to run rather than at the flag -- so `--fast` on a project
+  with nothing compiled still falls back to the build tool.
 - **`crates/jails-drive/src/launcher.rs`** -- `jails test --fast`: JUnit's
   console launcher over already-compiled classes. The console artifact's
   version must equal the project's JUnit version (`junit-bom` constrains every

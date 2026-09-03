@@ -12,8 +12,35 @@ fn canonical_fast_test_is_model_owned_and_never_journaled() {
     let log = fake_dir.join("maven.log");
     write_fake_maven(&fake_dir, &["mvn"], &log);
 
-    let installed = jails_cmd(&root, Some(&fake_dir))
+    // **A run that reports test results does not edit the build file.**
+    // `--fast` used to install the launcher itself, which meant `jails test`
+    // writing to `pom.xml` as a side effect of *how* the tests were run. It
+    // falls back to the build tool instead, and the transition that installs
+    // the launcher is an ordinary capability with an ordinary command.
+    let before = fs::read_to_string(root.join("pom.xml")).unwrap();
+    let ran = jails_cmd(&root, Some(&fake_dir))
         .args(["test", "NoteTest", "--fast", "--explain-selection"])
+        .output()
+        .unwrap();
+    assert!(
+        ran.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("pom.xml")).unwrap(),
+        before,
+        "a test run must not edit the build file"
+    );
+    assert!(
+        !fs::read_to_string(root.join(".jails/model.jdl"))
+            .unwrap()
+            .contains("fast-test"),
+        "a test run must not declare a capability"
+    );
+
+    let installed = jails_cmd(&root, Some(&fake_dir))
+        .args(["add", "fast-test"])
         .output()
         .unwrap();
     assert!(

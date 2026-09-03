@@ -264,7 +264,7 @@ be satisfied while every duplicated concept survives.
 | | |
 |---|---|
 | generators on the compiler | 39 of 39 |
-| capabilities | 25 of 25 |
+| capabilities | 26 of 26 |
 | component kinds with a backend | 23 of 23 |
 
 Each is held by an exhaustive match over a `clap::ValueEnum`, so a kind added

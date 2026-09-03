@@ -132,7 +132,7 @@ mod tests {
         let generator_count = ArtifactKind::value_variants().len();
         let capability_count = CapabilityKind::value_variants().len();
         assert_eq!(generator_count, 39);
-        assert_eq!(capability_count, 25);
+        assert_eq!(capability_count, 26);
         assert_eq!(
             ArtifactKind::value_variants()
                 .iter()
@@ -140,14 +140,14 @@ mod tests {
                 .count(),
             39
         );
-        // All 25, so a capability added without a canonical backend fails
+        // All 26, so a capability added without a compiler backend fails
         // here rather than at the cutover.
         assert_eq!(
             CapabilityKind::value_variants()
                 .iter()
                 .filter(|kind| capability(**kind).is_native())
                 .count(),
-            25
+            26
         );
     }
 }

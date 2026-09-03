@@ -333,6 +333,15 @@ pub const SCENARIOS: &[Scenario] = &[
         seed: &[],
         steps: &[&["add", "csv", "--no-start"]],
     },
+    // JUnit's console launcher, which `jails test --engine warm` and `testd`
+    // run over already-compiled classes. An ordinary capability since the
+    // test run stopped installing it for the reader.
+    Scenario {
+        name: "cap-fast-test",
+        fixture: Fixture::Plain,
+        seed: &[],
+        steps: &[&["add", "fast-test", "--no-start"]],
+    },
     Scenario {
         name: "cap-json",
         fixture: Fixture::Plain,

@@ -559,15 +559,13 @@ fn finish_capability(
 
 /// Resolve a label to the capability it names, or say which ones exist.
 fn capability_named(label: &str, lineno: usize) -> Result<CapabilityKind> {
-    CapabilityKind::from_label(label)
-        .filter(|kind| kind.addable())
-        .ok_or_else(|| {
-            format!(
-                "line {lineno}: unknown capability `{label}`. Known: {}",
-                known_capabilities().join(", ")
-            )
-            .into()
-        })
+    CapabilityKind::from_label(label).ok_or_else(|| {
+        format!(
+            "line {lineno}: unknown capability `{label}`. Known: {}",
+            known_capabilities().join(", ")
+        )
+        .into()
+    })
 }
 
 /// The same layout edit as text. See `edited_capabilities` for why the
@@ -657,7 +655,6 @@ fn insert_into_layout_table(text: &str, rendered: &str) -> String {
 fn known_capabilities() -> Vec<&'static str> {
     jails_model::CapabilityKind::ALL
         .iter()
-        .filter(|kind| kind.addable())
         .map(|kind| kind.label())
         .collect()
 }

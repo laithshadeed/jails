@@ -1,0 +1,25 @@
+<project>
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>com.example</groupId>
+    <artifactId>demo</artifactId>
+    <version>0.1.0</version>
+    <properties>
+        <maven.compiler.release>26</maven.compiler.release>
+    </properties>
+    <dependencies>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.11.4</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- jails:dependencies -->
+        <dependency>
+            <groupId>org.junit.platform</groupId>
+            <artifactId>junit-platform-console</artifactId>
+            <version>1.11.4</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- /jails:dependencies -->
+    </dependencies>
+</project>

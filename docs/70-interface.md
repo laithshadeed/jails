@@ -704,10 +704,11 @@ scope bar refuses. Expose I70.8's twenty words plus `commands` and
 
 ### Change
 
-**I70.16 — a read never writes.** *Change* `--fast` refuses with `fix:
-jails add fast-test` when the launcher is absent (`remove fast-test`
-exists; give it its `add`) and says which path it took. *Done when* `git
-status --short` is empty after any `jails test` on a clean tree.
+**I70.16 — a read never writes.** *Landed.* `jails test` installs nothing.
+`fast-test` is an ordinary capability with an ordinary `jails add`, and the
+refusal is at the point the warm engine is about to run rather than at the
+flag -- which is what lets `--fast` keep falling back to the build tool
+when nothing is compiled, since that run reaches no launcher.
 
 **I70.17 — one command is one plan.** *Change* `--index` at creation is
 part of the `create table`. *Done when* one plan digest and one migration.
@@ -723,11 +724,13 @@ declares `spring-boot-starter-webmvc` where the captured Boot version is
 4, decided once the way the `Import::Moved` rows are. *Done when* `jails
 lint` on a fresh scaffold reports nothing.
 
-**I71.34 — the daemon refuses a socket path it cannot bind.** *Change*
-compute the length before starting the JVM and refuse with the limit and
-the fix (a shorter checkout, or a socket under `$XDG_RUNTIME_DIR` keyed by
-the project's digest). *Done when* the refusal names the byte count and no
-stack trace prints.
+**I71.34 — the daemon refuses a socket path it cannot bind.** *Landed,
+without the `$XDG_RUNTIME_DIR` half.* `refuse_an_unbindable_socket` runs in
+`Client::for_project`, before any JVM, and names both numbers and the path.
+The runtime-directory fallback is declined for now: the socket lives beside
+`testd.meta` and `testd.java` under `.jails/run`, and moving one of the
+three somewhere keyed by a digest makes "where is my daemon" two answers
+instead of one. The fix line names the two commands that need no socket.
 
 **I71.31 — one path style.** *Change* resource paths derive from the same
 plural as the table and spell it with hyphens (`/crawl-runs`), through a

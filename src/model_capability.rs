@@ -275,10 +275,6 @@ pub(crate) fn remove_dependency(
     })
 }
 
-pub(crate) fn ensure_fast_test(invocation: Invocation) -> Result<()> {
-    set_tool_capability("fast-test", true, invocation)
-}
-
 pub(crate) fn remove_fast_test(invocation: Invocation) -> Result<()> {
     set_tool_capability("fast-test", false, invocation)
 }

@@ -465,12 +465,6 @@ fn main() -> std::process::ExitCode {
                     std::process::ExitCode::FAILURE
                 });
             }
-            // The launcher class has to be on the test classpath before
-            // `--fast` can run anything, and that is a dependency in the
-            // reader's POM -- so it is an owned entity installed by an
-            // ordinary transition, not a side effect of how the tests were
-            // run, and `jails remove fast-test` takes it back out. Idempotent,
-            // so every later `--fast` writes nothing.
             let options = run::TestOptions {
                 scope,
                 compile,
@@ -489,22 +483,8 @@ fn main() -> std::process::ExitCode {
                 database_schema: db == cli::TestDatabaseArg::Schema,
                 explain_selection,
             };
-            let installed = run::validate_test_options(&options).and_then(|()| {
-                match fast
-                    || engine == cli::TestEnginePolicy::Warm
-                    || (engine == cli::TestEnginePolicy::Auto
-                        && matches!(
-                            compile,
-                            cli::TestCompilePolicy::Ide | cli::TestCompilePolicy::None
-                        ))
-                    || (affected && engine != cli::TestEnginePolicy::Build)
-                {
-                    true => model_command::ensure_owned(invocation.clone())
-                        .and_then(|()| model_capability::ensure_fast_test(invocation)),
-                    false => Ok(()),
-                }
-            });
-            installed.and_then(|()| run::test(&requested, options, debug))
+            run::validate_test_options(&options)
+                .and_then(|()| run::test(&requested, options, debug))
         }
         Command::Testd {
             filter,

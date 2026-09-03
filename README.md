@@ -363,10 +363,11 @@ there the unit is a whole service block rather than a setting.)
 - `jails remove|rm <capability>... [--yes]` — the inverse of `add`: unsplices
   the same dependencies, deletes the same files, removes compose services, and
   stops their containers. Confirms unless `--yes`.
-- `jails remove fast-test` — take JUnit's console launcher back off the test
-  classpath. `jails test --fast` puts it there, and records it as an entity
-  jails owns rather than as a side effect of how the tests were run; this is
-  the other half.
+- `jails add fast-test` / `jails remove fast-test` — put JUnit's console
+  launcher on the test classpath, or take it back off. It is an ordinary
+  capability, because a command that reports test results must not edit your
+  build file: `jails test --fast` used to install it as a side effect of how
+  the tests were run, and it now names this instead.
 - `jails start [db|kafka]...` — `docker compose up -d` for the named services,
   or everything in `compose.yaml` when invoked with no arguments.
 - `jails stop [db|kafka]...` — stop those containers (`db` is the postgres
@@ -966,11 +967,12 @@ there the unit is a whole service block rather than a setting.)
   one outcome worse than being slow. `jails check` is always `mvn clean verify`
   and is not affected.
 
-  The launcher itself is a dependency in your POM, and the first `--fast`
-  installs it as an owned entity — one line in the report, then silence on
-  every later run. `jails remove fast-test` takes it back out. A dependency
-  that appeared because of *how* somebody ran their tests, that nothing can
-  name and nothing can remove, is what that ownership prevents.
+  The launcher itself is a dependency in your POM, and `jails add fast-test`
+  is what installs it. `jails test` never writes: a run that would reach the
+  launcher without it refuses and names that command, while a `--fast` run on
+  a project with nothing compiled falls back to the build tool and needs no
+  launcher at all. A dependency that appeared because of *how* somebody ran
+  their tests is exactly what this avoids.
   Any command that writes an `*IT` also splices the Failsafe plugin, because
   it is *not* part of the Spring Boot parent's default build — without it
   `mvn verify` completes, reports success, and runs none of them.

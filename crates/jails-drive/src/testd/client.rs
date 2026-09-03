@@ -27,6 +27,39 @@ const START_TIMEOUT: Duration = Duration::from_secs(90);
 const HEAP_LIMIT: &str = "-Xmx512m";
 const METASPACE_LIMIT: &str = "-XX:MaxMetaspaceSize=256m";
 
+/// How many bytes a unix socket path may be, this platform's `sun_path`.
+///
+/// **A kernel limit, not a preference.** `sockaddr_un.sun_path` is a fixed
+/// array -- 108 bytes on Linux, 104 on the BSDs and macOS -- and one of them
+/// is the terminating NUL. A longer path is not truncated with a warning; the
+/// bind fails, and because the bind happens inside the daemon's JVM the
+/// reader sees a Java stack trace about a file they never named.
+#[cfg(target_os = "linux")]
+const SOCKET_PATH_BYTES: usize = 108;
+#[cfg(not(target_os = "linux"))]
+const SOCKET_PATH_BYTES: usize = 104;
+
+/// Refuse before the JVM starts, naming the count and the limit.
+///
+/// The check is here rather than at the bind because that is the only place
+/// it can be a sentence: by the time the daemon fails, jails has paid for a
+/// JVM start and has nothing to say about it but the child's own output.
+fn refuse_an_unbindable_socket(socket: &Path) -> Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+
+    let bytes = socket.as_os_str().as_bytes().len();
+    if bytes < SOCKET_PATH_BYTES {
+        return Ok(());
+    }
+    Err(jails_support::Failure::Told(format!(
+        "the test daemon's socket path is {bytes} bytes and this platform allows \
+         {}: `{}`\n       fix: move the project to a shorter path, or run the tests without \
+         the daemon -- `jails test` and `jails test --fast` need no socket",
+        SOCKET_PATH_BYTES - 1,
+        socket.display()
+    )))
+}
+
 pub(super) struct Client {
     root: PathBuf,
     project: ObjectId,
@@ -46,10 +79,12 @@ impl Client {
             root.to_string_lossy().as_bytes(),
         ));
         let run = root.join(".jails/run");
+        let socket = run.join("testd.sock");
+        refuse_an_unbindable_socket(&socket)?;
         Ok(Self {
             root,
             project: project_id,
-            socket: run.join("testd.sock"),
+            socket,
             meta: run.join("testd.meta"),
             source: run.join("testd.java"),
         })
@@ -622,6 +657,24 @@ mod tests {
         };
         assert_eq!(Metadata::parse(&metadata.render()).unwrap(), metadata);
         assert!(!format!("{metadata:?}").contains("03030303"));
+    }
+
+    /// A path one byte over the kernel's array is refused before a JVM
+    /// starts, and the refusal carries both numbers.
+    #[test]
+    fn a_socket_path_too_long_to_bind_is_refused_with_the_byte_count() {
+        let long = std::path::PathBuf::from(format!("/{}/testd.sock", "d".repeat(200)));
+        let refusal = super::refuse_an_unbindable_socket(&long)
+            .expect_err("a 200-byte directory cannot hold a unix socket")
+            .to_string();
+        assert!(
+            refusal.contains("bytes and this platform allows"),
+            "{refusal}"
+        );
+        assert!(refusal.contains("fix: move the project"), "{refusal}");
+
+        super::refuse_an_unbindable_socket(std::path::Path::new("/tmp/p/.jails/run/testd.sock"))
+            .expect("an ordinary path binds");
     }
 
     #[test]

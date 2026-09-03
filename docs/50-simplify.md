@@ -17,7 +17,7 @@ Re-measure before quoting one; the tree moves under every commit.
 # 50 — The simplification pass: five agents, one goal
 
 The goal is **one system, described once, in fewer lines**. The canonical
-compiler is finished -- 39 of 39 generators, 25 of 25 capabilities, ordinary
+compiler is finished -- 39 of 39 generators, 26 of 26 capabilities, ordinary
 `jails new` seeds a model -- and the legacy engine, its two compatibility
 parsers, the transaction kernel and the fifty-five templates nothing rendered
 are deleted. What remains beside the compiler is the shape of what survives:

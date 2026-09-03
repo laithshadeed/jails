@@ -91,11 +91,12 @@ pub enum CapabilityKind {
     /// JUnit's console launcher, so `jails test --fast` can run the compiled
     /// classes without Maven.
     ///
-    /// **Not a `jails add` value**, which is what `value(skip)` says: it is
-    /// declared by `jails test --fast` when it needs the dependency and
-    /// retired by `jails remove fast-test`, so offering it as a completion
-    /// would advertise a command that does not exist.
-    #[cfg_attr(feature = "cli", value(skip))]
+    /// **A `jails add` value like any other.** It used to be `value(skip)`
+    /// because `jails test --fast` declared it on the reader's behalf -- a
+    /// command that only reports test results, converting the project to the
+    /// model and editing the build file as a side effect of how the tests
+    /// were run. `--fast` refuses and names this instead.
+    #[cfg_attr(feature = "cli", value(name = "fast-test"))]
     FastTest,
 }
 
@@ -161,15 +162,6 @@ impl CapabilityKind {
             Self::Toxiproxy => "toxiproxy",
             Self::FastTest => "fast-test",
         }
-    }
-
-    /// Whether `jails add` and `jails.toml` name this kind.
-    ///
-    /// [`Self::FastTest`] is the one that is not: `jails test --fast`
-    /// declares it and `jails remove fast-test` retires it, so it is a
-    /// capability the tool owns rather than one a reader asks for.
-    pub const fn addable(self) -> bool {
-        !matches!(self, Self::FastTest)
     }
 
     /// Whether a JDL `cap` declaration may name this kind.
