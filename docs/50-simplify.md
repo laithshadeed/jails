@@ -122,7 +122,7 @@ adds a new shape is not progress.
 
 | plan | agent | owns | what it deletes |
 |---|---|---|---|
-| `docs/51-kernel.md` | **1 -- kernel** | `crates/jails-spec/**`, `src/dispatch.rs`, `tests/protocol-golden/**`, `docs/30-cutover.md` | the leaves `jails-spec` still holds |
+| `docs/51-kernel.md` | **1 -- kernel** | `crates/jails-spec/**`, `src/dispatch.rs`, `tests/protocol-golden/**` | the leaves `jails-spec` still holds |
 | `docs/52-binary.md` | **2 -- binary** | `src/**` except `src/dispatch.rs`, `tests/cli/**` except `generate.rs`, `capabilities.rs`, `tooling.rs`, `examples.rs`, `reports.rs`, `docs/feature-inventory.tsv`, `README.md`'s command sections | the second decision of each mutation, `new`'s three seeds, the unread flags |
 | `docs/53-tool-crates.md` | **3 -- tool crates** | `crates/jails-{project,drive,report,workspace,support,codemod,contracts}/**` (minus plan 1's files), `tests/cli/{tooling,capabilities,reports,examples}.rs`, `tests/corpus/**`, `tests/baseline.rs`, `tests/architecture_allowances.rs` | the second project model, the two test-execution vocabularies |
 | `docs/54-language.md` | **4 -- language** | `crates/jails-model/**`, `docs/10-language.md` | the parser's repeated attribute handling |
@@ -188,13 +188,13 @@ counts lines second.
 
 ## What happens to the four workstream documents
 
-They stay, and they shrink. `docs/10-language.md`, `docs/20-generated-java.md`,
-`docs/30-cutover.md` and `docs/40-gates-and-ci.md` hold open items with stable
-identifiers, and each plan below lists the ones it closes. An agent closing one
-deletes it there, per R1. Items the pass does not reach stay where they are.
-When the pass ends, `docs/30-cutover.md` should hold nothing the cutover still
-blocks on and may be retired whole by plan `51`, and the ownership table in
-`docs/00-contracts.md` reverts to four workstreams over whatever is left.
+They stay, and they shrink. `docs/10-language.md`, `docs/20-generated-java.md`
+and `docs/40-gates-and-ci.md` hold open items with stable identifiers, and
+each plan below lists the ones it closes. An agent closing one deletes it
+there, per R1. Items the pass does not reach stay where they are. The
+workspace workstream's file, the cutover document, held nothing the cutover
+still blocked on once P8.11a closed and was retired whole by plan `51`; the
+ownership table in `docs/00-contracts.md` keeps its row over the crates.
 
 ## The end state, so it can be recognised
 

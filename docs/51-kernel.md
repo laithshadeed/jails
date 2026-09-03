@@ -17,14 +17,11 @@ and the wire-format goldens. What survives of its vocabulary lives in
 
 ## What you own
 
-`crates/jails-spec/**`, `src/dispatch.rs`, `tests/protocol-golden/**`,
-`docs/30-cutover.md`.
+`crates/jails-spec/**`, `src/dispatch.rs`, `tests/protocol-golden/**`.
 
 ## Steps
 
-**S51.7 -- The prose.** `docs/30-cutover.md` holds the workspace workstream's
-open items; when nothing is left in it, delete the file and its row in
-`docs/00-contracts.md`.
+Every step is closed.
 
 ## Green
 

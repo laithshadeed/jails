@@ -29,7 +29,6 @@ has not been done.
 | `docs/01-jdl-v1.md` | JDL v1, normative; its section numbers are the ones source comments cite as `JDL v1 §N` | whoever needs a section |
 | `docs/10-language.md` | workstream A: the model, the grammar, the linker, diagnostics | one agent |
 | `docs/20-generated-java.md` | workstream B: what the compiler emits, and how good it is | one agent |
-| `docs/30-cutover.md` | workstream C: the workspace, the project crates, adoption | one agent |
 | `docs/40-gates-and-ci.md` | workstream D: the gates, the suite, and the CI budget | one agent |
 | `docs/50-simplify.md` | the simplification pass: brief, baseline, ownership for five agents | everyone, during the pass |
 | `docs/51-kernel.md` .. `docs/54-language.md` | the plans of that pass still open (`55`, the compiler's, closed and is gone) | one agent each |
@@ -62,7 +61,7 @@ is left:
 |---|---|---|
 | **A — language** | `docs/10-language.md` | `crates/jails-model/**`, the JDL front ends in `src/model_generate_jdl*` and `src/model_jdl_edit.rs`, `src/model_explain.rs` |
 | **B — generated Java** | `docs/20-generated-java.md` | `crates/jails-compiler/**`, `templates/**` |
-| **C — workspace and project** | `docs/30-cutover.md` | `crates/jails-workspace/**`, `crates/jails-project/**`, `crates/jails-{drive,report}/**`, `src/new.rs`, `src/app.rs`, `src/dispatch.rs` |
+| **C — workspace and project** | none open; the cutover document was retired when its last item closed, and `CLAUDE.md` carries the crates' contracts | `crates/jails-workspace/**`, `crates/jails-project/**`, `crates/jails-{drive,report}/**`, `src/new.rs`, `src/app.rs`, `src/dispatch.rs` |
 | **D — gates and CI** | `docs/40-gates-and-ci.md` | `.github/**`, `.githooks/**`, `mise.toml`, `scripts/**`, `tests/common/**`, `tests/architecture/**`, `tests/corpus/**` |
 
 ### The files everyone touches
