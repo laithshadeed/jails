@@ -460,10 +460,14 @@ fn replay(entry: &Path, cwd: &Path) -> io::Result<ExitCode> {
     }
     let stdout = fs::read(entry.join("stdout"))?;
     let stderr = fs::read(entry.join("stderr"))?;
+    // **Written over, never wiped first.** Several tests share one cached
+    // fixture directory, and the claim on it is per process rather than per
+    // test, so a `remove_dir_all` here opened a window where a concurrent
+    // reader saw no `App.class` and no surefire report -- two flakes that
+    // looked like product bugs and were this. Copying over what is there
+    // leaves the same state a real incremental Maven run would, and a test
+    // that needs a clean tree runs `clean` like any reader would.
     let target = cwd.join("target");
-    if target.exists() {
-        fs::remove_dir_all(&target)?;
-    }
     if meta["target"] == true {
         // Extracted beside the entry and copied in with today's dates, so a
         // staleness check comparing the classes against freshly written

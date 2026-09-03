@@ -215,6 +215,14 @@ starts. What it keys:
   the images of the suite-scoped PostgreSQL and Kafka a proof app is run
   against.
 
+**A replay writes over `target/`; it does not wipe it first.** Several tests
+share one cached fixture directory and the claim on it is per process rather
+than per test, so removing the directory before rewriting it opened a window
+where a concurrent reader saw no compiled class and no surefire report. Two
+gate runs failed that way, both looking like product bugs. Copying over what
+is there leaves the state a real incremental run leaves, and a test that
+needs a clean tree runs `clean` like any reader would.
+
 What it records, for a successful run only: the exit status, stdout and
 stderr, every file the run changed outside `target/` (Spotless formatting
 sources), any output file the argv named by absolute path, and `target/`
