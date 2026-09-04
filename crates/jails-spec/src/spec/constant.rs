@@ -10,6 +10,15 @@ pub struct ConstantSpec {
 }
 
 fn constant_name(text: &str) -> Result<Name> {
+    if text.contains([',', ';']) {
+        return Err(jails_support::Failure::Told(format!(
+            "`{text}` contains a delimiter (',' or ';'): enum constants must be passed as separate arguments.\n       fix: pass each constant as a separate argument, e.g. `jails g enum <Name> {}`",
+            text.split([',', ';'])
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ")
+        )));
+    }
     let normalised: String = text
         .chars()
         .map(|c| {
@@ -65,5 +74,29 @@ impl ConstantSpec {
             Some(wire) => format!("{}={wire}", self.name),
             None => self.name.to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_valid_constant() {
+        let spec = ConstantSpec::parse("ACTIVE").unwrap();
+        assert_eq!(spec.name.as_str(), "ACTIVE");
+        assert_eq!(spec.wire, None);
+    }
+
+    #[test]
+    fn parse_valid_constant_with_wire() {
+        let spec = ConstantSpec::parse("ACTIVE=active").unwrap();
+        assert_eq!(spec.name.as_str(), "ACTIVE");
+        assert_eq!(spec.wire.as_deref(), Some("active"));
+    }
+
+    #[test]
+    fn reject_comma_delimited_constants() {
+        assert!(ConstantSpec::parse("DRAFT,PUBLISHED").is_err());
     }
 }

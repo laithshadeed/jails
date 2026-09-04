@@ -64,28 +64,41 @@ pub(crate) enum ContractCommand {
 
 #[derive(Args)]
 pub(crate) struct HttpRequestArgs {
+    /// HTTP method (GET, POST, PUT, DELETE, PATCH, etc.)
     pub(crate) method: String,
+    /// Target route, path, or URL (e.g. /health, /api/orders, or a declared route)
     pub(crate) target: String,
+    /// Spring profile to read configuration from
     #[arg(long)]
     pub(crate) profile: Option<String>,
+    /// Base URL for the request (defaults to resolved server port, e.g. http://127.0.0.1:8080)
     #[arg(long)]
     pub(crate) base_url: Option<String>,
+    /// Path parameter replacement in the target route (name=value)
     #[arg(long = "param")]
     pub(crate) params: Vec<String>,
+    /// Query parameter to append (name=value)
     #[arg(long = "query")]
     pub(crate) query: Vec<String>,
+    /// HTTP header to include (Name: Value)
     #[arg(long = "header")]
     pub(crate) headers: Vec<String>,
+    /// HTTP header populated from environment variable (Name=ENV_VAR)
     #[arg(long = "header-env")]
     pub(crate) header_env: Vec<String>,
+    /// JSON body content to send with the request
     #[arg(long, conflicts_with = "data")]
     pub(crate) json: Option<String>,
+    /// Raw request body data to send
     #[arg(long, conflicts_with = "json")]
     pub(crate) data: Option<String>,
+    /// Request timeout (e.g. 5s, 30s)
     #[arg(long)]
     pub(crate) timeout: Option<String>,
+    /// Follow HTTP redirects
     #[arg(long)]
     pub(crate) follow: bool,
+    /// Print the curl command instead of executing it
     #[arg(long)]
     pub(crate) print: bool,
 }

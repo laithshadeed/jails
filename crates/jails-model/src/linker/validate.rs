@@ -44,6 +44,25 @@ const JAVA_LANG_TYPES: &[&str] = &[
     "Void",
 ];
 
+/// Standard Java types and Spring framework role names that cannot name an entity.
+///
+/// If an entity is named after one of these, it either collides with generated
+/// stereotypes/roles (e.g. `Controller`, `Repository`, `Service`) or collides with
+/// standard library imports (e.g. `List`, `Map`, `Set`, `Optional`, `UUID`) across
+/// every generated file that imports them.
+const FRAMEWORK_AND_STD_TYPES: &[&str] = &[
+    "Controller",
+    "Repository",
+    "Service",
+    "List",
+    "Map",
+    "Set",
+    "Optional",
+    "UUID",
+    "Collection",
+    "Iterator",
+];
+
 /// PostgreSQL words that cannot name a table or column unquoted.
 ///
 /// The reserved half of the standard's list, which is what `create table`
@@ -343,6 +362,7 @@ impl Linker {
             return;
         }
         self.java_lang_shadow(value, path);
+        self.java_framework_or_std_collision(value, path);
     }
 
     /// Whether the name is a Java identifier at all, reporting it if not.
@@ -372,6 +392,17 @@ impl Linker {
                 path,
                 format!("`{value}` is a type in `java.lang`, which every Java file imports"),
                 "choose another name -- a class here would outrank the one every file already has",
+            );
+        }
+    }
+
+    fn java_framework_or_std_collision(&mut self, value: &str, path: &str) {
+        if FRAMEWORK_AND_STD_TYPES.contains(&value) {
+            self.problem(
+                "model-java-framework-collision",
+                path,
+                format!("`{value}` collides with a standard Java type or Spring framework role"),
+                "choose another name that does not collide with standard Java library types or framework roles (e.g. Controller, Repository, Service, List, UUID)",
             );
         }
     }
@@ -408,6 +439,7 @@ impl Linker {
             return;
         }
         self.java_lang_shadow(value, path);
+        self.java_framework_or_std_collision(value, path);
     }
 
     pub(crate) fn java_member(&mut self, value: &str, path: &str) {
@@ -448,13 +480,14 @@ impl Linker {
                             || character.is_ascii_digit()
                             || character == '_'
                     })
+                    && !crate::naming::is_java_keyword(part)
             });
         if !valid {
             self.problem(
                 "model-java-package",
                 path,
                 format!("`{value}` is not a valid Java package"),
-                "use dot-separated lowercase Java package segments",
+                "use dot-separated lowercase Java package segments that are not reserved keywords",
             );
         }
     }

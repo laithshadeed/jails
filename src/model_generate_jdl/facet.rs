@@ -543,6 +543,13 @@ fn reject_unsupported_options(args: &GenerateArgs, kind: Kind) -> Result<()> {
         || args.method.is_some()
         || args.consumes.is_some();
     if unsupported {
+        if kind.takes_fields() {
+            return Err(Failure::Told(format!(
+                "`{}` accepts only the record name and fields to index\n       fix: run `jails g {} Name <fields...>` without facet flags",
+                kind.name(),
+                kind.name()
+            )));
+        }
         return Err(Failure::Told(format!(
             "a {} derives every field from its entity and accepts only the record name\n       fix: run `jails g {} Name` without fields or facet flags",
             kind.name(),

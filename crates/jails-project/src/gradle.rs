@@ -213,7 +213,7 @@ fn at_word(text: &str, at: usize, word: &str) -> bool {
 ///
 /// The same question `pom::is_spring_boot` answers about a POM, and it decides
 /// the same thing: whether a spliced dependency may omit its version.
-pub(crate) fn is_spring_boot(text: &str) -> bool {
+pub fn is_spring_boot(text: &str) -> bool {
     spring_boot_major(text).is_some()
 }
 

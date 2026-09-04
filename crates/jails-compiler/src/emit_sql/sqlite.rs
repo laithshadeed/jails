@@ -11,6 +11,9 @@ use std::collections::BTreeSet;
 const FIRST_MIGRATION: &str = "-- Applied once, in filename order, by Migrations.applyAll.\ncreate table if not exists item (\n    id integer primary key autoincrement,\n    name text not null,\n    qty integer not null default 0\n);\n";
 
 pub(super) fn derive(accepted: Option<&AppModel>, next: &AppModel) -> Vec<RenderedMigration> {
+    if next.project.dialect == "postgresql" || crate::emit_sql::has_database(next) {
+        return Vec::new();
+    }
     let next_id = capability_id(next);
     let was_present = accepted.and_then(capability_id).is_some();
     next_id

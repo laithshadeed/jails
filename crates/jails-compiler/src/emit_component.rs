@@ -33,6 +33,7 @@ use jails_model::{AppModel, Component, ComponentKind, Package, SettingTarget, St
 pub(crate) use node::Key;
 use std::collections::BTreeSet;
 
+mod cases;
 mod cli;
 mod durable_job;
 mod handler;
@@ -740,6 +741,7 @@ pub(crate) fn emit(
         let files = match component.kind {
             ComponentKind::HttpSink => http_sink::files(model, component, templates)?,
             ComponentKind::DurableJob => durable_job::files(model, component, templates)?,
+            ComponentKind::Cases => cases::files(model, component, snapshot)?,
             _ => continue,
         };
         for file in files {

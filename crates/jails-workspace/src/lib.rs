@@ -16,7 +16,9 @@ mod verify;
 // The reader half lives in `jails-project`: capture, the document adapters
 // and the three-way merge produce what this crate materializes and executes.
 // Module code says `crate::capture`, `crate::documents` and `crate::merge`.
-pub use execute::{Execution, PRECONDITION_STALE, execute};
+pub use execute::{
+    Execution, PRECONDITION_STALE, advance_lock_and_base_for_formatted_files, execute,
+};
 pub use invert::invert;
 pub(crate) use jails_project::{capture, documents, merge};
 pub use materialize::{Restore, digest, materialize};

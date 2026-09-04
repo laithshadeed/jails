@@ -115,7 +115,7 @@ const KEYWORDS: &[&str] = &[
 ];
 
 /// Whether a token is a Java reserved word.
-pub(crate) fn is_java_keyword(value: &str) -> bool {
+pub fn is_java_keyword(value: &str) -> bool {
     KEYWORDS.contains(&value)
 }
 
@@ -125,7 +125,7 @@ pub(crate) fn is_java_keyword(value: &str) -> bool {
 /// project that capitalises a package segment are both legal Java, and jails
 /// has no opinion about the reader's package names -- only about whether the
 /// import it is about to write is a thing Java can parse.
-pub(crate) fn valid_java_package_segment(value: &str) -> bool {
+pub fn valid_java_package_segment(value: &str) -> bool {
     let mut chars = value.chars();
     chars
         .next()

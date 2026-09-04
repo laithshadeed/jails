@@ -13,6 +13,7 @@ use super::*;
 /// doing construction.
 #[derive(clap::Args)]
 pub(crate) struct NewArgs {
+    /// Project name and directory to create
     pub(crate) name: String,
     /// Maven groupId, e.g. `com.intercom`
     ///
@@ -25,8 +26,10 @@ pub(crate) struct NewArgs {
     /// already has a package, and it is never `com.example`.
     #[arg(long)]
     pub(crate) package: Option<String>,
+    /// Initial starter dependencies to add, comma-separated (e.g. web,actuator)
     #[arg(long, default_value = "web")]
     pub(crate) deps: String,
+    /// Target Java release version (e.g. 21, 26)
     #[arg(long, default_value = release::TARGET_RELEASE)]
     pub(crate) java: String,
     /// Skip `git init` and the .gitignore it normally sets up

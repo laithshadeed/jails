@@ -366,9 +366,20 @@ pub(super) fn tcp_reachable(host: &str, port: u16, timeout: Duration) -> bool {
         .any(|addr| TcpStream::connect_timeout(addr, timeout).is_ok())
 }
 
-pub(super) fn port_checks(root: &Path) -> Vec<Check> {
+pub(super) fn port_checks(project: &Project) -> Vec<Check> {
+    let root = project.root();
     let properties = root.join("src/main/resources/application.properties");
     let text = std::fs::read_to_string(&properties).unwrap_or_default();
+    let has_server_port = property_value(&text, "server.port").is_some();
+    let is_web = has_server_port
+        || project.has_dependency("org.springframework.boot", "spring-boot-starter-web")
+        || project.has_dependency("org.springframework.boot", "spring-boot-starter-webflux")
+        || project.has_dependency("org.springframework.boot", "spring-boot-starter-tomcat")
+        || project.has_dependency("org.springframework.boot", "spring-boot-starter-jetty")
+        || project.has_dependency("org.springframework.boot", "spring-boot-starter-undertow");
+    if !is_web {
+        return Vec::new();
+    }
     let mut ports = vec![("http port", "server.port", 8080_u16)];
     if let Some(port) =
         property_value(&text, "management.server.port").and_then(|value| value.parse::<u16>().ok())

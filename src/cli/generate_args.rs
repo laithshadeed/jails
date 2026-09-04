@@ -19,8 +19,11 @@ use super::*;
 // row to a frontend that takes it by value.
 #[derive(Clone, Debug, clap::Args)]
 pub(crate) struct GenerateArgs {
+    /// Kind of artifact to generate (e.g. scaffold, record, enum, repo, service)
     pub(crate) kind: ArtifactKind,
+    /// Name of the artifact (e.g. Book, Status)
     pub(crate) name: String,
+    /// Fields or enum constants (pass constants as separate arguments, e.g. ACTIVE INACTIVE)
     pub(crate) fields: Vec<String>,
     /// Add conventional `createdAt` and `updatedAt` instant components.
     /// The generated create path supplies both; transitions advance

@@ -317,7 +317,10 @@ pub(crate) fn in_memory_adapter_check(project: &Project) -> Option<Check> {
                 text.contains(&format!("{a}\npublic class"))
                     || text.contains(&format!("{a}\nclass"))
             });
-            if annotated {
+            let is_in_memory_repo = stem.starts_with("InMemory")
+                || stem.ends_with("InMemoryRepository")
+                || path.to_string_lossy().contains("/memory/");
+            if annotated && is_in_memory_repo {
                 in_memory_beans.push(stem.to_string());
             }
         }
@@ -338,7 +341,8 @@ pub(crate) fn in_memory_adapter_check(project: &Project) -> Option<Check> {
             ),
         )
         .fix(
-            "re-generate the adapter so the JDBC one is the bean: \
+            "re-generate the adapter so the JDBC one is the bean (or run `jails sync`), \
+             and remove `@Component` from the in-memory adapter: \
              jails destroy repo <Name> && jails g repo <Name> <fields...>",
         ),
     )

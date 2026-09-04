@@ -29,7 +29,7 @@ pub fn verify_bundle(bundle: &PlanBundle) -> Result<(), Diagnostic> {
             return Err(Diagnostic::without_a_fix(
                 "workspace-blob-content-mismatch",
                 format!("$.blobs.{}", id.as_str()),
-                format!("blob `{id:?}` does not match its content"),
+                format!("blob `{id}` does not match its content"),
             ));
         }
     }
@@ -39,7 +39,7 @@ pub fn verify_bundle(bundle: &PlanBundle) -> Result<(), Diagnostic> {
                 return Err(Diagnostic::without_a_fix(
                     "workspace-tree-blob-missing",
                     format!("$.trees.{}", id.as_str()),
-                    format!("tree `{id:?}` references a missing blob"),
+                    format!("tree `{id}` references a missing blob"),
                 ));
             }
         }
@@ -47,7 +47,7 @@ pub fn verify_bundle(bundle: &PlanBundle) -> Result<(), Diagnostic> {
             return Err(Diagnostic::without_a_fix(
                 "workspace-tree-manifest-mismatch",
                 format!("$.trees.{}", id.as_str()),
-                format!("tree `{id:?}` does not match its manifest"),
+                format!("tree `{id}` does not match its manifest"),
             ));
         }
     }

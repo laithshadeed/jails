@@ -315,8 +315,11 @@ pub fn type_info(source: &str) -> Option<TypeInfo> {
 }
 
 /// The parameter list of the constructor that asks for the most -- which for
-/// a Spring component is the injected one.
+/// a Spring component is the injected one. If a constructor is explicitly
+/// annotated with `@Autowired` or `@Inject`, it takes precedence over wider
+/// unannotated (e.g. package-private test) overloads.
 fn widest_constructor(text: &str, class_name: &str) -> Vec<Param> {
+    let mut autowired_widest: Option<Vec<Param>> = None;
     let mut widest: Vec<Param> = Vec::new();
     let mut from = 0;
     while let Some(rel) = text[from..].find(class_name) {
@@ -340,13 +343,23 @@ fn widest_constructor(text: &str, class_name: &str) -> Vec<Param> {
         {
             continue;
         }
+        let decl_start = text[..at].rfind([';', '}', '{']).map_or(0, |idx| idx + 1);
+        let header = &text[decl_start..at];
+        let is_autowired = header.contains("@Autowired") || header.contains("@Inject");
         let close = match_paren(text, open);
         let found = params(&text[open + 1..close]);
+        if is_autowired
+            && autowired_widest
+                .as_ref()
+                .is_none_or(|w| found.len() > w.len())
+        {
+            autowired_widest = Some(found.clone());
+        }
         if found.len() > widest.len() {
             widest = found;
         }
     }
-    widest
+    autowired_widest.unwrap_or(widest)
 }
 
 /// Remove each annotation *and its argument list* from a parameter list.
@@ -809,5 +822,28 @@ public final class InMemoryRewardRepository implements RewardRepository {
         );
         assert_eq!(annotation_string(r#"produces = "application/json""#), None);
         assert_eq!(annotation_string(""), None);
+    }
+
+    #[test]
+    fn widest_constructor_prefers_autowired_over_wider_test_constructor() {
+        let src = r#"
+            package com.example;
+            import org.springframework.beans.factory.annotation.Autowired;
+
+            public class SafeClientFetcher {
+                @Autowired
+                public SafeClientFetcher(String host, int port) {}
+
+                SafeClientFetcher(String host, int port, Object resolver, boolean flag) {}
+            }
+        "#;
+        let info = type_info(src).unwrap();
+        assert_eq!(
+            info.constructor_params
+                .iter()
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["host", "port"]
+        );
     }
 }

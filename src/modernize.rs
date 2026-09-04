@@ -16,7 +16,7 @@
 use crate::Invocation;
 use jails_project::modernize::Sources;
 use jails_project::project::Project;
-use jails_support::{Failure, Result};
+use jails_support::Result;
 
 pub(crate) fn run(invocation: Invocation) -> Result<()> {
     let project = Project::discover()?;
@@ -71,12 +71,11 @@ pub(crate) fn run(invocation: Invocation) -> Result<()> {
         println!("          fix: {}", finding.fix);
     }
     if upgrade.edits.is_empty() {
-        return Err(Failure::Told(
+        println!(
             "nothing to modernize: this project already declares the versions jails generates \
-             against.\n       fix: nothing to do -- `jails doctor` prints the Boot, JDK and \
-             build-tool versions it read."
-                .to_string(),
-        ));
+             against."
+        );
+        return Ok(());
     }
     // **The versions this moves decide what jails' own output says** -- the
     // `@AutoConfigureMockMvc` package, `javax` against `jakarta`, the MockMvc

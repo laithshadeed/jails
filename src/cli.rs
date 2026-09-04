@@ -278,7 +278,7 @@ pub(crate) enum Command {
     #[command(hide = true)]
     NewCli(NewCliArgs),
     /// Check, plan, apply, or transfer ownership in the application model
-    #[command(hide = true)]
+    #[command(hide = true, alias = "app")]
     Model {
         #[command(subcommand)]
         command: ModelCommand,

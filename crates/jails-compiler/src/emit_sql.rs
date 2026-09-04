@@ -584,7 +584,7 @@ fn add_column(
     if field.required {
         let backfill = match policy {
             Some(FieldAddPolicy::BackfillLiteral(value)) => {
-                let literal = sql_literal(entity, field, value)?;
+                let literal = sql_literal(model, entity, field, value)?;
                 format!("update {table} set {column} = {literal} where {column} is null;")
             }
             Some(FieldAddPolicy::ReaderOwnedSql(bytes)) => reader_sql(bytes)?.to_string(),
@@ -712,7 +712,12 @@ pub(super) fn declares_enum(model: &AppModel, name: &str) -> bool {
     })
 }
 
-fn sql_literal(entity: &Entity, field: &Field, value: &str) -> Result<String, Diagnostic> {
+fn sql_literal(
+    model: &AppModel,
+    entity: &Entity,
+    field: &Field,
+    value: &str,
+) -> Result<String, Diagnostic> {
     let invalid = || {
         Diagnostic::without_a_fix(
             "compile-backfill-literal-invalid",
@@ -724,6 +729,24 @@ fn sql_literal(entity: &Entity, field: &Field, value: &str) -> Result<String, Di
             ),
         )
     };
+    if let TypeRef::External(name) = &field.ty {
+        let declared = model
+            .entities
+            .values()
+            .find(|e| &e.names.java_type == name)
+            .filter(|e| e.facets.contains(&jails_model::Facet::Enum));
+        if let Some(enum_entity) = declared {
+            let trimmed = value.trim().trim_matches('\'').trim_matches('"');
+            if let Some(c) = enum_entity
+                .enum_constants
+                .iter()
+                .find(|c| c.java_name == trimmed || c.wire_value() == trimmed)
+            {
+                return Ok(format!("'{}'", c.java_name));
+            }
+            return Err(invalid());
+        }
+    }
     let builtin = match &field.ty {
         TypeRef::Builtin(builtin) => *builtin,
         TypeRef::External(_) | TypeRef::List(_) | TypeRef::Map(..) => return Err(invalid()),

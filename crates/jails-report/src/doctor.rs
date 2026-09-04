@@ -160,11 +160,12 @@ fn run_checks(project: &Project) -> Vec<Check> {
     checks.extend(h2::checks(project));
     checks.extend(virtual_thread_checks(root));
     checks.extend(hot_reload_checks(project));
-    checks.extend(port_checks(root));
+    checks.extend(port_checks(project));
     checks.extend(capability_drift_checks());
     checks.extend(template_override_checks());
     checks.push(beans_check(root));
     checks.extend(merge_base_check(project));
+    checks.extend(model_check(project));
     checks
 }
 
@@ -237,6 +238,29 @@ fn merge_base_check(project: &Project) -> Vec<Check> {
     ]
 }
 
+fn model_check(project: &Project) -> Option<Check> {
+    let root = project.root();
+    let model_path = root.join(".jails/model.jdl");
+    if !model_path.is_file() {
+        return None;
+    }
+    let text = std::fs::read_to_string(&model_path).ok()?;
+    match jails_model::parse_jdl(&text) {
+        Ok(_) => None,
+        Err(diagnostics) => {
+            let first = diagnostics
+                .diagnostics
+                .first()
+                .map(|d| d.message.clone())
+                .unwrap_or_else(|| "invalid model".to_string());
+            Some(
+                Check::new(Status::Fail, "model", format!(".jails/model.jdl: {first}"))
+                    .fix("repair the declaration in `.jails/model.jdl`"),
+            )
+        }
+    }
+}
+
 fn capability_drift_checks() -> Vec<Check> {
     vec![Check::new(
         Status::Skip,
@@ -287,6 +311,19 @@ fn project_check(project: &Project) -> Check {
         (false, true) => "plain Gradle",
         (false, false) => "plain Maven",
     };
+    let base = project.base();
+    if !base.is_empty()
+        && let Some(segment) = base
+            .split('.')
+            .find(|part| jails_model::naming::is_java_keyword(part))
+    {
+        return Check::new(
+            Status::Fail,
+            "project",
+            format!("base package `{base}` contains reserved Java keyword `{segment}`"),
+        )
+        .fix("choose a base package with no Java keywords");
+    }
     let sources = root.join("src/main/java");
     if !sources.is_dir() {
         return Check::new(

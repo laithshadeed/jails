@@ -205,6 +205,35 @@ fn validate_project_name(name: &str) -> Result<()> {
         )
         .into());
     }
+    let segment = package_segment(name);
+    if jails_model::naming::is_java_keyword(&segment) {
+        return Err(format!(
+            "project name `{name}` derives the package segment `{segment}`, which is a Java reserved keyword.\n       \
+             fix: choose a project name that does not derive a Java keyword, or specify `--package` with a non-reserved package name."
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn validate_package(package: &str) -> Result<()> {
+    let valid = !package.is_empty()
+        && package.split('.').all(|part| {
+            !part.is_empty()
+                && part
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && !jails_model::naming::is_java_keyword(part)
+        });
+    if !valid {
+        return Err(format!(
+            "`{package}` is not a valid Java package.\n       \
+             fix: use dot-separated lowercase segments that are valid Java identifiers and not reserved keywords."
+        )
+        .into());
+    }
     Ok(())
 }
 

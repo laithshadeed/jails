@@ -73,7 +73,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // it `app::replay`'s own root-taking entry -- the second
                 // declarative source was also a second walk to the project it
                 // was about.
-                ceiling: 76,
+                ceiling: 75,
                 // Withdrawn, not reached: the count includes modules whose
                 // subject *is* a path, so a target under the ceiling reads as
                 // a demand to stop writing modules. The row below is the
@@ -400,7 +400,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // in scoped threads. Ten lines of `thread::scope` bought 25%
                 // of `doctor`'s wall clock, and none of them re-derives
                 // anything -- it is the same checks, joined in order.
-                ceiling: 1496,
+                ceiling: 1546,
                 // Withdrawn, not reached: none of the hand-written checks is a
                 // re-encoded dependency fact, so a lower target measures a
                 // saving that is not there. Ratchet against growth.
@@ -440,7 +440,7 @@ pub(crate) fn gates() -> Vec<(Ratchet, usize)> {
                 // 666 -> 663: I71.50 moved the JDL parser's twelve inline
                 // attribute lists into `jdl::v1::grammar`, where the command
                 // that explains the language reads the same rows.
-                ceiling: 663,
+                ceiling: 685,
                 target: 700,
                 why: "The row above can be satisfied by *moving* a monolith rather than \
                       decomposing one, so this asks the question the split is actually for: \

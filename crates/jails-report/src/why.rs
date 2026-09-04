@@ -754,18 +754,44 @@ fn read_input(input: Option<&Path>, debug: bool) -> Result<String> {
 /// not look like a hang.
 fn run_and_capture(debug: bool) -> Result<String> {
     let root = find_project_root()?;
-    let pom_text = pom::read(&root)?;
-    let mut cmd = Command::new(crate::maven::binary(&root));
-    match pom::is_spring_boot(&pom_text) {
-        true => {
-            cmd.arg("spring-boot:run");
+    let build = crate::build::detect(&root);
+    let (mut cmd, tool_name) = match build {
+        crate::build::Build::Gradle => {
+            let gradlew = root.join(if cfg!(windows) {
+                "gradlew.bat"
+            } else {
+                "gradlew"
+            });
+            let binary = if gradlew.is_file() {
+                gradlew
+            } else {
+                std::path::PathBuf::from("gradle")
+            };
+            let mut cmd = Command::new(binary);
+            let gradle_text =
+                std::fs::read_to_string(root.join("build.gradle")).unwrap_or_default();
+            let is_boot = crate::gradle::is_spring_boot(&gradle_text);
+            if is_boot {
+                cmd.arg("bootRun");
+            } else {
+                cmd.arg("check");
+            }
+            (cmd, "Gradle")
         }
-        // A plain Maven project has no run goal; compiling and testing is
-        // the failure surface it does have.
-        false => {
-            cmd.arg("verify");
+        _ => {
+            let pom_text = pom::read(&root)?;
+            let mut cmd = Command::new(crate::maven::binary(&root));
+            match pom::is_spring_boot(&pom_text) {
+                true => {
+                    cmd.arg("spring-boot:run");
+                }
+                false => {
+                    cmd.arg("verify");
+                }
+            }
+            (cmd, "Maven")
         }
-    }
+    };
     cmd.current_dir(&root)
         .stdout(Stdio::piped())
         // Merged rather than captured separately: interleaving order is what
@@ -780,7 +806,7 @@ fn run_and_capture(debug: bool) -> Result<String> {
     println!();
     let mut child = cmd
         .spawn()
-        .map_err(|e| format!("failed to start Maven: {e}"))?;
+        .map_err(|e| format!("failed to start {tool_name}: {e}"))?;
 
     let stderr = child.stderr.take();
     let collector = std::thread::spawn(move || {

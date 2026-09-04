@@ -28,7 +28,7 @@ mod jdl;
 pub mod layout;
 mod linker;
 mod model;
-mod naming;
+pub mod naming;
 pub mod topic;
 /// Exported so an integration test in `tests/` can compare this crate's
 /// JDL v1 §9.7 pluralization with `jails-protocol`'s copy, which this crate

@@ -787,3 +787,65 @@ fn set_mode(path: &Path, mode: FileMode) -> Result<(), Diagnostic> {
 fn set_mode(_path: &Path, _mode: FileMode) -> Result<(), Diagnostic> {
     Ok(())
 }
+
+/// Advance `.jails/base` and `.jails/compiler.lock.json` for managed files
+/// that were reformatted on disk (e.g. by `jails fmt` or Spotless).
+pub fn advance_lock_and_base_for_formatted_files(root: &Path) -> Result<(), Diagnostic> {
+    let (jdl, lock) = (
+        root.join(".jails/model.jdl"),
+        root.join(".jails/compiler.lock.json"),
+    );
+    if !jdl.is_file() || !lock.is_file() {
+        return Ok(());
+    }
+    let Ok(source) = std::fs::read_to_string(&jdl) else {
+        return Ok(());
+    };
+    let Ok(model) = jails_model::parse_jdl(&source) else {
+        return Ok(());
+    };
+    let Ok(snap) = crate::capture::capture(
+        root,
+        &jdl,
+        source.as_bytes(),
+        model,
+        None,
+        &[],
+        crate::capture::ModelFile::Observed,
+    ) else {
+        return Ok(());
+    };
+    let (Some(mut proj), Some(accepted_model)) = (snap.accepted_projection, snap.accepted_model)
+    else {
+        return Ok(());
+    };
+    let mut changed = false;
+    let base_root = root.join(crate::materialize::BASE_ROOT);
+    for (path, file) in &mut proj.files {
+        let disk_path = root.join(path.as_str());
+        if let Ok(bytes) = std::fs::read(&disk_path)
+            && bytes != file.bytes
+        {
+            let base_path = base_root.join(path.as_str());
+            if let Some(parent) = base_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(&base_path, &bytes);
+            file.bytes = bytes;
+            changed = true;
+        }
+    }
+    if changed {
+        let compiler = snap.accepted_compiler.as_deref().unwrap_or("");
+        if let Ok(bytes) = crate::materialize::encode_compiler_lock(
+            compiler,
+            &accepted_model,
+            &proj,
+            snap.accepted_migrations,
+            snap.accepted_migration_bytes,
+        ) {
+            let _ = std::fs::write(&lock, bytes);
+        }
+    }
+    Ok(())
+}

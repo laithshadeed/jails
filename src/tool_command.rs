@@ -168,7 +168,7 @@ pub(crate) fn request(request: HttpRequest, invocation: crate::Invocation) -> Re
         public_args.extend(["--config".into(), "<redacted:headers>".into()]);
     }
     let rendered = render_argv("curl", &public_args);
-    if request.print {
+    if request.print || invocation.pretend {
         if invocation.output.is_json() {
             println!(
                 "{{\"schema\":\"jails.tool-invocation.v1\",\"tool\":\"curl\",\"argv\":{}}}",

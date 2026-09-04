@@ -151,6 +151,7 @@ pub(crate) fn run_follow_up_effects(
         && execution.files_written > 0;
     if formats {
         jails_drive::run::format_generated(root, invocation.debug);
+        let _ = jails_workspace::advance_lock_and_base_for_formatted_files(root);
     }
     let compose: Vec<&jails_contracts::EffectIntent> = bundle
         .plan
@@ -189,9 +190,12 @@ pub(crate) fn run_follow_up_effects(
         .next()
         .and_then(|path| stage_compose_document(bundle, path));
     let started = match staged.as_ref() {
-        Some(staged) => {
-            jails_project::compose::up_document(root, staged.path(), &services, invocation.debug)
-        }
+        Some(staged) => jails_project::compose::up_document(
+            root,
+            &staged.path().join("compose.yaml"),
+            &services,
+            invocation.debug,
+        ),
         None => jails_project::compose::up(root, &services, invocation.debug),
     };
     if started {

@@ -576,7 +576,15 @@ fn main() -> std::process::ExitCode {
         // A canonical project's generated tree is compiler output, so the
         // only thing left for a formatter to touch is the reader's own code.
         // See `run::format_project`.
-        Command::Fmt => run::format_project(debug),
+        Command::Fmt => {
+            let res = run::format_project(debug);
+            if res.is_ok()
+                && let Ok(root) = invocation.root()
+            {
+                let _ = jails_workspace::advance_lock_and_base_for_formatted_files(&root);
+            }
+            res
+        }
         Command::Check => run::check(debug),
         Command::Mvn { args } => run::mvn(&args, debug),
         Command::Gradle { args } => run::gradle(&args, debug),

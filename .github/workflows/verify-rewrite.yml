@@ -39,6 +39,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Check changed scope
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: ./scripts/ci-scope.sh --explain >> "$GITHUB_OUTPUT"
+
       # Align git tracked file mtimes to their respective commit author dates so cargo
       # fingerprint matching succeeds across cached builds without rebuilding unchanged source files.
       - name: Restore file modification timestamps

@@ -26,6 +26,9 @@ pub fn new_cli(request: &Request<'_>) -> Result<()> {
         ..
     } = *request;
     validate_project_name(name)?;
+    if let Some(pkg) = package {
+        validate_package(pkg)?;
+    }
     if Path::new(name).exists() {
         return Err(jails_support::Failure::Told(publish::already_exists(
             Path::new(name),

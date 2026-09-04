@@ -1,6 +1,6 @@
 ---
 name: jails
-description: "Scaffolding, evolving and operating Spring Boot and plain Java projects with the jails CLI. Triggers on: jails, jails new, jails generate, jails g, jails add, jails resource, jails app apply, jails doctor, jails test, jails sql, spring boot scaffolding, ports and adapters, raw jdbc java, testcontainers spring, flyway migrations with jails, hex architecture java."
+description: "Scaffolding, evolving and operating Spring Boot and plain Java projects with the jails CLI. Triggers on: jails, jails new, jails generate, jails g, jails add, jails resource, jails app apply, jails doctor, jails test, spring boot scaffolding, ports and adapters, raw jdbc java, testcontainers spring, flyway migrations with jails, hex architecture java."
 ---
 
 # jails
@@ -223,13 +223,11 @@ build engine and says so. `jails fmt` refuses on Gradle by name (use
 with the command that adds it to *this* project:
 `jails add dependency org.springframework.boot:spring-boot-devtools --scope runtime`.
 
-### Contracts
+### Contracts and migrations
 
 ```
-jails sql check [--offline|--live --datasource NAME] [--frozen]
-jails sql generate
-jails introspect db | jails pull | jails schema diff
 jails contract emit | jails contract check --against <file>
+jails migrate [--check] [--no-start]
 ```
 
 Evidence is never overstated: results are labelled `parsed`,

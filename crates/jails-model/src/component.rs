@@ -150,7 +150,7 @@ impl ComponentKind {
     /// on the kind rather than in the linker because `derived::records` needs
     /// the same answer -- JDL v1 §18.4 makes it one of the values `model
     /// explain` shows, and a second copy of a suffix table is a second answer.
-    pub(crate) fn primary_type(self, name: &str) -> String {
+    pub fn primary_type(self, name: &str) -> String {
         match self {
             Self::Service => format!("{name}Service"),
             Self::Controller => format!("{name}Controller"),
