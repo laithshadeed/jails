@@ -24,7 +24,7 @@ if [ -n "${CI:-}" ] || [ -n "${GITHUB_ACTIONS:-}" ]; then
     nice_level=0
     cpu_weight=100
     io_weight=100
-    toolchain_procs=${JAILS_TEST_MAX_TOOLCHAIN_PROCESSES:-4}
+    toolchain_procs=${JAILS_TEST_MAX_TOOLCHAIN_PROCESSES:-6}
 else
     # Interactive workstation: strict bounds so machine never lags or thrashes
     # Cap CPU to at most 4 cores or half machine, whichever is smaller

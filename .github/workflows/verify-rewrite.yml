@@ -96,14 +96,12 @@ jobs:
           echo "version=$(rustc -V | tr ' /()' '-')" >> "$GITHUB_OUTPUT"
           rustc -V
 
-      - name: Install fast linker
+      # Start installing the fast linker in the background early so it finishes
+      # while Rustup, cargo cache, JVM deps and mise are restoring.
+      - name: Start installing fast linker
         run: |
-          sudo apt-get install -y --no-install-recommends mold || (sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends mold) || sudo apt-get install -y --no-install-recommends lld || true
-          if command -v mold >/dev/null 2>&1; then
-            echo "RUSTFLAGS=-C link-arg=-fuse-ld=mold" >> "$GITHUB_ENV"
-          elif command -v ld.lld >/dev/null 2>&1 || command -v lld >/dev/null 2>&1; then
-            echo "RUSTFLAGS=-C link-arg=-fuse-ld=lld" >> "$GITHUB_ENV"
-          fi
+          nohup bash -c 'sudo apt-get install -y --no-install-recommends mold || (sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends mold) || sudo apt-get install -y --no-install-recommends lld || true' >/tmp/fast-linker.log 2>&1 &
+          disown -a 2>/dev/null || true
 
       # The key carries the compiler, the lockfile and a hash of the sources.
       # A cargo artifact is valid only for the rustc that built it, so a
@@ -169,6 +167,18 @@ jobs:
       # Gradle 8.5 on JDK 21, which it locates through `mise which java@21`.
       - name: Install JDK 21 for the pinned Gradle example
         run: mise install java@21
+
+      - name: Configure fast linker
+        run: |
+          for i in $(seq 1 30); do
+            if ! pgrep -f apt-get >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          if command -v mold >/dev/null 2>&1; then
+            echo "RUSTFLAGS=-C link-arg=-fuse-ld=mold" >> "$GITHUB_ENV"
+          elif command -v ld.lld >/dev/null 2>&1 || command -v lld >/dev/null 2>&1; then
+            echo "RUSTFLAGS=-C link-arg=-fuse-ld=lld" >> "$GITHUB_ENV"
+          fi
 
       - name: Show the toolchain the gate will use
         run: |
