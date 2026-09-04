@@ -219,6 +219,8 @@ pub(crate) fn compile_stale_java(project: &Project, debug: bool) -> Result<bool>
             .map_err(|e| format!("failed to join main classpath: {e}"))?;
 
         let mut spec = jails_support::process::CommandSpec::new(&javac)
+            .arg("-J-XX:+UseSerialGC")
+            .arg("-J-XX:TieredStopAtLevel=1")
             .arg("-cp")
             .arg(&main_cp)
             .arg("-sourcepath")
@@ -245,6 +247,8 @@ pub(crate) fn compile_stale_java(project: &Project, debug: bool) -> Result<bool>
             .map_err(|e| format!("failed to join test sourcepath: {e}"))?;
 
         let mut spec = jails_support::process::CommandSpec::new(&javac)
+            .arg("-J-XX:+UseSerialGC")
+            .arg("-J-XX:TieredStopAtLevel=1")
             .arg("-cp")
             .arg(&test_cp)
             .arg("-sourcepath")

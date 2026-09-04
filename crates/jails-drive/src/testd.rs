@@ -19,6 +19,7 @@ use crate::testing::TestReport;
 use jails_support::Result;
 
 pub enum Action {
+    Start,
     Run(Option<String>),
     Affected,
     Stop,
@@ -31,6 +32,12 @@ pub fn testd(action: Action, debug: bool) -> Result<()> {
     build::require_maven(project.build(), "testd")?;
     let client = client::Client::for_project(&project)?;
     match action {
+        Action::Start => {
+            let classpath = launcher::test_classpath(&project, "testd", debug)?;
+            client.ensure_running(&project, &classpath, debug)?;
+            println!("testd: running ({})", client.socket().display());
+            Ok(())
+        }
         Action::Stop => client.stop(),
         Action::Status => client.status(),
         Action::Restart => {

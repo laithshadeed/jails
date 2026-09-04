@@ -18,6 +18,8 @@ pub(crate) enum TestCommand {
 
 #[derive(Subcommand)]
 pub(crate) enum TestDaemonAction {
+    /// Start the daemon if it is not running
+    Start,
     /// Say whether the daemon is running
     Status,
     /// Stop the daemon if it is running

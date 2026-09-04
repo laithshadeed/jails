@@ -210,7 +210,7 @@ distribution cannot launch on the JDK on PATH, and on an H2 URL combining
 jails test [<Name|method>...] [--scope unit|integration|all] [--engine auto|build|warm]
            [--compile auto|ide|build|none] [--watch] [--affected] [--failed]
            [--tag T] [--fail-fast] [--slowest N] [--explain-selection]
-jails test daemon status|stop|restart # inspect or control resident test process
+jails test daemon start|status|stop|restart # inspect, pre-warm, or control resident test process
 jails run  [--launcher auto|classpath|build-tool|jar] [--compile ...]
            [--services existing|start|none] [--profile P] [--watch]
 jails check                  # mvn clean verify — the truth

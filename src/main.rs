@@ -519,6 +519,7 @@ fn main() -> std::process::ExitCode {
         } => {
             if let Some(cli::TestCommand::Daemon { action }) = command {
                 return match action {
+                    cli::TestDaemonAction::Start => testd::testd(testd::Action::Start, debug),
                     cli::TestDaemonAction::Status => testd::testd(testd::Action::Status, debug),
                     cli::TestDaemonAction::Stop => testd::testd(testd::Action::Stop, debug),
                     cli::TestDaemonAction::Restart => testd::testd(testd::Action::Restart, debug),

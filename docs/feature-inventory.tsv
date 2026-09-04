@@ -69,6 +69,7 @@ entity index remove	jails	project-mutation	model_index::remove
 test	jails-drive	external-process+conditional-project-mutation	run::test
 test daemon	jails-drive	dispatch-only	main command dispatch
 test daemon restart	jails-drive	machine-daemon+external-process	testd::testd
+test daemon start	jails-drive	machine-daemon+external-process	testd::testd
 test daemon status	jails-drive	read-only	testd::testd
 test daemon stop	jails-drive	machine-daemon	testd::testd
 testd	jails-drive	machine-daemon+external-process	testd::testd

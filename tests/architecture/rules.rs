@@ -994,6 +994,7 @@ fn every_inventoried_command_path_is_invoked_by_a_test() {
         "kafka dlt",
         "kafka reset",
         "test daemon restart",
+        "test daemon start",
         "test daemon status",
     ];
 
