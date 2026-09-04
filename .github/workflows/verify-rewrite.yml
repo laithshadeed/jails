@@ -87,20 +87,16 @@ jobs:
           disown -a 2>/dev/null || true
 
       # Reads `rust-toolchain.toml`, so CI runs the compiler the pre-push hook
-      # runs. The pin names one exact compiler, so the cached download is
-      # byte-identical until the pin moves.
-      - name: Cache the pinned Rust toolchain
-        uses: actions/cache@v6
+      # runs. Pinned channel and components with minimal install overhead.
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
         with:
-          path: |
-            ~/.rustup/toolchains
-            ~/.rustup/update-hashes
-          key: rustup-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}
+          toolchain: "1.94.1"
+          components: rustfmt, clippy
 
-      - name: Install the Rust toolchain named by rust-toolchain.toml
-        id: rust
+      - name: Set rust version output
+        id: rust-version
         run: |
-          rustup toolchain install
           echo "version=$(rustc -V | tr ' /()' '-')" >> "$GITHUB_OUTPUT"
           rustc -V
 
@@ -131,10 +127,10 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: cargo-v4-${{ runner.os }}-${{ steps.rust.outputs.version }}-${{ hashFiles('Cargo.lock') }}-${{ hashFiles('src/**', 'crates/**', 'tests/**', 'templates/**', '**/Cargo.toml') }}
+          key: cargo-v4-${{ runner.os }}-${{ steps.rust-version.outputs.version }}-${{ hashFiles('Cargo.lock') }}-${{ hashFiles('src/**', 'crates/**', 'tests/**', 'templates/**', '**/Cargo.toml') }}
           restore-keys: |
-            cargo-v4-${{ runner.os }}-${{ steps.rust.outputs.version }}-${{ hashFiles('Cargo.lock') }}-
-            cargo-v4-${{ runner.os }}-${{ steps.rust.outputs.version }}-
+            cargo-v4-${{ runner.os }}-${{ steps.rust-version.outputs.version }}-${{ hashFiles('Cargo.lock') }}-
+            cargo-v4-${{ runner.os }}-${{ steps.rust-version.outputs.version }}-
 
       # The Maven and Gradle repositories are on neither the runner image nor
       # the cargo cache. The key is static on purpose: written once by a green
@@ -152,18 +148,6 @@ jobs:
             ~/.gradle/caches/modules-2
             ~/.gradle/wrapper/dists
           key: jvm-deps-${{ runner.os }}-v3
-
-      # The proof cache: every real-toolchain Maven run the last green runs
-      # proved, keyed on the project's bytes (`tests/support/mvn.rs`). Unlike
-      # the repositories above it changes on every run, so it is keyed by
-      # commit and restored from the newest one; the save is unconditional
-      # because only green runs are ever recorded into it.
-      - name: Restore the proof cache
-        uses: actions/cache/restore@v6
-        with:
-          path: target/jails-proof-cache
-          key: proof-cache-${{ runner.os }}-${{ github.sha }}
-          restore-keys: proof-cache-${{ runner.os }}-
 
       # Reads `mise.toml`, so CI runs the versions the repository pins.
       - name: Install the pinned toolchain
@@ -255,14 +239,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: cargo-v4-${{ runner.os }}-${{ steps.rust.outputs.version }}-${{ hashFiles('Cargo.lock') }}-${{ hashFiles('src/**', 'crates/**', 'tests/**', 'templates/**', '**/Cargo.toml') }}
-
-      - name: Save the proof cache
-        if: always()
-        uses: actions/cache/save@v6
-        with:
-          path: target/jails-proof-cache
-          key: proof-cache-${{ runner.os }}-${{ github.sha }}
+          key: cargo-v4-${{ runner.os }}-${{ steps.rust-version.outputs.version }}-${{ hashFiles('Cargo.lock') }}-${{ hashFiles('src/**', 'crates/**', 'tests/**', 'templates/**', '**/Cargo.toml') }}
 
       # Only after the gate has passed, and only when there was nothing to
       # restore -- see the restore step for why both conditions are load-bearing.
