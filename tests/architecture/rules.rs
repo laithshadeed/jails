@@ -1230,7 +1230,7 @@ fn every_script_and_task_the_automation_names_exists() {
         })
         .collect();
     assert!(
-        tasks.contains("verify-rewrite"),
+        tasks.contains("check"),
         "the task scan found {tasks:?} -- it has stopped reading mise.toml"
     );
 

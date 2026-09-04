@@ -1,4 +1,4 @@
-# The one gate: `mise run verify-rewrite` and nothing else, so CI and the
+# The one gate: `mise run check` and nothing else, so CI and the
 # pre-push hook cannot disagree about what "green" means.
 #
 # The tool list is load-bearing. `JAILS_TOOLCHAIN=1` turns a missing tool into
