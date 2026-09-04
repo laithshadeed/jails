@@ -183,7 +183,7 @@ jobs:
           docker --version
 
       - name: Run Quality Gate
-        run: mise run verify
+        run: mise run check
         env:
           JAILS_TEST_PROFILE: ${{ inputs.profile && '1' || '' }}
 

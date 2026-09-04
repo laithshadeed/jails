@@ -61,7 +61,7 @@ for exe, manifest_dir in items:
 )
 
 if [ "${#artifacts[@]}" -lt 10 ]; then
-  echo "test-workspace: only ${#artifacts[@]} test executables found; compilation may have failed" >&2
+  echo "test: only ${#artifacts[@]} test executables found; compilation may have failed" >&2
   exit 2
 fi
 
@@ -119,10 +119,10 @@ for i in "${!names[@]}"; do
   code=$(cat "$exit_file" 2>/dev/null || echo 1)
   summary=$(grep -E '^test result' "$log_file" 2>/dev/null | tail -1 || true)
   if [ "$code" -eq 0 ] && [ -n "$summary" ] && grep -qE '^test result: ok' "$log_file"; then
-    printf 'test-workspace: %-32s ok   %s\n' "$name" "${summary#test result: }"
+    printf 'test: %-32s ok   %s\n' "$name" "${summary#test result: }"
   else
     status=1
-    printf 'test-workspace: %-32s FAILED (exit %s)\n' "$name" "$code"
+    printf 'test: %-32s FAILED (exit %s)\n' "$name" "$code"
   fi
 done
 

@@ -26,14 +26,6 @@ run = [
 description = "Run the quality gate verification suite"
 run = "./scripts/run-bounded.sh ./scripts/check.sh"
 
-[tasks.verify]
-description = "Run the quality gate verification suite (alias for check)"
-run = "mise run check"
-
-[tasks.verify-rewrite]
-description = "Run the quality gate verification suite (alias for check)"
-run = "mise run check"
-
 [tasks.test]
 description = "The gate's test phase, running all workspace suites concurrently"
 run = "./scripts/run-bounded.sh ./scripts/test.sh"
