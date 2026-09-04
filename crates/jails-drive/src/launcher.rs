@@ -184,17 +184,22 @@ fn stale_java_files(source_dir: &Path, class_dir: &Path) -> Vec<PathBuf> {
 
 /// Compiles changed Java sources directly using `javac`, updating the class files in-place.
 /// Returns Ok(true) if sources were compiled, Ok(false) if none were stale.
-pub(crate) fn compile_stale_java(
-    project: &Project,
-    debug: bool,
-) -> Result<bool> {
+pub(crate) fn compile_stale_java(project: &Project, debug: bool) -> Result<bool> {
     let root = project.root();
     let main_src = root.join("src/main/java");
     let test_src = root.join("src/test/java");
 
     let layout = OutputLayout::maven(project);
-    let main_target = layout.main_classes.first().cloned().unwrap_or_else(|| root.join("target/classes"));
-    let test_target = layout.test_classes.first().cloned().unwrap_or_else(|| root.join("target/test-classes"));
+    let main_target = layout
+        .main_classes
+        .first()
+        .cloned()
+        .unwrap_or_else(|| root.join("target/classes"));
+    let test_target = layout
+        .test_classes
+        .first()
+        .cloned()
+        .unwrap_or_else(|| root.join("target/test-classes"));
 
     let stale_main = stale_java_files(&main_src, &main_target);
     let stale_test = stale_java_files(&test_src, &test_target);
@@ -219,7 +224,10 @@ pub(crate) fn compile_stale_java(
             spec = spec.arg(file);
         }
         let spec = spec.current_dir(root);
-        jails_support::process::run_checked(&spec, jails_support::process::Diagnostics::from_flag(debug))?;
+        jails_support::process::run_checked(
+            &spec,
+            jails_support::process::Diagnostics::from_flag(debug),
+        )?;
     }
 
     if !stale_test.is_empty() {
@@ -237,7 +245,10 @@ pub(crate) fn compile_stale_java(
             spec = spec.arg(file);
         }
         let spec = spec.current_dir(root);
-        jails_support::process::run_checked(&spec, jails_support::process::Diagnostics::from_flag(debug))?;
+        jails_support::process::run_checked(
+            &spec,
+            jails_support::process::Diagnostics::from_flag(debug),
+        )?;
     }
 
     Ok(true)
