@@ -492,15 +492,28 @@ final class JailsTestDaemon {
     private static long metaspace() {
         return ManagementFactory.getMemoryPoolMXBeans().stream()
                 .filter(pool -> pool.getName().contains("Metaspace"))
-                .mapToLong(pool -> pool.getUsage().getUsed()).sum();
+                .mapToLong(pool -> pool.getUsage() != null ? pool.getUsage().getUsed() : 0L).sum();
     }
 
     private static boolean leakedThread() {
-        return Thread.getAllStackTraces().keySet().stream()
-                .anyMatch(thread -> thread.isAlive() && !thread.isDaemon()
-                        && thread != Thread.currentThread()
-                        && !thread.getName().equals("main")
-                        && !thread.getName().equals("DestroyJavaVM"));
+        try {
+            ThreadGroup rootGroup = Thread.currentThread().getThreadGroup();
+            while (rootGroup.getParent() != null) rootGroup = rootGroup.getParent();
+            Thread[] threads = new Thread[rootGroup.activeCount() * 2 + 50];
+            int count = rootGroup.enumerate(threads, true);
+            for (int i = 0; i < count; i++) {
+                Thread t = threads[i];
+                if (t != null && t.isAlive() && !t.isDaemon()
+                        && t != Thread.currentThread()
+                        && !t.getName().equals("main")
+                        && !t.getName().equals("DestroyJavaVM")) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     private static byte[] fromHex(String text) {

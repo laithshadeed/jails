@@ -259,8 +259,12 @@ impl Client {
             .arg(self.project.to_hex())
             .arg(hex(cookie.expose()))
             .current_dir(&self.root);
-        let mut child =
-            crate::process::spawn(&spec, crate::process::Diagnostics::from_flag(debug))?;
+        let log_file = self.root.join(".jails/run/testd.log");
+        let mut child = crate::process::spawn_daemon(
+            &spec,
+            Some(&log_file),
+            crate::process::Diagnostics::from_flag(debug),
+        )?;
         let metadata = Metadata {
             project: self.project,
             classpath: classpath_id,
@@ -275,10 +279,7 @@ impl Client {
                 return Ok(());
             }
             if let Ok(Some(status)) = child.try_wait() {
-                let mut stderr = String::new();
-                if let Some(mut pipe) = child.stderr.take() {
-                    pipe.read_to_string(&mut stderr).ok();
-                }
+                let stderr = std::fs::read_to_string(&log_file).unwrap_or_default();
                 self.remove_runtime_files();
                 return Err(format!(
                     "testd exited with {status} before its handshake\n{}       fix: choose `--engine build`, or inspect the daemon diagnostic above",
@@ -289,8 +290,12 @@ impl Client {
             std::thread::sleep(Duration::from_millis(50));
         }
         let _ = child.kill();
+        let stderr = std::fs::read_to_string(&log_file).unwrap_or_default();
         self.remove_runtime_files();
-        Err("testd did not complete its handshake in time\n       fix: choose `--engine build` and inspect daemon startup".into())
+        Err(format!(
+            "testd did not complete its handshake in time\n{}       fix: choose `--engine build` and inspect daemon startup",
+            indent(&stderr)
+        ).into())
     }
 
     fn exchange(&self, request: Request) -> Result<Vec<Response>> {

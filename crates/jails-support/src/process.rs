@@ -199,7 +199,7 @@ impl Done {
     }
 }
 
-/// Start a long-lived child and return it without waiting.
+/// Start a long-lived daemon child and return it without waiting.
 ///
 /// The one caller is `testd`, whose child is a resident JVM that outlives the
 /// command that started it. It goes through `CommandSpec` rather than a bare
@@ -207,18 +207,50 @@ impl Done {
 /// is resolved on PATH and where `--debug` prints what ran**, and a second
 /// place that spawns is a second place those two rules can be forgotten.
 ///
-/// stdout and stderr are piped rather than inherited, because a daemon writing
-/// into the terminal of whichever command happened to start it is output
-/// nobody can attribute. The caller reads them to explain a start-up failure.
+/// The daemon is detached into its own session via `setsid()` so that exiting
+/// the invoking command does not deliver SIGHUP/SIGINT to the resident daemon.
+/// Standard output and error are redirected to the provided `log_path` (or null),
+/// ensuring the JVM has valid descriptors that outlive the caller's process.
 pub fn spawn(spec: &CommandSpec, diagnostics: Diagnostics) -> Result<Child> {
+    spawn_daemon(spec, None, diagnostics)
+}
+
+/// Start a daemon with its stdout and stderr connected to a log file or null,
+/// in an independent session detached from the caller's process group.
+pub fn spawn_daemon(
+    spec: &CommandSpec,
+    log_path: Option<&Path>,
+    diagnostics: Diagnostics,
+) -> Result<Child> {
     if diagnostics == Diagnostics::Debug {
         eprintln!("{}", spec.render());
     }
-    Ok(spec
-        .to_command()
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+    let mut cmd = spec.to_command();
+    cmd.stdin(Stdio::null());
+    if let Some(log) = log_path {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log)
+            .map_err(|error| format!("failed to open daemon log {}: {error}", log.display()))?;
+        let err_file = file
+            .try_clone()
+            .map_err(|error| format!("failed to clone daemon log handle: {error}"))?;
+        cmd.stdout(Stdio::from(file)).stderr(Stdio::from(err_file));
+    } else {
+        cmd.stdout(Stdio::null()).stderr(Stdio::null());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            cmd.pre_exec(|| {
+                nix::libc::setsid();
+                Ok(())
+            });
+        }
+    }
+    Ok(cmd
         .spawn()
         .map_err(|error| format!("failed to run {}: {error}", spec.program.to_string_lossy()))?)
 }

@@ -58,6 +58,10 @@ pub(super) fn plan(
     // The staleness itself, not a bool: the reader is told the outputs are
     // stale *and* which source made them so, because "go and find it" is the
     // step they would otherwise take next and get wrong.
+    let has_launcher = crate::project::Project::load(project)
+        .map(|p| p.has_dependency("org.junit.platform", "junit-platform-console"))
+        .unwrap_or(true);
+
     let build_only_reason: Option<String> =
         if options.compile == crate::testing::TestCompilePolicy::Build {
             Some("the build tool is the explicit compile owner".to_string())
@@ -70,6 +74,11 @@ pub(super) fn plan(
             Some("the warm engine only accepts isolated unit tests".to_string())
         } else if !options.tags.is_empty() {
             Some("JUnit tag eligibility is not yet attributable per warm test".to_string())
+        } else if !has_launcher && options.engine == TestEnginePolicy::Auto {
+            Some(
+                "this project does not declare junit-platform-console; falling back to build tool"
+                    .to_string(),
+            )
         } else {
             None
         };
@@ -79,7 +88,7 @@ pub(super) fn plan(
         && !options.database_schema
         && options.tags.is_empty()
     {
-        let evidence = super::isolation::partition_evidence(project, requested);
+        let evidence = super::isolation::partition_evidence(project, requested, options.scope);
         if !evidence.ineligible.is_empty() || !evidence.gaps.is_empty() {
             let reason = evidence
                 .ineligible
@@ -125,7 +134,7 @@ pub(super) fn plan(
             reasons: reasons.clone(),
         });
     } else {
-        let evidence = super::isolation::partition_evidence(project, requested);
+        let evidence = super::isolation::partition_evidence(project, requested, options.scope);
         if !evidence.gaps.is_empty() {
             let reason = format!("test discovery is incomplete: {}", evidence.gaps.join("; "));
             if options.engine == TestEnginePolicy::Warm {
@@ -163,7 +172,7 @@ pub(super) fn plan(
                     reasons: vec![SelectionReason::Widened(reason)],
                 });
             }
-            if !evidence.eligible.is_empty() || evidence.ineligible.is_empty() {
+            if !evidence.eligible.is_empty() {
                 partitions.push(TestPartition {
                     engine: TestEngine::TestdV2,
                     selectors: evidence
@@ -171,6 +180,16 @@ pub(super) fn plan(
                         .iter()
                         .map(|selector| TestSelector::parse(selector))
                         .collect::<Result<Vec<_>>>()?,
+                    reasons: reasons.clone(),
+                });
+            } else if evidence.ineligible.is_empty() {
+                partitions.push(TestPartition {
+                    engine: if options.engine == TestEnginePolicy::Warm {
+                        TestEngine::TestdV2
+                    } else {
+                        build_engine
+                    },
+                    selectors: Vec::new(),
                     reasons: reasons.clone(),
                 });
             }

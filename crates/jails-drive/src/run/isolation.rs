@@ -35,13 +35,19 @@ const FORK_SENSITIVE: &[(&str, &str)] = &[
     ("@Isolated", "explicit JUnit isolation"),
 ];
 
-pub(super) fn partition_evidence(project: &Path, requested: &[String]) -> PartitionEvidence {
+pub(super) fn partition_evidence(
+    project: &Path,
+    requested: &[String],
+    scope: crate::testing::TestScope,
+) -> PartitionEvidence {
     let mut evidence = PartitionEvidence::default();
     if requested.is_empty() {
         for source in discover_tests(project) {
             match source {
                 Ok(source) => match selector_for_source(project, &source) {
-                    Some(selector) => classify(project, selector, source, &mut evidence),
+                    Some(selector) => {
+                        classify_discovered(project, selector, source, scope, &mut evidence)
+                    }
                     None => evidence.gaps.push(format!(
                         "{} has no attributable Java test type\n       fix: use the build engine for this source layout",
                         source.display()
@@ -53,7 +59,9 @@ pub(super) fn partition_evidence(project: &Path, requested: &[String]) -> Partit
     } else {
         for selector in requested {
             match source_for(project, selector) {
-                Some(source) => classify(project, selector.clone(), source, &mut evidence),
+                Some(source) => {
+                    classify_requested(project, selector.clone(), source, &mut evidence)
+                }
                 None => evidence.ineligible.push((
                     selector.clone(),
                     format!(
@@ -72,16 +80,85 @@ pub(super) fn partition_evidence(project: &Path, requested: &[String]) -> Partit
     evidence
 }
 
-fn classify(project: &Path, selector: String, source: PathBuf, evidence: &mut PartitionEvidence) {
+fn is_integration_test(source: &Path) -> bool {
+    source.file_stem().is_some_and(|name| {
+        let s = name.to_string_lossy();
+        s.ends_with("IT") || s.ends_with("ITCase")
+    })
+}
+
+fn classify_discovered(
+    project: &Path,
+    selector: String,
+    source: PathBuf,
+    scope: crate::testing::TestScope,
+    evidence: &mut PartitionEvidence,
+) {
     let label = source
         .strip_prefix(project)
         .unwrap_or(&source)
         .display()
         .to_string();
-    if source
-        .file_stem()
-        .is_some_and(|name| name.to_string_lossy().ends_with("IT"))
-    {
+    let is_it = is_integration_test(&source);
+    let text = match std::fs::read_to_string(&source) {
+        Ok(text) => text,
+        Err(error) => {
+            evidence
+                .ineligible
+                .push((selector, format!("{label} cannot be inspected ({error})")));
+            return;
+        }
+    };
+    let fork_sensitive = FORK_SENSITIVE
+        .iter()
+        .find(|(needle, _)| text.contains(needle));
+
+    match scope {
+        crate::testing::TestScope::Unit => {
+            if is_it || fork_sensitive.is_some() {
+                return;
+            }
+            evidence.eligible.push(selector);
+        }
+        crate::testing::TestScope::Integration => {
+            if is_it {
+                evidence
+                    .ineligible
+                    .push((selector, format!("{label} is an integration test")));
+            } else if let Some((_, reason)) = fork_sensitive {
+                evidence
+                    .ineligible
+                    .push((selector, format!("{label} uses {reason}")));
+            }
+        }
+        crate::testing::TestScope::All => {
+            if is_it {
+                evidence
+                    .ineligible
+                    .push((selector, format!("{label} is an integration test")));
+            } else if let Some((_, reason)) = fork_sensitive {
+                evidence
+                    .ineligible
+                    .push((selector, format!("{label} uses {reason}")));
+            } else {
+                evidence.eligible.push(selector);
+            }
+        }
+    }
+}
+
+fn classify_requested(
+    project: &Path,
+    selector: String,
+    source: PathBuf,
+    evidence: &mut PartitionEvidence,
+) {
+    let label = source
+        .strip_prefix(project)
+        .unwrap_or(&source)
+        .display()
+        .to_string();
+    if is_integration_test(&source) {
         evidence
             .ineligible
             .push((selector, format!("{label} is an integration test")));
@@ -163,11 +240,7 @@ fn discover_tests(project: &Path) -> Vec<Result<PathBuf, String>> {
                             .is_some_and(|extension| extension == "java") =>
                 {
                     match std::fs::read_to_string(&path) {
-                        Ok(text)
-                            if text.contains("@Test")
-                                || text.contains("org.junit")
-                                || text.contains("org.testng") =>
-                        {
+                        Ok(text) if is_candidate_test_source(&path, &text) => {
                             found.push(Ok(path));
                         }
                         Ok(_) => {}
@@ -235,6 +308,43 @@ fn source_for(project: &Path, selector: &str) -> Option<PathBuf> {
     None
 }
 
+fn is_candidate_test_source(path: &Path, text: &str) -> bool {
+    let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    if stem.ends_with("Config")
+        || stem.ends_with("Configuration")
+        || stem.ends_with("Support")
+        || stem.ends_with("Base")
+        || stem.ends_with("Helper")
+        || stem.ends_with("Fixture")
+    {
+        return false;
+    }
+    if !(stem.ends_with("Test")
+        || stem.ends_with("Tests")
+        || stem.ends_with("TestCase")
+        || stem.ends_with("IT")
+        || stem.ends_with("ITCase"))
+    {
+        return false;
+    }
+    text.lines().any(|line| {
+        let trimmed = line.trim();
+        (trimmed.starts_with("@Test")
+            && !trimmed.starts_with("@TestConfiguration")
+            && !trimmed.starts_with("@TestPropertySource")
+            && !trimmed.starts_with("@TestInstance")
+            && !trimmed.starts_with("@Testcontainers"))
+            || trimmed.starts_with("@org.junit.Test")
+            || trimmed.starts_with("@org.junit.jupiter.api.Test")
+            || trimmed.starts_with("@ParameterizedTest")
+            || trimmed.starts_with("@RepeatedTest")
+            || trimmed.starts_with("@TestFactory")
+            || trimmed.starts_with("@TestTemplate")
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,9 +367,13 @@ mod tests {
             "PlainTest",
         );
         assert!(
-            partition_evidence(project.path(), &[selector])
-                .ineligible
-                .is_empty()
+            partition_evidence(
+                project.path(),
+                &[selector],
+                crate::testing::TestScope::Unit
+            )
+            .ineligible
+            .is_empty()
         );
     }
 
@@ -284,11 +398,15 @@ mod tests {
             ),
         ] {
             let (project, selector) = source(body, name);
-            let reasons = partition_evidence(project.path(), &[selector])
-                .ineligible
-                .into_iter()
-                .map(|(_, reason)| reason)
-                .collect::<Vec<_>>();
+            let reasons = partition_evidence(
+                project.path(),
+                &[selector],
+                crate::testing::TestScope::Unit,
+            )
+            .ineligible
+            .into_iter()
+            .map(|(_, reason)| reason)
+            .collect::<Vec<_>>();
             assert!(
                 reasons.iter().any(|reason| reason.contains(expected)),
                 "{reasons:?}"
@@ -300,9 +418,21 @@ mod tests {
     fn an_unknown_selector_is_not_assumed_safe() {
         let project = jails_support::scratch::ScratchDir::in_temp("test-isolation").unwrap();
         assert!(
-            partition_evidence(project.path(), &["MissingTest".into()]).ineligible[0]
+            partition_evidence(
+                project.path(),
+                &["MissingTest".into()],
+                crate::testing::TestScope::Unit
+            )
+            .ineligible[0]
                 .1
                 .contains("no attributable")
         );
+    }
+
+    #[test]
+    fn support_config_classes_are_not_candidate_test_sources() {
+        let config = Path::new("src/test/java/com/example/TestcontainersConfig.java");
+        let text = "@TestConfiguration(proxyBeanMethods = false)\npublic class TestcontainersConfig {}";
+        assert!(!is_candidate_test_source(config, text));
     }
 }
