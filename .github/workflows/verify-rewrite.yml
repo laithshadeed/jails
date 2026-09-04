@@ -71,7 +71,7 @@ jobs:
 
       - name: Install fast linker
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends mold || sudo apt-get install -y --no-install-recommends lld || true
+          sudo apt-get install -y --no-install-recommends mold || (sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends mold) || sudo apt-get install -y --no-install-recommends lld || true
           if command -v mold >/dev/null 2>&1; then
             echo "RUSTFLAGS=-C link-arg=-fuse-ld=mold" >> "$GITHUB_ENV"
           elif command -v ld.lld >/dev/null 2>&1 || command -v lld >/dev/null 2>&1; then
