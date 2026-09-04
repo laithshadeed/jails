@@ -35,6 +35,12 @@ pub fn binary(root: &Path) -> PathBuf {
     {
         return PathBuf::from(chosen);
     }
+    if std::env::var_os("JAILS_MVND").is_some_and(|v| v == "1" || v == "true")
+        && crate::process::on_path(mvnd_binary())
+        && mvnd_can_start()
+    {
+        return PathBuf::from(mvnd_binary());
+    }
     let wrapper = root.join(if cfg!(windows) { "mvnw.cmd" } else { "mvnw" });
     if wrapper.is_file() {
         return wrapper;

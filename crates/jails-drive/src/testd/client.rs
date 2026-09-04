@@ -26,6 +26,8 @@ const IDLE_SECONDS: u64 = 600;
 const START_TIMEOUT: Duration = Duration::from_secs(90);
 const HEAP_LIMIT: &str = "-Xmx512m";
 const METASPACE_LIMIT: &str = "-XX:MaxMetaspaceSize=256m";
+const FAST_GC: &str = "-XX:+UseSerialGC";
+const FAST_JIT: &str = "-XX:TieredStopAtLevel=1";
 
 /// How many bytes a unix socket path may be, this platform's `sun_path`.
 ///
@@ -250,6 +252,8 @@ impl Client {
         let spec = CommandSpec::new(crate::process::java_program())
             .arg(HEAP_LIMIT)
             .arg(METASPACE_LIMIT)
+            .arg(FAST_GC)
+            .arg(FAST_JIT)
             .arg("-cp")
             .arg(&dependencies)
             .arg(&source)

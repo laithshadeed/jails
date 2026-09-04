@@ -410,6 +410,16 @@ fn test_report_once_with_fallback(
         options.failed = false;
     }
     let requested = execution_requested.as_slice();
+    if options.compile == crate::testing::TestCompilePolicy::Auto
+        && build == crate::build::Build::Maven
+        && options.scope == crate::testing::TestScope::Unit
+    {
+        if let Ok(project) = crate::project::Project::load(&root) {
+            if let Some(crate::launcher::TooStale::SourceIsNewer(_)) = crate::launcher::staleness(&root, build) {
+                let _ = crate::launcher::compile_stale_java(&project, debug);
+            }
+        }
+    }
     let stale = crate::launcher::staleness(&root, build);
     let plan = test_plan::plan(&root, build, requested, &options, stale.as_ref())?;
     if options.explain_selection || options.fast {

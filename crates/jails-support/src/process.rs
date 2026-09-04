@@ -438,12 +438,23 @@ pub fn java_program() -> OsString {
     java_launcher(std::env::var_os("JAVA_HOME").as_deref())
 }
 
+/// The compiler executable matching [`java_program`].
+pub fn javac_program() -> OsString {
+    javac_launcher(std::env::var_os("JAVA_HOME").as_deref())
+}
+
 /// [`java_program`] without the environment, so the rule can be tested without
 /// a process-global mutation.
 fn java_launcher(home: Option<&OsStr>) -> OsString {
     home.map(|home| Path::new(home).join("bin").join("java"))
         .filter(|java| java.is_file())
         .map_or_else(|| OsString::from("java"), PathBuf::into_os_string)
+}
+
+fn javac_launcher(home: Option<&OsStr>) -> OsString {
+    home.map(|home| Path::new(home).join("bin").join("javac"))
+        .filter(|javac| javac.is_file())
+        .map_or_else(|| OsString::from("javac"), PathBuf::into_os_string)
 }
 
 #[cfg(test)]

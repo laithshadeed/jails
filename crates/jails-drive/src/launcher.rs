@@ -144,6 +144,105 @@ fn newest_with_extension(dir: &Path, extension: &str) -> Option<(PathBuf, System
     newest
 }
 
+fn stale_java_files(source_dir: &Path, class_dir: &Path) -> Vec<PathBuf> {
+    let mut stale = Vec::new();
+    if !source_dir.is_dir() {
+        return stale;
+    }
+    let mut stack = vec![source_dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().is_none_or(|ext| ext != "java") {
+                continue;
+            }
+            let Ok(source_time) = entry.metadata().and_then(|m| m.modified()) else {
+                continue;
+            };
+            let Ok(relative) = path.strip_prefix(source_dir) else {
+                continue;
+            };
+            let class_file = class_dir.join(relative).with_extension("class");
+            let is_stale = match class_file.metadata().and_then(|m| m.modified()) {
+                Ok(class_time) => source_time > class_time,
+                Err(_) => true,
+            };
+            if is_stale {
+                stale.push(path);
+            }
+        }
+    }
+    stale
+}
+
+/// Compiles changed Java sources directly using `javac`, updating the class files in-place.
+/// Returns Ok(true) if sources were compiled, Ok(false) if none were stale.
+pub(crate) fn compile_stale_java(
+    project: &Project,
+    debug: bool,
+) -> Result<bool> {
+    let root = project.root();
+    let main_src = root.join("src/main/java");
+    let test_src = root.join("src/test/java");
+
+    let layout = OutputLayout::maven(project);
+    let main_target = layout.main_classes.first().cloned().unwrap_or_else(|| root.join("target/classes"));
+    let test_target = layout.test_classes.first().cloned().unwrap_or_else(|| root.join("target/test-classes"));
+
+    let stale_main = stale_java_files(&main_src, &main_target);
+    let stale_test = stale_java_files(&test_src, &test_target);
+
+    if stale_main.is_empty() && stale_test.is_empty() {
+        return Ok(false);
+    }
+
+    let classpath = test_classpath(project, "test", debug)?;
+    let dep_classpath = std::env::join_paths(&classpath.dependencies)
+        .map_err(|e| format!("failed to join dependencies: {e}"))?;
+
+    let javac = jails_support::process::javac_program();
+
+    if !stale_main.is_empty() {
+        let mut spec = jails_support::process::CommandSpec::new(&javac)
+            .arg("-cp")
+            .arg(&dep_classpath)
+            .arg("-d")
+            .arg(&main_target);
+        for file in &stale_main {
+            spec = spec.arg(file);
+        }
+        let spec = spec.current_dir(root);
+        jails_support::process::run_checked(&spec, jails_support::process::Diagnostics::from_flag(debug))?;
+    }
+
+    if !stale_test.is_empty() {
+        let mut test_cp_entries = classpath.dependencies.clone();
+        test_cp_entries.push(main_target.clone());
+        let test_cp = std::env::join_paths(&test_cp_entries)
+            .map_err(|e| format!("failed to join test classpath: {e}"))?;
+
+        let mut spec = jails_support::process::CommandSpec::new(&javac)
+            .arg("-cp")
+            .arg(&test_cp)
+            .arg("-d")
+            .arg(&test_target);
+        for file in &stale_test {
+            spec = spec.arg(file);
+        }
+        let spec = spec.current_dir(root);
+        jails_support::process::run_checked(&spec, jails_support::process::Diagnostics::from_flag(debug))?;
+    }
+
+    Ok(true)
+}
+
 /// The directories a build writes, as the build states them.
 ///
 /// Maven's is fixed -- classes and resources share `target/classes`, tests
