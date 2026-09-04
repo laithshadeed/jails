@@ -14,8 +14,8 @@ mkdir -p "$logs"
 # Number of concurrent test binaries to execute
 cores=$(nproc 2>/dev/null || echo 4)
 if [ "$cores" -le 2 ]; then
-  concurrency=${TEST_CONCURRENCY:-3}
-  default_threads=1
+  concurrency=${TEST_CONCURRENCY:-2}
+  default_threads=2
 else
   concurrency=${TEST_CONCURRENCY:-$(( cores * 2 ))}
   default_threads=2
