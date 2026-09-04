@@ -37,13 +37,33 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      # Align git tracked file mtimes to the commit author date so cargo fingerprint
-      # matching succeeds across cached builds without rebuilding unchanged source files.
+      # Align git tracked file mtimes to their respective commit author dates so cargo
+      # fingerprint matching succeeds across cached builds without rebuilding unchanged source files.
       - name: Restore file modification timestamps
         run: |
-          commit_time=$(git log -1 --format=%ct)
-          git ls-files -z | xargs -0 touch -d "@$commit_time"
+          python3 - <<'EOF'
+          import subprocess, os
+          proc = subprocess.Popen(['git', 'log', '--pretty=format:COMMIT %ct', '--name-only'], stdout=subprocess.PIPE, text=True)
+          seen = set()
+          current_time = None
+          for line in proc.stdout:
+              line = line.strip()
+              if not line:
+                  continue
+              if line.startswith('COMMIT '):
+                  current_time = int(line[7:])
+              elif line not in seen:
+                  seen.add(line)
+                  if current_time and os.path.exists(line):
+                      try:
+                          os.utime(line, (current_time, current_time))
+                      except Exception:
+                          pass
+          proc.wait()
+          EOF
 
       # Pull the container images while the Rust build is still running. The
       # test phase is subprocess-bound, and a registry pull is work that need
