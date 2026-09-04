@@ -210,7 +210,7 @@ jobs:
         if: always()
         run: |
           rm -rf target/jails-e2e-cache target/jails-test-logs target/jails-test-permits \
-            target/jails-test-profile
+            target/jails-test-profile target/check-logs
           python3 - <<'DEPS'
           import collections
           from pathlib import Path

@@ -6,11 +6,16 @@
 #   3. documentation check (RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps)
 #   4. workspace test suite (concurrent executable runner + doctests)
 #
+# Hardware empathy: executes bounded under scripts/run-bounded.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${ROOT_DIR}"
+
+if [[ -z "${BOUNDED_SCOPE:-}" ]]; then
+  exec "${SCRIPT_DIR}/run-bounded.sh" "$0" "$@"
+fi
 
 if [[ -t 1 ]]; then
   GREEN='\033[0;32m'

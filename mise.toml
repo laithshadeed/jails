@@ -49,18 +49,16 @@ run = [
 # the long tests near the end of the alphabet start late and set the tail.
 [tasks.verify]
 description = "Run the quality gate verification suite"
-run = [
-  "./scripts/run-bounded.sh ./scripts/build-workspace.sh",
-  "rm -rf target/jails-test-profile",
-  "JAILS_GIT_DIFF_ALGORITHM= JAILS_TOOLCHAIN=1 ./scripts/run-bounded.sh ./scripts/test-workspace.sh; status=$?; ./scripts/profile-summary.sh; exit $status",
-]
+run = "./scripts/run-bounded.sh ./scripts/check.sh"
 
 [tasks.verify-rewrite]
 description = "Run the quality gate verification suite (alias for verify)"
-run = [
-  "mise run verify",
-]
+run = "mise run verify"
+
+[tasks.check]
+description = "Run the quality gate verification suite (alias for verify)"
+run = "mise run verify"
 
 [tasks.test]
-description = "The gate's test phase, without the toolchain tier (the inner-loop run)"
-run = "./scripts/bounded.sh cargo test --workspace"
+description = "The gate's test phase, running all workspace suites concurrently"
+run = "./scripts/run-bounded.sh ./scripts/test-workspace.sh"

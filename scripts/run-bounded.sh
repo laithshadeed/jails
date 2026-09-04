@@ -13,6 +13,12 @@ if [ "$#" -eq 0 ]; then
     exit 2
 fi
 
+# Prevent recursive scope creation
+if [ -n "${BOUNDED_SCOPE:-}" ]; then
+    exec "$@"
+fi
+export BOUNDED_SCOPE=1
+
 total_kib=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
 cores=$(nproc 2>/dev/null || echo 4)
 
@@ -56,13 +62,14 @@ if [ -z "${RUSTFLAGS:-}" ]; then
 fi
 
 # Check systemd-run capability
+unit_name="ciguard-$$-${RANDOM}"
 if command -v systemd-run >/dev/null 2>&1 \
     && systemd-run --user --scope -q -p MemoryMax="${memory_mb}M" true >/dev/null 2>&1; then
     high_mb=$(( memory_mb - 500 ))
     [ "$high_mb" -gt 0 ] || high_mb=$(( memory_mb / 2 ))
     
     if ionice -c 3 true >/dev/null 2>&1; then
-        exec systemd-run --user --scope -q --collect \
+        exec systemd-run --user --scope -q --collect --unit="${unit_name}" \
             -p MemoryMax="${memory_mb}M" \
             -p MemoryHigh="${high_mb}M" \
             -p MemorySwapMax=0 \
@@ -72,7 +79,7 @@ if command -v systemd-run >/dev/null 2>&1 \
             -p IOWeight="${io_weight}" \
             -- nice -n "${nice_level}" ionice -c 3 "$@"
     else
-        exec systemd-run --user --scope -q --collect \
+        exec systemd-run --user --scope -q --collect --unit="${unit_name}" \
             -p MemoryMax="${memory_mb}M" \
             -p MemoryHigh="${high_mb}M" \
             -p MemorySwapMax=0 \
