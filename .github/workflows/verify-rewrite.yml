@@ -228,6 +228,7 @@ jobs:
           # the cargo cache archive compact (~300MB instead of ~3GB).
           rm -rf target/debug/incremental target/lint/debug/incremental target/doc-check/debug/incremental
           rm -rf ~/.cargo/registry/src
+          rm -rf ~/.cargo/registry/cache
 
       # After the trim, so the entry carries artifacts and not the suite's
       # scratch trees. Skipped only on cancellation -- see the restore step.
