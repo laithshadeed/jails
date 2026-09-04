@@ -1,9 +1,11 @@
 /target
+/dist
 
 # Build output wherever it lands. `/target` alone is root-anchored, so a
 # `target/` inside a golden fixture tree was untracked-but-not-ignored and one
 # `git add -A` away from being committed.
 target/
+dist/
 
 # Untracked research trees, each its own upstream repo. `CLAUDE.md` already
 # describes them as gitignored; the file did not agree, and `git add -A`

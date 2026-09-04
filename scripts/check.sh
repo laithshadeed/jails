@@ -65,9 +65,10 @@ run_stage() {
 echo "Starting jails quality gate..."
 
 run_stage "fmt" "cargo fmt --check" cargo fmt --check
+run_stage "compile" "precompile workspace targets" cargo test --workspace --all-targets --no-run
 run_stage "clippy" "cargo clippy with -D warnings" cargo clippy --workspace --all-targets -- -D warnings
 run_stage "doc" "cargo doc with -D warnings" env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
-run_stage "test" "run all workspace test suites" "${SCRIPT_DIR}/test-workspace.sh"
+run_stage "test" "run all workspace test suites" "${SCRIPT_DIR}/test.sh"
 
 TOTAL_ELAPSED=$((SECONDS - TOTAL_START))
 

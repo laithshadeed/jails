@@ -2,63 +2,39 @@
 # Generated projects declare `--release 26` (`TARGET_RELEASE`); adopted Java 21+
 # projects keep their configured release. Pin the exact default toolchain so
 # strict generated-project tests compile with the release new projects declare.
-java = "openjdk-26.0.2"
+java = ["openjdk-26.0.2", "21"]
 maven = "3.9.16"
 mvnd = "1.0.6"
 gradle = "8.5"
 
-# The lint half, separately callable because `.githooks/pre-commit` needs it
-# without the suite: a multi-minute pre-commit is one people learn to skip.
-# One definition, so the hook and the gate cannot disagree about "lint-clean".
+[tasks.build]
+description = "Build production-ready release binary into dist/jails"
+run = "./scripts/build.sh"
+
+[tasks.fmt]
+description = "Format the workspace"
+run = "cargo fmt --all"
+
 [tasks.lint]
 description = "Format and lint exactly as the gate does"
 run = [
   "cargo fmt --all --check",
-  "cargo clippy --workspace --all-targets --target-dir target/lint -- -D warnings",
+  "cargo clippy --workspace --all-targets -- -D warnings",
 ]
 
-# The one answer to "is this green". `.githooks/pre-push` and CI invoke this
-# task and nothing else.
-#
-# `scripts/gate-build.sh` is the compile phase: `fmt --check`, then clippy,
-# `cargo doc -D warnings` and the test build concurrently in three target
-# directories (`target/lint`, `target/doc-check`, `target`), because they share
-# no artifacts and one `target/` serialises them. `cargo doc -D warnings` is
-# in the gate because the comments carry rustdoc links and a link to a moved
-# item is a warning nothing reads otherwise; it is not in `lint` so the
-# pre-commit wait stays short.
-#
-# `JAILS_TOOLCHAIN=1` switches the real-toolchain tier on and turns a missing
-# tool into a failure rather than a skip. `JAILS_GIT_DIFF_ALGORITHM=` pins
-# `git merge-file` to git's own default, which every git supports, so the
-# merged bytes do not depend on the distribution underneath the gate.
-#
-# `scripts/gate-test.sh` runs the twenty-odd test executables the build
-# produced at once, plus the doctests, each to its own log. Under `cargo test`
-# they run one after another, and once the real-toolchain proofs replay from
-# `target/jails-proof-cache` (`tests/support/mvn.rs`) the queue of small
-# binaries is most of what is left. The budgets a concurrent run must respect
-# are `flock`s under `target/`, so they hold across processes.
-#
-# `scripts/bounded.sh` runs the test phase in a cgroup with a memory cap and a
-# CPU quota (half the memory, three quarters of the cores by default), so the
-# suite cannot take the machine down whatever its pools believe; the harness
-# sizes its JVM permits and thread budget from that same cgroup. It also sets
-# `RUST_TEST_THREADS` to twice the quota: a real-toolchain test spends its life
-# waiting on a Maven JVM the permit pool admits, so with one thread per core
-# the long tests near the end of the alphabet start late and set the tail.
-[tasks.verify]
+[tasks.check]
 description = "Run the quality gate verification suite"
 run = "./scripts/run-bounded.sh ./scripts/check.sh"
 
-[tasks.verify-rewrite]
-description = "Run the quality gate verification suite (alias for verify)"
-run = "mise run verify"
+[tasks.verify]
+description = "Run the quality gate verification suite (alias for check)"
+run = "mise run check"
 
-[tasks.check]
-description = "Run the quality gate verification suite (alias for verify)"
-run = "mise run verify"
+[tasks.verify-rewrite]
+description = "Run the quality gate verification suite (alias for check)"
+run = "mise run check"
 
 [tasks.test]
 description = "The gate's test phase, running all workspace suites concurrently"
-run = "./scripts/run-bounded.sh ./scripts/test-workspace.sh"
+run = "./scripts/run-bounded.sh ./scripts/test.sh"
+
