@@ -1,6 +1,6 @@
 ---
 name: jails
-description: "Scaffolding, evolving and operating Spring Boot and plain Java projects with the jails CLI. Triggers on: jails, jails new, jails generate, jails g, jails add, jails resource, jails app apply, jails doctor, jails test, spring boot scaffolding, ports and adapters, raw jdbc java, testcontainers spring, flyway migrations with jails, hex architecture java."
+description: "Scaffolding, evolving and operating Spring Boot and plain Java projects with the jails CLI. Triggers on: jails, jails new, jails generate, jails g, jails add, jails resource, jails app apply, jails doctor, jails test, spring boot scaffolding, ports and adapters, raw jdbc java, testcontainers spring, flyway migrations with jails, hex architecture java, crawler, fetcher, http-workflow, fast-test, testd."
 ---
 
 # jails
@@ -105,13 +105,15 @@ Key Spring generators:
 - `strategy <Name> [variants...] [--on <Req>] [--yields <Resp>]` — strategy interface and `@Component` implementations placed in `service`/`adapters` (keeping `domain` dependency-free), plus ordered `<Name>Evaluator`.
 - `socket <Name>` (aliases: `websocket`, `ws`) — `TextWebSocketHandler`, `/ws/<name>` registration, concurrency decorator, and test.
 - `presence <Name>` — PostgreSQL cluster presence `(scope, member, node)`, heartbeats, sweep, and multi-node test.
+- `fetcher <Name>` — bounded outbound HTTP fetch port with DNS pinning, SSRF protection (rejects private/loopback IPs in production policy), redirect limit revalidation, response byte ceiling, defensive body copying, Micrometer metrics, and real-socket adversarial tests.
+- `http-workflow <Name> --on <Fetcher>` — durable, exact-origin, RFC 9309 robots-aware HTTP traversal/crawler. Zero new dependencies (uses JDK `HTMLEditorKit`). PostgreSQL-backed frontier (`<name>_runs`, `<name>_frontier`, `<name>_visited_pages`) with expiring leases, crash resilience, REST control plane (`POST /workflows/<name>`, `GET /workflows/<name>/{id}`, `GET /workflows/<name>/{id}/pages`, `DELETE /workflows/<name>/{id}`), and adversarial IT.
 - `seed <Resource>` — development data in `db/seeds/<table>.json` loaded through repository port with `@Profile("seed")` `ApplicationRunner`.
 
 ### Add capabilities — `jails add <capability>...`
 
 `db` `sqlite` `h2` `kafka` `redis` `csv` `json` `mail` `http` `api` `actuator`
 `cache` `security` `cors` `sse` `observability` `format` `coverage` `testkit`
-`fake` `toxiproxy` `loadtest` `docker` `k8s` `ci`
+`fake` `toxiproxy` `loadtest` `docker` `k8s` `ci` `fast-test`
 
 Escape hatches and configuration:
 - `jails add dependency <group>:<artifact> [--version <v>] [--scope compile|runtime|test]`
@@ -208,6 +210,7 @@ distribution cannot launch on the JDK on PATH, and on an H2 URL combining
 jails test [<Name|method>...] [--scope unit|integration|all] [--engine auto|build|warm]
            [--compile auto|ide|build|none] [--watch] [--affected] [--failed]
            [--tag T] [--fail-fast] [--slowest N] [--explain-selection]
+jails test daemon status|stop|restart # inspect or control resident test process
 jails run  [--launcher auto|classpath|build-tool|jar] [--compile ...]
            [--services existing|start|none] [--profile P] [--watch]
 jails check                  # mvn clean verify — the truth
@@ -222,6 +225,12 @@ build engine and says so. `jails fmt` refuses on Gradle by name (use
 `run --watch` needs `spring-boot-devtools` to restart on recompile, and says so
 with the command that adds it to *this* project:
 `jails add dependency org.springframework.boot:spring-boot-devtools --scope runtime`.
+
+**Performance & Resident Daemon:**
+- `jails add fast-test` installs `junit-platform-console` so `jails test` executes compiled test classes directly through the resident `testd` daemon (~10–65 ms per run) over a local Unix domain socket (`.jails/run/testd.sock`), completely skipping Maven startup overhead.
+- Direct incremental compilation: when source files under `src/main/java` or `src/test/java` are modified, `jails test` detects stale `.java` files and compiles them directly with `javac -sourcepath ... -cp ...` into `target/classes`/`target/test-classes`, bypassing Maven clean/compile steps (~1.5s vs 11s+).
+- `JAILS_MVND=1` routes Maven operations through the persistent `mvnd` daemon.
+- Global `--timing` flag on any command (`jails --timing ...`) prints high-resolution pipeline breakdowns (`model`, `capture`, `compile`, `materialize`, `execute`, `report`).
 
 ### Contracts and migrations
 
@@ -380,6 +389,12 @@ The declarative engine handles lifecycle deltas:
   The first is what lets `jails db` attach while the application runs; H2
   refuses the pair outright and the application dies at startup reporting
   `Feature not supported`, which names neither property.
+- **`http-workflow` requires `db` and a `fetcher`**: its entire traversal frontier
+  lives in PostgreSQL (`<name>_runs`, `<name>_frontier`, `<name>_visited_pages`)
+  with expiring leases so interrupted crawls resume rather than duplicate work.
+  It must fetch via `--on <fetcher>` to guarantee SSRF protection.
+- **`testd` falls back to the build tool without `fast-test`**: run `jails add fast-test`
+  to wire `junit-platform-console` and unlock resident daemon sub-second test execution.
 
 ## Working on jails itself
 
