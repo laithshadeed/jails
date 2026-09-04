@@ -367,13 +367,9 @@ mod tests {
             "PlainTest",
         );
         assert!(
-            partition_evidence(
-                project.path(),
-                &[selector],
-                crate::testing::TestScope::Unit
-            )
-            .ineligible
-            .is_empty()
+            partition_evidence(project.path(), &[selector], crate::testing::TestScope::Unit)
+                .ineligible
+                .is_empty()
         );
     }
 
@@ -398,15 +394,12 @@ mod tests {
             ),
         ] {
             let (project, selector) = source(body, name);
-            let reasons = partition_evidence(
-                project.path(),
-                &[selector],
-                crate::testing::TestScope::Unit,
-            )
-            .ineligible
-            .into_iter()
-            .map(|(_, reason)| reason)
-            .collect::<Vec<_>>();
+            let reasons =
+                partition_evidence(project.path(), &[selector], crate::testing::TestScope::Unit)
+                    .ineligible
+                    .into_iter()
+                    .map(|(_, reason)| reason)
+                    .collect::<Vec<_>>();
             assert!(
                 reasons.iter().any(|reason| reason.contains(expected)),
                 "{reasons:?}"
@@ -432,7 +425,8 @@ mod tests {
     #[test]
     fn support_config_classes_are_not_candidate_test_sources() {
         let config = Path::new("src/test/java/com/example/TestcontainersConfig.java");
-        let text = "@TestConfiguration(proxyBeanMethods = false)\npublic class TestcontainersConfig {}";
+        let text =
+            "@TestConfiguration(proxyBeanMethods = false)\npublic class TestcontainersConfig {}";
         assert!(!is_candidate_test_source(config, text));
     }
 }

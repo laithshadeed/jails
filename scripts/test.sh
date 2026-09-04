@@ -13,11 +13,17 @@ mkdir -p "$logs"
 
 # Number of concurrent test binaries to execute
 cores=$(nproc 2>/dev/null || echo 4)
-concurrency=${TEST_CONCURRENCY:-$(( cores >= 2 ? cores * 3 : 2 ))}
+if [ "$cores" -le 2 ]; then
+  concurrency=${TEST_CONCURRENCY:-3}
+  default_threads=1
+else
+  concurrency=${TEST_CONCURRENCY:-$(( cores * 2 ))}
+  default_threads=2
+fi
 [ "$concurrency" -ge 1 ] || concurrency=1
 
 # Cap individual binary internal thread pool so child processes don't oversubscribe
-export RUST_TEST_THREADS="${RUST_TEST_THREADS:-2}"
+export RUST_TEST_THREADS="${RUST_TEST_THREADS:-$default_threads}"
 
 # Extract executables and their crate manifest directories
 mapfile -t artifacts < <(
