@@ -127,9 +127,9 @@ async def main():
     cores = os.cpu_count() or 4
     default_concurrency = cores * 3 if cores <= 4 else min(cores, 8)
     concurrency = int(os.environ.get("TEST_CONCURRENCY", default_concurrency))
-    concurrency = max(concurrency, 1)
+    concurrency = max(concurrency, 4)
 
-    default_threads = "4" if cores >= 8 else "2"
+    default_threads = "4"
     rust_test_threads = os.environ.get("RUST_TEST_THREADS", default_threads)
 
     base_env = os.environ.copy()
@@ -162,7 +162,7 @@ async def main():
         cmd = [exe] + extra_args
         tasks.append(
             asyncio.create_task(
-                run_single_test(disp_name, cmd, manifest_dir, env, log_file, sem)
+                run_single_test(disp_name, cmd, str(root_dir), env, log_file, sem)
             )
         )
 
