@@ -64,68 +64,10 @@ run_stage() {
 
 echo "Starting jails quality gate..."
 
-# Phase 1: Lint & Format (fmt runs concurrently with clippy)
-echo "==> fmt & clippy..."
-cargo fmt --check > "${LOG_DIR}/fmt.log" 2>&1 & pid_fmt=$!
-cargo clippy --workspace --all-targets -- -D warnings > "${LOG_DIR}/clippy.log" 2>&1 & pid_clippy=$!
-
-wait $pid_fmt && fmt_ok=1 || fmt_ok=0
-wait $pid_clippy && clippy_ok=1 || clippy_ok=0
-
-if [ "$fmt_ok" -eq 1 ]; then
-  printf "  ${GREEN}✓${NC} fmt passed\n"
-else
-  printf "  ${RED}✗${NC} fmt FAILED\n"
-  FAILED_STAGES+=("fmt")
-  echo "--- fmt error log (tail 40 lines) ---" >&2
-  tail -n 40 "${LOG_DIR}/fmt.log" >&2
-  echo "-----------------------------------------" >&2
-fi
-
-if [ "$clippy_ok" -eq 1 ]; then
-  printf "  ${GREEN}✓${NC} clippy passed\n"
-else
-  printf "  ${RED}✗${NC} clippy FAILED\n"
-  FAILED_STAGES+=("clippy")
-  echo "--- clippy error log (tail 40 lines) ---" >&2
-  tail -n 40 "${LOG_DIR}/clippy.log" >&2
-  echo "-----------------------------------------" >&2
-fi
-
-if [[ ${#FAILED_STAGES[@]} -gt 0 ]]; then
-  TOTAL_ELAPSED=$((SECONDS - TOTAL_START))
-  echo "=========================================="
-  printf "${RED}${BOLD}FAILED STAGES:${NC} %s in %ss\n" "${FAILED_STAGES[*]}" "${TOTAL_ELAPSED}"
-  exit 1
-fi
-
-# Phase 2: Test & Doc (cargo doc runs concurrently with test suite)
-echo "==> test & doc..."
-(env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps > "${LOG_DIR}/doc.log" 2>&1) & pid_doc=$!
-("${SCRIPT_DIR}/test.sh" > "${LOG_DIR}/test.log" 2>&1) & pid_test=$!
-
-wait $pid_doc && doc_ok=1 || doc_ok=0
-wait $pid_test && test_ok=1 || test_ok=0
-
-if [ "$doc_ok" -eq 1 ]; then
-  printf "  ${GREEN}✓${NC} doc passed\n"
-else
-  printf "  ${RED}✗${NC} doc FAILED\n"
-  FAILED_STAGES+=("doc")
-  echo "--- doc error log (tail 40 lines) ---" >&2
-  tail -n 40 "${LOG_DIR}/doc.log" >&2
-  echo "-----------------------------------------" >&2
-fi
-
-if [ "$test_ok" -eq 1 ]; then
-  printf "  ${GREEN}✓${NC} test passed\n"
-else
-  printf "  ${RED}✗${NC} test FAILED\n"
-  FAILED_STAGES+=("test")
-  echo "--- test error log (tail 40 lines) ---" >&2
-  tail -n 40 "${LOG_DIR}/test.log" >&2
-  echo "-----------------------------------------" >&2
-fi
+run_stage "fmt" "cargo fmt --check" cargo fmt --check
+run_stage "clippy" "cargo clippy with -D warnings" cargo clippy --workspace --all-targets -- -D warnings
+run_stage "doc" "cargo doc with -D warnings" env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+run_stage "test" "run all workspace test suites" "${SCRIPT_DIR}/test.sh"
 
 TOTAL_ELAPSED=$((SECONDS - TOTAL_START))
 
