@@ -105,8 +105,10 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    if code == 0
-        && let Err(error) = record(&cache, &key, &run, &stdout, &stderr)
+    let record_all =
+        std::env::var_os("JAILS_PROOF_CACHE_RECORD_ALL").is_some_and(|value| !value.is_empty());
+    if (code == 0 || record_all)
+        && let Err(error) = record(&cache, &key, &run, &stdout, &stderr, code)
     {
         eprintln!("jails-proof-cache: could not record {key} ({error}); the run stands");
     }
@@ -289,24 +291,65 @@ fn without_loopback_ports(arg: &str) -> String {
     out
 }
 
-/// Which binary a name resolves to and what it is: the resolved path (a
-/// version-managed install carries its version in the path), its length and
-/// its modification time. `mvn --version` and `java -version` would answer
-/// more exactly and cost a JVM start each, which is what this exists to avoid.
+/// Which binary a name resolves to and what it is: the binary name, its length
+/// and its probed version string (cached once per binary). Deterministic across
+/// machines and CI runs, unlike file modification nanoseconds.
 fn tool_identity(name: &OsStr) -> String {
     let resolved = resolve(name);
     let meta = resolved.as_deref().and_then(|path| fs::metadata(path).ok());
+    let version = resolved
+        .as_deref()
+        .map_or_else(|| name.to_string_lossy().into_owned(), tool_version);
     format!(
         "{}\t{}\t{}",
         resolved.as_deref().map_or_else(
             || name.to_string_lossy().into_owned(),
-            |path| path.display().to_string()
+            |path| path
+                .file_name()
+                .unwrap_or(path.as_os_str())
+                .to_string_lossy()
+                .into_owned()
         ),
         meta.as_ref().map_or(0, fs::Metadata::len),
-        meta.and_then(|meta| meta.modified().ok())
-            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-            .map_or(0, |since| since.as_nanos())
+        version
     )
+}
+
+fn tool_version(path: &Path) -> String {
+    static VERSIONS: std::sync::Mutex<Option<BTreeMap<PathBuf, String>>> =
+        std::sync::Mutex::new(None);
+    let mut guard = VERSIONS.lock().unwrap_or_else(|p| p.into_inner());
+    let map = guard.get_or_insert_with(BTreeMap::new);
+    if let Some(version) = map.get(path) {
+        return version.clone();
+    }
+    let name = path
+        .file_name()
+        .unwrap_or(path.as_os_str())
+        .to_string_lossy();
+    let version_output = if name.contains("java") {
+        Command::new(path).arg("-version").output().ok()
+    } else {
+        Command::new(path).arg("-v").output().ok()
+    };
+    let version = version_output
+        .map(|out| {
+            let mut bytes = out.stdout;
+            bytes.extend_from_slice(&out.stderr);
+            String::from_utf8_lossy(&bytes)
+                .lines()
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string()
+        })
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| {
+            let size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+            format!("len-{size}")
+        });
+    map.insert(path.to_path_buf(), version.clone());
+    version
 }
 
 fn resolve(name: &OsStr) -> Option<PathBuf> {
@@ -360,7 +403,14 @@ fn named_outputs(argv: &[OsString], cwd: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-fn record(cache: &Path, key: &str, run: &Run<'_>, stdout: &[u8], stderr: &[u8]) -> io::Result<()> {
+fn record(
+    cache: &Path,
+    key: &str,
+    run: &Run<'_>,
+    stdout: &[u8],
+    stderr: &[u8],
+    code: i32,
+) -> io::Result<()> {
     let Run {
         argv, cwd, before, ..
     } = *run;
@@ -426,7 +476,7 @@ fn record(cache: &Path, key: &str, run: &Run<'_>, stdout: &[u8], stderr: &[u8]) 
             "schema": SCHEMA,
             "key": key,
             "argv": argv.iter().map(|arg| arg.to_string_lossy()).collect::<Vec<_>>(),
-            "code": 0,
+            "code": code,
             "files": files,
             "deleted": deleted,
             "target": target,

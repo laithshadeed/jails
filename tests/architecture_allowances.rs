@@ -188,14 +188,33 @@ fn project(root: &Path) {
     );
 }
 
+fn proof_cache_maven() -> Option<PathBuf> {
+    if std::env::var_os("JAILS_PROOF_CACHE_OFF").is_some_and(|v| !v.is_empty()) {
+        return None;
+    }
+    let wrapper = Path::new(env!("CARGO_BIN_EXE_jails"))
+        .parent()?
+        .join("examples")
+        .join("mvn");
+    wrapper.is_file().then_some(wrapper)
+}
+
+fn proof_cache_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/jails-proof-cache")
+}
+
 fn architecture_test(root: &Path) -> Output {
     let _ = fs::remove_dir_all(root.join("target/surefire-reports"));
-    Command::new("mvn")
-        // `-DforkCount=0`: Surefire's default fork starts a cold JVM per run
-        // and re-pays class loading and JIT warmup the Maven JVM has already
-        // done, and these ArchUnit policies are pure classpath analysis with
-        // no isolation to lose.
-        .args(["-q", "-DforkCount=0", "-Dtest=ArchitectureTest", "test"])
+    let mut cmd = if let Some(wrapper) = proof_cache_maven() {
+        let mut c = Command::new(wrapper);
+        c.env("JAILS_PROOF_CACHE", proof_cache_dir());
+        c.env("JAILS_PROOF_CACHE_MAVEN", "mvn");
+        c.env("JAILS_PROOF_CACHE_RECORD_ALL", "1");
+        c
+    } else {
+        Command::new("mvn")
+    };
+    cmd.args(["-q", "-DforkCount=0", "-Dtest=ArchitectureTest", "test"])
         .current_dir(root)
         .output()
         .unwrap()

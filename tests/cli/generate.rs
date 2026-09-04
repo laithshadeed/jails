@@ -5950,9 +5950,7 @@ fn what_jails_generates_for_boot_2_compiles_and_what_cannot_refuses_by_name() {
         "expected the generated tests plus the fixture's, found {checked}"
     );
 
-    let output = std::process::Command::new("mvn")
-        .current_dir(&root)
-        .env("PATH", &path)
+    let output = real_maven_cmd(&root, &path)
         .args(["-q", "-B", "test"])
         .output()
         .unwrap();

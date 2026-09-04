@@ -6,17 +6,15 @@
 # that accepts `--release 26`, `jshell`, Maven, mvnd, Gradle 8.5 on JDK 21 for
 # the pinned example, git, and a container runtime for the Testcontainers
 # suites.
-name: verify-rewrite
+name: CI
 
 on:
-  # One event per commit. `pull_request` gates branches and `push` gates what
-  # lands on `main`, so no SHA is built twice. A branch with no pull request
-  # open is covered by `.githooks/pre-push`, which runs the same gate.
   push:
     branches: [main]
+    paths-ignore:
+      - '*.md'
+      - 'docs/**'
   pull_request:
-  # On demand, with the suite's subprocess profiler on: `JAILS_TEST_PROFILE`
-  # makes every subprocess print its queue and run time.
   workflow_dispatch:
     inputs:
       profile:
@@ -24,19 +22,18 @@ on:
         type: boolean
         default: false
 
-# Supersede an older commit's run when a branch is pushed again while one is
-# still going. `head_ref || ref_name` because the two events spell the ref
-# differently and a group keyed on `github.ref` cannot collapse them.
 concurrency:
-  group: verify-rewrite-${{ github.head_ref || github.ref_name }}
+  group: ci-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
+env:
+  CARGO_INCREMENTAL: "0"
+
 jobs:
-  verify:
-    # Docker is preinstalled on the GitHub-hosted Ubuntu image, which the
-    # container-gated tests need; here a skip is a failure.
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
+  quality-gate:
+    name: Quality Gate
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 25
 
     steps:
       - uses: actions/checkout@v4
@@ -146,31 +143,19 @@ jobs:
           mise exec -- gradle --version | grep -E '^Gradle'
           docker --version
 
-      - name: verify-rewrite
-        run: mise run verify-rewrite
+      - name: Run Quality Gate
+        run: mise run verify
         env:
           JAILS_TEST_PROFILE: ${{ inputs.profile && '1' || '' }}
 
       # `target/` is cached, and the suite writes scratch under it that has no
       # meaning on another machine; drop it so the entry carries artifacts only.
-      #
-      # Cargo never garbage-collects `target/debug/deps` or
-      # `target/debug/incremental` (nor clippy's and rustdoc's copies under
-      # `target/lint` and `target/doc-check`, which `scripts/gate-build.sh`
-      # keeps apart so the three compile at once): each run adds its own artifacts and
-      # sessions and removes none, so a cache carried run to run only grows.
-      # Keep the newest artifact per unit and the newest session per crate.
-      # Deleting incremental state outright costs a minute of recompilation a
-      # run; keeping the newest session costs nothing. Cargo rebuilds whatever
-      # this removes, so the heuristic bounds the damage at recompilation.
-      # `cargo-sweep` is the exact version, if the recompilation ever shows.
-      #
-      # Runs unconditionally: a failed run's artifacts are still valid.
+      # Proof cache is explicitly preserved so proven toolchain executions replay.
       - name: Trim the cargo cache to build artifacts
         if: always()
         run: |
           rm -rf target/jails-e2e-cache target/jails-test-logs target/jails-test-permits \
-            target/jails-test-profile target/jails-proof-cache
+            target/jails-test-profile
           python3 - <<'DEPS'
           import collections
           from pathlib import Path

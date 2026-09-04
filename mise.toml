@@ -47,12 +47,18 @@ run = [
 # `RUST_TEST_THREADS` to twice the quota: a real-toolchain test spends its life
 # waiting on a Maven JVM the permit pool admits, so with one thread per core
 # the long tests near the end of the alphabet start late and set the tail.
-[tasks.verify-rewrite]
-description = "Run the single mandatory rewrite verification gate"
+[tasks.verify]
+description = "Run the quality gate verification suite"
 run = [
-  "./scripts/bounded.sh ./scripts/gate-build.sh",
+  "./scripts/run-bounded.sh ./scripts/build-workspace.sh",
   "rm -rf target/jails-test-profile",
-  "JAILS_GIT_DIFF_ALGORITHM= JAILS_TOOLCHAIN=1 ./scripts/bounded.sh ./scripts/gate-test.sh; status=$?; ./scripts/subprocess-summary.sh; exit $status",
+  "JAILS_GIT_DIFF_ALGORITHM= JAILS_TOOLCHAIN=1 ./scripts/run-bounded.sh ./scripts/test-workspace.sh; status=$?; ./scripts/profile-summary.sh; exit $status",
+]
+
+[tasks.verify-rewrite]
+description = "Run the quality gate verification suite (alias for verify)"
+run = [
+  "mise run verify",
 ]
 
 [tasks.test]

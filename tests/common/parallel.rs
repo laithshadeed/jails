@@ -146,11 +146,22 @@ pub mod cgroup {
 
     fn current_bytes() -> Option<u64> {
         let directory = own_directory()?;
-        std::fs::read_to_string(directory.join("memory.current"))
+        let current: u64 = std::fs::read_to_string(directory.join("memory.current"))
             .ok()?
             .trim()
             .parse()
+            .ok()?;
+        // In cgroups v2, memory.current includes inactive/reclaimable file page cache.
+        // Subtract inactive_file so disk cache isn't counted as un-reclaimable RAM.
+        let inactive = std::fs::read_to_string(directory.join("memory.stat"))
             .ok()
+            .and_then(|stat| {
+                stat.lines()
+                    .find_map(|line| line.strip_prefix("inactive_file "))
+                    .and_then(|val| val.trim().parse::<u64>().ok())
+            })
+            .unwrap_or(0);
+        Some(current.saturating_sub(inactive))
     }
 }
 
