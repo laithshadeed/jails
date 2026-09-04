@@ -35,8 +35,7 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 25
 
-    steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -82,7 +81,7 @@ jobs:
       # runs. The pin names one exact compiler, so the cached download is
       # byte-identical until the pin moves.
       - name: Cache the pinned Rust toolchain
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.rustup/toolchains
@@ -117,7 +116,7 @@ jobs:
       # killed two minutes in cannot become the newest entry.
       - name: Restore cargo
         id: cargo
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: |
             ~/.cargo/registry
@@ -137,7 +136,7 @@ jobs:
       # died early would freeze an almost-empty repository in place forever.
       - name: Restore the Maven and Gradle repositories
         id: jvm-deps
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: |
             ~/.m2/repository
@@ -151,7 +150,7 @@ jobs:
       # commit and restored from the newest one; the save is unconditional
       # because only green runs are ever recorded into it.
       - name: Restore the proof cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: target/jails-proof-cache
           key: proof-cache-${{ runner.os }}-${{ github.sha }}
@@ -159,7 +158,7 @@ jobs:
 
       # Reads `mise.toml`, so CI runs the versions the repository pins.
       - name: Install the pinned toolchain
-        uses: jdx/mise-action@v2
+        uses: jdx/mise-action@v4
         with:
           cache: true
 
@@ -241,7 +240,7 @@ jobs:
       # scratch trees. Skipped only on cancellation -- see the restore step.
       - name: Save cargo
         if: '!cancelled() && steps.cargo.outputs.cache-hit != ''true'''
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: |
             ~/.cargo/registry
@@ -251,7 +250,7 @@ jobs:
 
       - name: Save the proof cache
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: target/jails-proof-cache
           key: proof-cache-${{ runner.os }}-${{ github.sha }}
@@ -260,7 +259,7 @@ jobs:
       # restore -- see the restore step for why both conditions are load-bearing.
       - name: Save the Maven and Gradle repositories
         if: success() && steps.jvm-deps.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: |
             ~/.m2/repository
