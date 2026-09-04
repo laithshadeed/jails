@@ -210,11 +210,11 @@ jobs:
           ROOTS = [Path("target/debug"), Path("target/lint/debug"), Path("target/doc-check/debug")]
           for build in ROOTS:
               root = build / "deps"
-              files = [p for p in root.iterdir() if p.is_file()] if root.is_dir() else []
+              # Only prune superseded test/example executables (empty suffix) and their dep-info (.d).
+              # Library crates (.rlib) and compiler/lint metadata (.rmeta) must be preserved intact
+              # so cargo never recompiles unchanged packages across cached runs.
+              files = [p for p in root.iterdir() if p.is_file() and p.suffix in ("", ".d")] if root.is_dir() else []
               before = sum(p.stat().st_size for p in files)
-              # `libjails_model-<hash>.rlib` and `cli-<hash>` alike: the hash is
-              # the last `-` segment, and what identifies the *unit* is everything
-              # before it plus the extension.
               newest = collections.defaultdict(list)
               for path in files:
                   stem = path.stem.rsplit("-", 1)[0]
@@ -225,9 +225,9 @@ jobs:
                   for stale in group[:-1]:
                       removed += 1
                       stale.unlink(missing_ok=True)
-              after = sum(p.stat().st_size for p in root.iterdir() if p.is_file()) if root.is_dir() else 0
+              after = sum(p.stat().st_size for p in root.iterdir() if p.is_file() and p.suffix in ("", ".d")) if root.is_dir() else 0
               print(
-                  f"trim: dropped {removed} superseded artifacts, "
+                  f"trim: dropped {removed} superseded test binaries, "
                   f"{before / 1e6:.0f} MB -> {after / 1e6:.0f} MB"
               )
           DEPS

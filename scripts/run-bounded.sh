@@ -20,11 +20,11 @@ if [ -n "${CI:-}" ] || [ -n "${GITHUB_ACTIONS:-}" ]; then
     # Dedicated CI runner: use machine cores and 85% RAM
     cpu=${JAILS_GATE_CPU:-$cores}
     memory_mb=${JAILS_GATE_MEMORY_MB:-$(( total_kib * 85 / 1024 / 100 ))}
-    threads=${RUST_TEST_THREADS:-$(( cpu * 3 ))}
+    threads=${RUST_TEST_THREADS:-$(( cpu * 2 ))}
     nice_level=0
     cpu_weight=100
     io_weight=100
-    toolchain_procs=${JAILS_TEST_MAX_TOOLCHAIN_PROCESSES:-6}
+    toolchain_procs=${JAILS_TEST_MAX_TOOLCHAIN_PROCESSES:-$cpu}
 else
     # Interactive workstation: strict bounds so machine never lags or thrashes
     # Cap CPU to at most 4 cores or half machine, whichever is smaller
