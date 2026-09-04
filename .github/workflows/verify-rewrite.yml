@@ -38,6 +38,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Align git tracked file mtimes to the commit author date so cargo fingerprint
+      # matching succeeds across cached builds without rebuilding unchanged source files.
+      - name: Restore file modification timestamps
+        run: |
+          commit_time=$(git log -1 --format=%ct)
+          git ls-files -z | xargs -0 touch -d "@$commit_time"
+
       # Pull the container images while the Rust build is still running. The
       # test phase is subprocess-bound, and a registry pull is work that need
       # not be on its clock. The pulls are detached and nothing waits for

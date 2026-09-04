@@ -29,7 +29,8 @@ for job in "clippy:$clippy" "doc:$doc" "test:$tests"; do
     name=${job%%:*}
     pid=${job##*:}
     if wait "$pid"; then
-        echo "build-workspace: $name ok"
+        summary=$(tail -1 "$logs/$name" 2>/dev/null || true)
+        echo "build-workspace: $name ok ($summary)"
     else
         echo "build-workspace: $name FAILED"
         cat "$logs/$name"

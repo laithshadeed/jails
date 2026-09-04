@@ -20,7 +20,7 @@ if [ -n "${CI:-}" ] || [ -n "${GITHUB_ACTIONS:-}" ]; then
     # Dedicated CI runner: use machine cores and 85% RAM
     cpu=${JAILS_GATE_CPU:-$cores}
     memory_mb=${JAILS_GATE_MEMORY_MB:-$(( total_kib * 85 / 1024 / 100 ))}
-    threads=${RUST_TEST_THREADS:-$(( cpu * 2 ))}
+    threads=${RUST_TEST_THREADS:-$(( cpu * 3 ))}
     nice_level=0
     cpu_weight=100
     io_weight=100
