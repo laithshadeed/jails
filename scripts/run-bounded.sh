@@ -24,6 +24,7 @@ if [ -n "${CI:-}" ] || [ -n "${GITHUB_ACTIONS:-}" ]; then
     nice_level=0
     cpu_weight=100
     io_weight=100
+    toolchain_procs=${JAILS_TEST_MAX_TOOLCHAIN_PROCESSES:-$cpu}
 else
     # Interactive workstation: strict bounds so machine never lags or thrashes
     # Cap CPU to at most 4 cores or half machine, whichever is smaller
@@ -39,11 +40,20 @@ else
     nice_level=15
     cpu_weight=20
     io_weight=20
+    toolchain_procs=${JAILS_TEST_MAX_TOOLCHAIN_PROCESSES:-2}
 fi
 
 [ "$cpu" -ge 1 ] || cpu=1
 export RUST_TEST_THREADS="$threads"
-export JAILS_TEST_MAX_TOOLCHAIN_PROCESSES="${JAILS_TEST_MAX_TOOLCHAIN_PROCESSES:-2}"
+export JAILS_TEST_MAX_TOOLCHAIN_PROCESSES="$toolchain_procs"
+
+if [ -z "${RUSTFLAGS:-}" ]; then
+    if command -v mold >/dev/null 2>&1; then
+        export RUSTFLAGS="-C link-arg=-fuse-ld=mold"
+    elif command -v ld.lld >/dev/null 2>&1 || command -v lld >/dev/null 2>&1; then
+        export RUSTFLAGS="-C link-arg=-fuse-ld=lld"
+    fi
+fi
 
 if command -v systemd-run >/dev/null 2>&1 \
     && systemd-run --user --scope -q -p MemoryMax="${memory_mb}M" true >/dev/null 2>&1; then

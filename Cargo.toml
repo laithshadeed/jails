@@ -98,3 +98,16 @@ debug = "line-tables-only"
 # carried in the CI cache.
 [profile.dev.package."*"]
 debug = 0
+
+[profile.dev.package.jails]
+opt-level = 2
+[profile.dev.package.jails-compiler]
+opt-level = 2
+[profile.dev.package.jails-model]
+opt-level = 2
+[profile.dev.package.jails-drive]
+opt-level = 2
+[profile.dev.package.jails-workspace]
+opt-level = 2
+[profile.dev.package.jails-support]
+opt-level = 2

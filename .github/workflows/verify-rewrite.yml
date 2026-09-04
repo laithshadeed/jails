@@ -69,6 +69,15 @@ jobs:
           echo "version=$(rustc -V | tr ' /()' '-')" >> "$GITHUB_OUTPUT"
           rustc -V
 
+      - name: Install fast linker
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends mold || sudo apt-get install -y --no-install-recommends lld || true
+          if command -v mold >/dev/null 2>&1; then
+            echo "RUSTFLAGS=-C link-arg=-fuse-ld=mold" >> "$GITHUB_ENV"
+          elif command -v ld.lld >/dev/null 2>&1 || command -v lld >/dev/null 2>&1; then
+            echo "RUSTFLAGS=-C link-arg=-fuse-ld=lld" >> "$GITHUB_ENV"
+          fi
+
       # The key carries the compiler, the lockfile and a hash of the sources.
       # A cargo artifact is valid only for the rustc that built it, so a
       # compiler change must miss. A commit that changes code misses, rebuilds
@@ -138,6 +147,7 @@ jobs:
         run: |
           rustc --version
           cargo --version
+          echo "RUSTFLAGS: ${RUSTFLAGS:-default}"
           mise exec -- java -version
           mise exec -- mvn --version | head -1
           mise exec -- gradle --version | grep -E '^Gradle'
@@ -184,31 +194,11 @@ jobs:
                   f"{before / 1e6:.0f} MB -> {after / 1e6:.0f} MB"
               )
           DEPS
-          python3 - <<'TRIM'
-          import shutil
-          from pathlib import Path
-
-          ROOTS = [Path("target/debug"), Path("target/lint/debug"), Path("target/doc-check/debug")]
-          for build in ROOTS:
-              root = build / "incremental"
-              before = sum(f.stat().st_size for f in root.rglob("*") if f.is_file()) if root.is_dir() else 0
-              removed = 0
-              for crate in sorted(root.iterdir()) if root.is_dir() else []:
-                  if not crate.is_dir():
-                      continue
-                  sessions = sorted(
-                      (p for p in crate.iterdir() if p.is_dir()),
-                      key=lambda p: p.stat().st_mtime,
-                  )
-                  for stale in sessions[:-1]:
-                      shutil.rmtree(stale, ignore_errors=True)
-                      removed += 1
-              after = sum(f.stat().st_size for f in root.rglob("*") if f.is_file()) if root.is_dir() else 0
-              print(
-                  f"trim: dropped {removed} superseded incremental sessions, "
-                  f"{before / 1e6:.0f} MB -> {after / 1e6:.0f} MB"
-              )
-          TRIM
+          # Incremental compilation is disabled in CI (CARGO_INCREMENTAL: 0).
+          # Drop incremental session trees and uncompressed registry sources to keep
+          # the cargo cache archive compact (~300MB instead of ~3GB).
+          rm -rf target/debug/incremental target/lint/debug/incremental target/doc-check/debug/incremental
+          rm -rf ~/.cargo/registry/src
 
       # After the trim, so the entry carries artifacts and not the suite's
       # scratch trees. Skipped only on cancellation -- see the restore step.
