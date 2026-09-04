@@ -209,15 +209,20 @@ pub(crate) fn compile_stale_java(project: &Project, debug: bool) -> Result<bool>
     }
 
     let classpath = test_classpath(project, "test", debug)?;
-    let dep_classpath = std::env::join_paths(&classpath.dependencies)
-        .map_err(|e| format!("failed to join dependencies: {e}"))?;
 
     let javac = jails_support::process::javac_program();
 
     if !stale_main.is_empty() {
+        let mut main_cp_entries = vec![main_target.clone()];
+        main_cp_entries.extend(classpath.dependencies.clone());
+        let main_cp = std::env::join_paths(&main_cp_entries)
+            .map_err(|e| format!("failed to join main classpath: {e}"))?;
+
         let mut spec = jails_support::process::CommandSpec::new(&javac)
             .arg("-cp")
-            .arg(&dep_classpath)
+            .arg(&main_cp)
+            .arg("-sourcepath")
+            .arg(&main_src)
             .arg("-d")
             .arg(&main_target);
         for file in &stale_main {
@@ -231,14 +236,19 @@ pub(crate) fn compile_stale_java(project: &Project, debug: bool) -> Result<bool>
     }
 
     if !stale_test.is_empty() {
-        let mut test_cp_entries = classpath.dependencies.clone();
-        test_cp_entries.push(main_target.clone());
+        let mut test_cp_entries = vec![test_target.clone(), main_target.clone()];
+        test_cp_entries.extend(classpath.dependencies.clone());
         let test_cp = std::env::join_paths(&test_cp_entries)
             .map_err(|e| format!("failed to join test classpath: {e}"))?;
+
+        let source_paths = std::env::join_paths([&test_src, &main_src])
+            .map_err(|e| format!("failed to join test sourcepath: {e}"))?;
 
         let mut spec = jails_support::process::CommandSpec::new(&javac)
             .arg("-cp")
             .arg(&test_cp)
+            .arg("-sourcepath")
+            .arg(&source_paths)
             .arg("-d")
             .arg(&test_target);
         for file in &stale_test {

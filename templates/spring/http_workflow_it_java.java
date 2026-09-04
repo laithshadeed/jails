@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
+import {{base}}.TestcontainersConfig;
 import org.springframework.context.annotation.Primary;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -19,7 +20,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-@Import({{name}}WorkflowIT.Fakes.class)
+@Import({TestcontainersConfig.class, {{name}}WorkflowIT.Fakes.class})
 @SpringBootTest(properties = {
         "jails.http-workflows.{{property}}.initial-delay=PT1H",
         "jails.http-workflows.{{property}}.max-attempts=2"

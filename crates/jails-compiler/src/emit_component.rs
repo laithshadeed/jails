@@ -657,6 +657,7 @@ const HTTP_WORKFLOW: Recipe<Component> = recipe(
         Key::Table(""),
         Key::Layer("clients", Package::Clients),
         Key::Layer("jobs", Package::Jobs),
+        Key::Layer("base", Package::Base),
     ],
     &[Need {
         want: Want::Database,
